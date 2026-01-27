@@ -65,24 +65,28 @@ with tab_mj:
         if not LEGNEXT_API_KEY:
             st.error("Secrets에 MJ_API_KEY(LegNext용)를 등록해주세요.")
         else:
-            url = "https://api.legnext.ai/v1/mj/imagine"
+            url = "https://api.legnext.ai/api/v1/diffusion"  # ✅ 문서 기준
             headers = {
-                "Authorization": f"Bearer {LEGNEXT_API_KEY}",
-                "Content-Type": "application/json"
+                "x-api-key": LEGNEXT_API_KEY,               # ✅ 문서 기준
+                "Content-Type": "application/json",
             }
+
             full_prompt = f"{mj_prompt}{mj_params}"
-            # LegNext 규격: 프롬프트에 모든 명령어를 포함하여 전송
-            payload = {"prompt": full_prompt}
+
+            payload = {
+                "text": full_prompt,                        # ✅ 문서 기준
+                # "callback": "https://your-webhook.site/..."  # (선택)
+            }
 
             with st.spinner("LegNext 서버로 작업 제출 중..."):
                 try:
-                    response = requests.post(url, json=payload, headers=headers, timeout=20)
-                    if response.status_code == 200:
+                    r = requests.post(url, json=payload, headers=headers, timeout=20)
+                    if r.status_code == 200:
                         st.success("작업 제출 성공!")
-                        st.json(response.json())
+                        st.json(r.json())  # 여기서 job_id 받음
                     else:
-                        st.error(f"API 에러 (Status: {response.status_code})")
-                        st.text(f"응답 내용: {response.text}")
+                        st.error(f"API 에러 (Status: {r.status_code})")
+                        st.text(r.text)
                 except Exception as e:
                     st.error(f"연결 오류: {e}")
 
