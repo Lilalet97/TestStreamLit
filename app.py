@@ -75,8 +75,22 @@ with tab_mj:
                 url = "https://api.goapi.ai/mj/v6/imagine"
                 headers = {"X-API-KEY": MJ_API_KEY, "Content-Type": "application/json"}
                 payload = {"prompt": full_prompt, "aspect_ratio": mj_ar_val, "process_mode": mj_mode_val}
-                response = requests.post(url, json=payload, headers=headers).json()
-                st.json(response)
+                
+                # [수정된 부분] 응답을 바로 .json()으로 바꾸지 않고 변수에 저장
+                response = requests.post(url, json=payload, headers=headers)
+                
+                # 상태 코드가 200(성공)인지 확인
+                if response.status_code == 200:
+                    try:
+                        result = response.json()
+                        st.json(result)
+                    except Exception as e:
+                        st.error(f"JSON 변환 오류: {e}")
+                        st.text(f"서버 응답 내용: {response.text}")
+                else:
+                    # 성공이 아닐 경우 에러 코드와 실제 응답 내용을 보여줌
+                    st.error(f"API 요청 실패 (Status Code: {response.status_code})")
+                    st.text(f"상세 에러 내용: {response.text}")
 
 # --- 2. Kling AI 탭 ---
 with tab_kl:
