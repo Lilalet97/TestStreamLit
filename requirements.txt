@@ -1,2 +1,3 @@
-PyJWT
+streamlit
 requests
+PyJWT
