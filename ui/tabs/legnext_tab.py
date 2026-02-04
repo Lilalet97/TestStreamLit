@@ -226,6 +226,7 @@ def render_legnext_tab(cfg: AppConfig, sidebar: SidebarState):
 
     active_added = False
     lease = None
+    used_key_label = "secrets/fallback"
     api_key = ""
 
     blocks = []
@@ -317,6 +318,9 @@ def render_legnext_tab(cfg: AppConfig, sidebar: SidebarState):
                 request_units=1,
                 on_wait=_on_wait,
             )
+            used_key_label = f"{lease.key_name} (api_key_id={lease.api_key_id})"
+            st.caption(f"🔑 사용 키: {used_key_label}")
+            log("info", msg=f"사용 키: {used_key_label}")
             api_key = lease.key_payload.get("api_key", "")
             if not api_key:
                 raise RuntimeError("키 풀에서 legnext api_key를 얻지 못했습니다. KEY_POOL_JSON/시드 설정을 확인하세요.")
@@ -326,6 +330,7 @@ def render_legnext_tab(cfg: AppConfig, sidebar: SidebarState):
                 stage="run.lease_acquired",
                 lease_id=lease.lease_id,
                 api_key_id=getattr(lease, "api_key_id", None),
+                key_name=getattr(lease, "key_name", None),
                 ts=now_iso(),
             )
         else:

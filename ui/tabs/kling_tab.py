@@ -207,6 +207,10 @@ def render_kling_tab(cfg: AppConfig, sidebar: SidebarState):
                     on_wait=on_wait,
                 )
 
+                used_key_label = f"{lease.key_name} (api_key_id={lease.api_key_id})"
+                st.caption(f"🔑 사용 키: {used_key_label}")
+                log("info", msg=f"사용 키: {used_key_label}")
+
                 ak = (lease.key_payload or {}).get("access_key", "")
                 sk = (lease.key_payload or {}).get("secret_key", "")
                 if not (ak and sk):
@@ -217,6 +221,7 @@ def render_kling_tab(cfg: AppConfig, sidebar: SidebarState):
                     stage="run.lease_acquired",
                     lease_id=lease.lease_id,
                     api_key_id=getattr(lease, "api_key_id", None),
+                    key_name=getattr(lease, "key_name", None),
                     ts=now_iso(),
                 )
                 msg = "키 확보 완료. 작업 진행합니다."
