@@ -19,12 +19,33 @@ from ui import result_store
 
 
 def render_legnext_tab(cfg: AppConfig, sidebar: SidebarState):
+    def _get_secret(name: str) -> str:
+        v = os.getenv(name)
+        if v:
+            return v
+        try:
+            # Streamlit secrets 지원
+            return str(st.secrets.get(name, "")).strip()
+        except Exception:
+            return ""
+
+    # 1) KEY_POOL_JSON은 secrets/env 둘 다 지원
+    _key_pool_json = _get_secret("KEY_POOL_JSON")
+    if _key_pool_json and not os.getenv("KEY_POOL_JSON"):
+        # core.key_pool 쪽이 os.getenv만 보는 구현이어도 동작하게 강제 주입
+        os.environ["KEY_POOL_JSON"] = _key_pool_json
+
+    use_key_pool = bool(_key_pool_json)
+
+    # 2) LegNext API Key도 secrets/env 보조 (cfg가 비면 여기도 확인)
+    fallback_api_key = (cfg.legnext_api_key or _get_secret("MJ_API_KEY")).strip()
+    
     result_store.init("legnext")
 
     st.header("Midjourney via LegNext (Text → Image, Submit → Poll → Display)")
 
     # key pool 사용이 기본이면 cfg.legnext_api_key 체크는 'fallback' 용도임
-    if (not sidebar.test_mode) and (not os.getenv("KEY_POOL_JSON")) and (not cfg.legnext_api_key):
+    if (not sidebar.test_mode) and (not use_key_pool) and (not fallback_api_key):
         st.warning("Secrets 또는 환경변수에 MJ_API_KEY(=LegNext API Key) 또는 KEY_POOL_JSON을 설정해야 합니다.")
 
     colA, colB = st.columns([2, 1])
@@ -104,7 +125,7 @@ def render_legnext_tab(cfg: AppConfig, sidebar: SidebarState):
                     if sidebar.test_mode:
                         sc, raw, j = legnext.mock_get_job(existing_job_id.strip())
                     else:
-                        if os.getenv("KEY_POOL_JSON"):
+                        if use_key_pool:
                             result_store.update_inflight("legnext", stage="job_check.acquire_lease")
                             lease = acquire_lease(
                                 cfg,
@@ -128,7 +149,7 @@ def render_legnext_tab(cfg: AppConfig, sidebar: SidebarState):
                             if not api_key:
                                 raise RuntimeError("키 풀에서 legnext api_key를 얻지 못했습니다. KEY_POOL_JSON/시드 설정을 확인하세요.")
                         else:
-                            api_key = cfg.legnext_api_key or ""
+                            api_key = fallback_api_key
                             if not api_key:
                                 raise RuntimeError("MJ_API_KEY(=LegNext API Key)가 없습니다. Secrets/환경변수 설정을 확인하세요.")
 
@@ -177,13 +198,12 @@ def render_legnext_tab(cfg: AppConfig, sidebar: SidebarState):
     st.markdown("---")
     submit = st.button("🚀 LegNext로 생성 요청(제출)", key="mj_submit_btn", use_container_width=True)
 
-    # ✅ submit 안 눌렀을 때: 저장된 결과를 “예전 UI처럼” 그대로 재생
     if not submit:
         result_store.render(
             "legnext",
-            title=None,          # "이전 결과" 제목 없애기 (예전 UI와 최대한 동일)
-            show_history=False,  # 원하면 True
-            show_clear=False,    # 원하면 True
+            title=None,
+            show_history=False,
+            show_clear=False,
             show_inflight=True,
         )
         return
@@ -208,7 +228,6 @@ def render_legnext_tab(cfg: AppConfig, sidebar: SidebarState):
     lease = None
     api_key = ""
 
-    # ✅ “예전 화면”을 rerun에도 그대로 재생하기 위한 블록 로그
     blocks = []
 
     def log(t: str, **kw):
@@ -234,7 +253,7 @@ def render_legnext_tab(cfg: AppConfig, sidebar: SidebarState):
         if not mj_prompt.strip():
             raise RuntimeError("프롬프트를 입력하세요.")
 
-        if (not sidebar.test_mode) and (not os.getenv("KEY_POOL_JSON")) and (not cfg.legnext_api_key):
+        if (not use_key_pool) and (not fallback_api_key):
             raise RuntimeError("KEY_POOL_JSON 또는 MJ_API_KEY(=LegNext API Key)를 등록해주세요.")
 
         # inflight 시작
@@ -254,7 +273,7 @@ def render_legnext_tab(cfg: AppConfig, sidebar: SidebarState):
                 return
             _last_wait["t"] = now
 
-            stt = info.get("state")
+            stt = (info.get("state") or "waiting").strip()
             pos = info.get("pos")
 
             if stt == "waiting_turn":
@@ -262,45 +281,58 @@ def render_legnext_tab(cfg: AppConfig, sidebar: SidebarState):
                 wait_ph.info(msg)
                 result_store.update_inflight("legnext", stage="run.waiting_turn", pos=pos, ts=now_iso())
             elif stt == "waiting_key":
-                msg = "⏳ 내 차례지만 현재 사용 가능한 키가 없어 대기중… (동시성/RPM 제한)"
+                msg = "⏳ 내 차례지만 사용 가능한 키가 없어 대기중… (동시성/RPM 제한)"
                 wait_ph.warning(msg)
-                result_store.update_inflight("legnext", stage="run.waiting_key", ts=now_iso())
+                result_store.update_inflight("legnext", stage="run.waiting_key", pos=pos, ts=now_iso())
+            elif stt in ("waiting_rpm", "rate_limited", "rpm_wait"):
+                # (4번에서 RPM 대기 표시랑 연결)
+                msg = f"⏳ RPM 제한으로 대기중… (pos: {pos})" if pos is not None else "⏳ RPM 제한으로 대기중…"
+                wait_ph.warning(msg)
+                result_store.update_inflight("legnext", stage="run.waiting_rpm", pos=pos, ts=now_iso())
+            else:
+                # ✅ 나머지 상태도 전부 UI에 표시
+                msg = f"⏳ 대기중… ({stt})"
+                if pos is not None:
+                    msg += f" / pos={pos}"
+                wait_ph.info(msg)
+                result_store.update_inflight("legnext", stage="run.waiting_any", status=stt, pos=pos, ts=now_iso())
 
         # 키 확보
-        if sidebar.test_mode:
-            api_key = ""
-        else:
-            if os.getenv("KEY_POOL_JSON"):
-                result_store.update_inflight("legnext", stage="run.acquire_lease", ts=now_iso())
-                lease = acquire_lease(
-                    cfg,
-                    provider="legnext",
-                    run_id=run_id,
-                    user_id=st.session_state.user_id,
-                    session_id=st.session_state.session_id,
-                    school_id=st.session_state.get("school_id", "default"),
-                    wait=True,
-                    max_wait_sec=int(max_wait),
-                    poll_interval_sec=min(2.0, float(poll_interval)),
-                    request_units=1,
-                    on_wait=_on_wait,
-                )
-                api_key = lease.key_payload.get("api_key", "")
-                if not api_key:
-                    raise RuntimeError("키 풀에서 legnext api_key를 얻지 못했습니다. KEY_POOL_JSON/시드 설정을 확인하세요.")
+        api_key = ""
+        lease = None
 
-                result_store.update_inflight(
-                    "legnext",
-                    stage="run.lease_acquired",
-                    lease_id=lease.lease_id,
-                    api_key_id=getattr(lease, "api_key_id", None),
-                    ts=now_iso(),
-                )
-            else:
-                api_key = cfg.legnext_api_key or ""
-                if not api_key:
-                    raise RuntimeError("MJ_API_KEY(=LegNext API Key)를 얻지 못했습니다. 설정을 확인하세요.")
-                result_store.update_inflight("legnext", stage="run.key_from_cfg", ts=now_iso())
+        if use_key_pool:
+            wait_ph.info("⏳ 키 풀에서 키를 할당받는 중…")
+            result_store.update_inflight("legnext", stage="run.waiting_any", ts=now_iso())
+            lease = acquire_lease(
+                cfg,
+                provider="legnext",
+                run_id=run_id,
+                user_id=st.session_state.user_id,
+                session_id=st.session_state.session_id,
+                school_id=st.session_state.get("school_id", "default"),
+                wait=True,
+                max_wait_sec=int(max_wait),
+                poll_interval_sec=min(2.0, float(poll_interval)),
+                request_units=1,
+                on_wait=_on_wait,
+            )
+            api_key = lease.key_payload.get("api_key", "")
+            if not api_key:
+                raise RuntimeError("키 풀에서 legnext api_key를 얻지 못했습니다. KEY_POOL_JSON/시드 설정을 확인하세요.")
+
+            result_store.update_inflight(
+                "legnext",
+                stage="run.lease_acquired",
+                lease_id=lease.lease_id,
+                api_key_id=getattr(lease, "api_key_id", None),
+                ts=now_iso(),
+            )
+        else:
+            api_key = fallback_api_key
+            if not api_key:
+                raise RuntimeError("MJ_API_KEY(=LegNext API Key)를 얻지 못했습니다. 설정을 확인하세요.")
+            result_store.update_inflight("legnext", stage="run.key_from_cfg", ts=now_iso())
 
         msg = "키 확보 완료. 작업 진행합니다."
         wait_ph.success(msg)
@@ -393,8 +425,16 @@ def render_legnext_tab(cfg: AppConfig, sidebar: SidebarState):
             if lease:
                 heartbeat(cfg, lease.lease_id)
 
-            if lease and (not sidebar.test_mode):
-                consume_rpm(cfg, lease.api_key_id, units=1, wait=True, max_wait_sec=30, poll_interval_sec=1.0)
+            if lease and getattr(lease, "api_key_id", None):
+                consume_rpm(
+                    cfg,
+                    lease.api_key_id,
+                    units=1,
+                    wait=True,
+                    max_wait_sec=30,
+                    poll_interval_sec=1.0,
+                    on_wait=_on_wait,
+                )
 
             if sidebar.test_mode:
                 sc2, raw2, j2 = legnext.mock_get_job(job_id)

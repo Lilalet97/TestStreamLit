@@ -14,7 +14,7 @@ from core.redact import redact_obj, json_dumps_safe
 from core.analysis import analyze_error
 from providers import kling
 from ui.sidebar import SidebarState
-from core.key_pool import acquire_lease, release_lease
+from core.key_pool import acquire_lease, release_lease, consume_rpm, heartbeat
 from ui import result_store   # ✅ 추가
 
 KLING_IMAGE_ENDPOINT = "https://api.klingai.com/v1/images/generations"
@@ -22,12 +22,26 @@ KLING_VIDEO_ENDPOINT = "https://api.klingai.com/v1/video/generations"
 
 
 def render_kling_tab(cfg: AppConfig, sidebar: SidebarState):
+    def _get_secret(name: str) -> str:
+        v = os.getenv(name)
+        if v:
+            return v
+        try:
+            return str(st.secrets.get(name, "")).strip()
+        except Exception:
+            return ""
+
+    _key_pool_json = _get_secret("KEY_POOL_JSON")
+    if _key_pool_json and not os.getenv("KEY_POOL_JSON"):
+        os.environ["KEY_POOL_JSON"] = _key_pool_json
+
+    use_key_pool = bool(os.environ.get("KEY_POOL_JSON"))
     # ✅ LegNext와 동일: 세션 결과 저장소 초기화
     result_store.init("kling")
 
     st.header("Kling AI Image/Video (안정화 + MOCK 완전 지원)")
 
-    if (not sidebar.test_mode) and (not os.getenv("KEY_POOL_JSON")) and (not (cfg.kling_access_key and cfg.kling_secret_key)):
+    if (not sidebar.test_mode) and (not use_key_pool) and (not (cfg.kling_access_key and cfg.kling_secret_key)):
         st.warning("Secrets/환경변수에 KLING_ACCESS_KEY, KLING_SECRET_KEY를 설정해야 합니다.")
 
     kl_prompt = st.text_area("프롬프트 입력", placeholder="High-end fashion photography...", key="kl_prompt", height=120)
@@ -141,29 +155,44 @@ def render_kling_tab(cfg: AppConfig, sidebar: SidebarState):
 
         def on_wait(info):
             pos = info.get("pos")
-            stt = info.get("state")
+            stt = (info.get("state") or "waiting").strip()
+            reason = info.get("reason")
+            retry_after = info.get("retry_after_sec")
+
             if stt == "waiting_turn":
-                msg = f"⏳ 키 대기열 대기 중… (내 순서: {pos}번째)"
+                msg = f"⏳ 대기열 대기중… (내 순번: {pos})"
+                wait_box.info(msg)
+                result_store.update_inflight("kling", stage="run.waiting_turn", pos=pos, ts=now_iso())
+
             elif stt == "waiting_key":
-                msg = f"⏳ 내 순서지만 사용 가능한 키가 없어 대기 중… (대기열: {pos}번째)"
-            else:
-                msg = "⏳ 대기 중…"
-
-            if msg != last_wait_state["msg"]:
+                # reason을 함께 표시 (concurrency/mixed/no_keys 등)
+                tail = f" (reason: {reason})" if reason else ""
+                msg = f"⏳ 내 차례지만 사용 가능한 키가 없어 대기중… (동시성/RPM/스코프){tail}"
                 wait_box.warning(msg)
-                last_wait_state["msg"] = msg
+                result_store.update_inflight("kling", stage="run.waiting_key", pos=pos, reason=reason, ts=now_iso())
 
-            # ✅ inflight에도 남김
-            result_store.update_inflight("kling", stage=f"run.{stt}", pos=pos, ts=now_iso())
+            elif stt == "waiting_rpm":
+                # ✅ key_pool에서 실제로 올라오게 됨(1-3 적용 후)
+                tail = f" (약 {retry_after}s 후 재시도)" if retry_after else ""
+                msg = f"⏳ RPM 제한으로 대기중…{tail}"
+                wait_box.warning(msg)
+                result_store.update_inflight("kling", stage="run.waiting_rpm", pos=pos, retry_after_sec=retry_after, ts=now_iso())
+
+            else:
+                # ✅ “대기 UI 뜨는 조건”을 더 넓게: 어떤 상태든 표시
+                msg = f"⏳ 대기중… ({stt})"
+                if pos is not None:
+                    msg += f" / pos={pos}"
+                wait_box.info(msg)
+                result_store.update_inflight("kling", stage="run.waiting_any", status=stt, pos=pos, ts=now_iso())
 
         # 제출
         result_store.update_inflight("kling", stage="run.submitting", ts=now_iso())
 
         with st.spinner("Kling 작업 제출 중..."):
-            if sidebar.test_mode:
-                sc, raw, j = kling.mock_submit(is_video=is_video, scenario=sidebar.mock_scenario)
-            else:
+            if use_key_pool:
                 result_store.update_inflight("kling", stage="run.acquire_lease", ts=now_iso())
+                wait_box.info("⏳ 키 풀에서 키를 할당받는 중…")
                 lease = acquire_lease(
                     cfg,
                     provider="kling",
@@ -178,8 +207,8 @@ def render_kling_tab(cfg: AppConfig, sidebar: SidebarState):
                     on_wait=on_wait,
                 )
 
-                ak = lease.key_payload.get("access_key", "")
-                sk = lease.key_payload.get("secret_key", "")
+                ak = (lease.key_payload or {}).get("access_key", "")
+                sk = (lease.key_payload or {}).get("secret_key", "")
                 if not (ak and sk):
                     raise RuntimeError("키 풀에서 kling access/secret을 얻지 못했습니다. KEY_POOL_JSON/시드 설정을 확인하세요.")
 
@@ -190,11 +219,22 @@ def render_kling_tab(cfg: AppConfig, sidebar: SidebarState):
                     api_key_id=getattr(lease, "api_key_id", None),
                     ts=now_iso(),
                 )
-
                 msg = "키 확보 완료. 작업 진행합니다."
-                wait_box.success(msg)
-                log("success", msg=msg)
+            else:
+                # ✅ 키풀이 없으면(테스트모드도 동일하게) secrets 키를 요구
+                ak = cfg.kling_access_key or ""
+                sk = cfg.kling_secret_key or ""
+                if not (ak and sk):
+                    raise RuntimeError("KEY_POOL_JSON이 없고 KLING_ACCESS_KEY/KLING_SECRET_KEY도 없습니다. 설정을 확인하세요.")
+                msg = "키(Secrets) 확인 완료. 작업 진행합니다."
 
+            wait_box.success(msg)
+            log("success", msg=msg)
+
+            # ✅ 비용 발생하는 실제 API 호출만 mock으로 대체
+            if sidebar.test_mode:
+                sc, raw, j = kling.mock_submit(is_video=is_video, scenario=sidebar.mock_scenario)
+            else:
                 if is_video:
                     sc, raw, j = kling.submit_video(ak, sk, endpoint, payload)
                 else:

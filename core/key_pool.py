@@ -19,6 +19,10 @@ def minute_bucket_iso(dt: Optional[datetime] = None) -> str:
     dt = dt.replace(second=0, microsecond=0)
     return dt.isoformat() + "Z"
 
+def _seconds_to_next_minute(dt: Optional[datetime] = None) -> int:
+    dt = dt or datetime.utcnow()
+    next_min = dt.replace(second=0, microsecond=0) + timedelta(minutes=1)
+    return max(1, int((next_min - dt).total_seconds()))
 
 # ---------- db helpers ----------
 def _db(cfg: AppConfig) -> sqlite3.Connection:
@@ -390,6 +394,88 @@ def _select_best_key(cur: sqlite3.Cursor, provider: str, school_id: str,
     """, (provider, lease_cutoff_iso, bucket, provider, now_iso(), request_units, school_id))
     return cur.fetchone()
 
+def _diagnose_block_reason(
+    cur: sqlite3.Cursor,
+    provider: str,
+    school_id: str,
+    lease_cutoff_iso: str,
+    bucket: str,
+    request_units: int,
+) -> Dict[str, Any]:
+    """
+    _select_best_key()가 None일 때, 막힌 원인이
+    - rpm 때문인지
+    - concurrency 때문인지
+    - scope/만료/비활성 등으로 '키 자체가 없는지'
+    를 최소 비용으로 판별.
+    """
+    cur.execute("""
+        WITH active AS (
+          SELECT api_key_id, COUNT(*) AS active_count
+          FROM api_key_leases
+          WHERE provider=? AND state='active' AND last_heartbeat_at >= ?
+          GROUP BY api_key_id
+        ),
+        usage AS (
+          SELECT api_key_id, count AS rpm_count
+          FROM api_key_usage_minute
+          WHERE minute_bucket=?
+        )
+        SELECT
+          COUNT(*) AS total_keys,
+          SUM(CASE WHEN COALESCE(a.active_count, 0) < k.concurrency_limit THEN 1 ELSE 0 END) AS conc_ok,
+          SUM(CASE WHEN
+                (k.rpm_limit IS NULL OR k.rpm_limit <= 0 OR (COALESCE(u.rpm_count, 0) + ?) <= k.rpm_limit)
+              THEN 1 ELSE 0 END) AS rpm_ok,
+          SUM(CASE WHEN
+                COALESCE(a.active_count, 0) < k.concurrency_limit
+                AND (k.rpm_limit IS NULL OR k.rpm_limit <= 0 OR (COALESCE(u.rpm_count, 0) + ?) <= k.rpm_limit)
+              THEN 1 ELSE 0 END) AS both_ok
+        FROM api_keys k
+        LEFT JOIN active a ON a.api_key_id = k.api_key_id
+        LEFT JOIN usage  u ON u.api_key_id = k.api_key_id
+        WHERE k.provider=?
+          AND k.is_active=1
+          AND (k.expires_at IS NULL OR k.expires_at='' OR k.expires_at > ?)
+          AND (
+              k.tenant_scope IS NULL OR k.tenant_scope='' OR k.tenant_scope='*'
+              OR instr(',' || k.tenant_scope || ',', ',' || ? || ',') > 0
+          )
+    """, (
+        provider, lease_cutoff_iso, bucket,
+        int(request_units), int(request_units),
+        provider, now_iso(), school_id
+    ))
+    r = cur.fetchone()
+    if not r:
+        return {"blocked_by": "no_keys", "total_keys": 0, "conc_ok": 0, "rpm_ok": 0, "both_ok": 0}
+
+    total_keys = int(r["total_keys"] or 0)
+    conc_ok = int(r["conc_ok"] or 0)
+    rpm_ok = int(r["rpm_ok"] or 0)
+    both_ok = int(r["both_ok"] or 0)
+
+    blocked_by = "mixed"
+    if total_keys <= 0:
+        blocked_by = "no_keys"
+    elif both_ok > 0:
+        blocked_by = "none"  # 이 케이스면 원래 _select_best_key가 뽑혔어야 함
+    elif conc_ok > 0 and rpm_ok == 0:
+        blocked_by = "rpm"
+    elif conc_ok == 0 and rpm_ok > 0:
+        blocked_by = "concurrency"
+    elif conc_ok == 0 and rpm_ok == 0:
+        blocked_by = "concurrency_and_rpm"
+
+    return {
+        "blocked_by": blocked_by,
+        "total_keys": total_keys,
+        "conc_ok": conc_ok,
+        "rpm_ok": rpm_ok,
+        "both_ok": both_ok,
+    }
+
+
 def _inc_rpm(cur: sqlite3.Cursor, api_key_id: int, bucket: str, units: int) -> None:
     cur.execute("""
         INSERT INTO api_key_usage_minute(api_key_id, minute_bucket, count)
@@ -492,12 +578,28 @@ def acquire_lease(
                                 ttl_sec=ttl,
                             )
                         else:
-                            wait_info = {
-                                "state": "waiting_key",
-                                "provider": provider,
-                                "run_id": run_id,
-                                "pos": pos,
-                            }
+                            diag = _diagnose_block_reason(cur, provider, school_id, lease_cutoff, bucket, int(request_units))
+                            blocked_by = diag.get("blocked_by")
+
+                            if blocked_by == "rpm":
+                                wait_info = {
+                                    "state": "waiting_rpm",
+                                    "provider": provider,
+                                    "run_id": run_id,
+                                    "pos": pos,
+                                    "retry_after_sec": _seconds_to_next_minute(now),
+                                    **diag,
+                                }
+                            else:
+                                # concurrency / mixed / no_keys 등은 기존 waiting_key로 유지하되 reason을 붙임
+                                wait_info = {
+                                    "state": "waiting_key",
+                                    "provider": provider,
+                                    "run_id": run_id,
+                                    "pos": pos,
+                                    "reason": blocked_by,
+                                    **diag,
+                                }
                 else:
                     row = _select_best_key(cur, provider, school_id, lease_cutoff, bucket, int(request_units))
                     if row is not None:
@@ -585,23 +687,27 @@ def release_lease(cfg: AppConfig, lease_id: str, state: str = "released") -> Non
         conn.close()
 
 def consume_rpm(cfg: AppConfig, api_key_id: int, units: int = 1, wait: bool = True,
-                max_wait_sec: int = 30, poll_interval_sec: float = 1.0) -> None:
-    """
-    폴링/추가 호출까지 rpm_limit을 엄격히 맞추고 싶을 때 사용.
-    - (단, 현재는 lease를 '같은 키로 유지'한다고 가정하므로, rpm이 막히면 그냥 기다리는 방식)
-    """
+                max_wait_sec: int = 30, poll_interval_sec: float = 1.0,
+                on_wait: Optional[Callable[[Dict[str, Any]], None]] = None) -> None:
+    
     deadline = time.time() + float(max_wait_sec)
     conn = _db(cfg)
     try:
         while True:
             b = minute_bucket_iso()
+            now_dt = datetime.utcnow()
+            wait_info = None
+
             with Txn(conn):
                 cur = conn.cursor()
-                cur.execute("SELECT rpm_limit FROM api_keys WHERE api_key_id=?", (api_key_id,))
+                cur.execute("SELECT provider, rpm_limit FROM api_keys WHERE api_key_id=?", (api_key_id,))
                 row = cur.fetchone()
                 if not row:
                     return
+
+                provider = str(row["provider"])
                 rpm_limit = row["rpm_limit"]
+
                 if rpm_limit is None or int(rpm_limit) <= 0:
                     _inc_rpm(cur, api_key_id, b, int(units))
                     return
@@ -612,14 +718,35 @@ def consume_rpm(cfg: AppConfig, api_key_id: int, units: int = 1, wait: bool = Tr
                 """, (api_key_id, b))
                 u = cur.fetchone()
                 current = int(u["count"]) if u else 0
+
                 if current + int(units) <= int(rpm_limit):
                     _inc_rpm(cur, api_key_id, b, int(units))
                     return
 
+                # 여기서부터는 rpm_limit 때문에 막힘
+                wait_info = {
+                    "state": "waiting_rpm",
+                    "provider": provider,
+                    "api_key_id": api_key_id,
+                    "bucket": b,
+                    "current": current,
+                    "rpm_limit": int(rpm_limit),
+                    "units": int(units),
+                    "retry_after_sec": _seconds_to_next_minute(now_dt),
+                }
+
+            # Txn 밖
             if not wait:
                 raise TimeoutError("rpm_limit reached (wait=False)")
             if time.time() >= deadline:
                 raise TimeoutError("rpm_limit wait timeout")
+
+            if wait_info is not None and on_wait:
+                try:
+                    on_wait(wait_info)
+                except Exception:
+                    pass
+
             time.sleep(float(poll_interval_sec))
     finally:
         conn.close()
