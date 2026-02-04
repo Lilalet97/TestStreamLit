@@ -1,0 +1,576 @@
+# ui/tabs/legnext_tab.py
+import time
+import uuid
+import traceback
+import streamlit as st
+import os
+
+from core.config import AppConfig
+from core.db import (
+    guard_concurrency_or_raise, add_active_job, touch_active_job, remove_active_job,
+    insert_run, update_run, now_iso
+)
+from core.redact import redact_obj, json_dumps_safe
+from core.analysis import analyze_error
+from providers import legnext
+from ui.sidebar import SidebarState
+from core.key_pool import acquire_lease, release_lease, heartbeat, consume_rpm
+from ui import result_store
+
+
+def render_legnext_tab(cfg: AppConfig, sidebar: SidebarState):
+    result_store.init("legnext")
+
+    st.header("Midjourney via LegNext (Text → Image, Submit → Poll → Display)")
+
+    # key pool 사용이 기본이면 cfg.legnext_api_key 체크는 'fallback' 용도임
+    if (not sidebar.test_mode) and (not os.getenv("KEY_POOL_JSON")) and (not cfg.legnext_api_key):
+        st.warning("Secrets 또는 환경변수에 MJ_API_KEY(=LegNext API Key) 또는 KEY_POOL_JSON을 설정해야 합니다.")
+
+    colA, colB = st.columns([2, 1])
+
+    with colA:
+        mj_prompt = st.text_area(
+            "프롬프트 입력",
+            placeholder="A cinematic shot of a cyber-punk city...",
+            height=140,
+            key="mj_prompt",
+        )
+        use_adv_mj = st.toggle("MJ 상세 파라미터 활성화", value=False, key="mj_toggle")
+
+        mj_params = ""
+        if use_adv_mj:
+            with st.expander("🛠️ MJ 파라미터 (프롬프트 뒤에 붙여 전송)", expanded=True):
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    st.markdown("### 📐 Canvas & Model")
+                    mj_ar = st.selectbox("화면 비율 (--ar)", ["1:1", "16:9", "9:16", "4:5", "2:3", "3:2", "21:9"])
+                    mj_ver = st.selectbox("모델 버전 (--v)", ["7", "6.1", "6.0", "5.2", "5.1", "Niji 6", "Niji 5"])
+                    mj_quality = st.select_slider("품질 (--q)", options=[0.25, 0.5, 1], value=1)
+                with c2:
+                    st.markdown("### 🎨 Artistic Control")
+                    mj_stylize = st.number_input("스타일 강도 (--s)", 0, 1000, 250, step=50)
+                    mj_chaos = st.number_input("카오스 (다양성, --c)", 0, 100, 0)
+                    mj_weird = st.number_input("기괴함 (--w)", 0, 3000, 0, step=100)
+                with c3:
+                    st.markdown("### ⚙️ Extra")
+                    mj_stop = st.slider("생성 중단 시점 (--stop)", 10, 100, 100)
+                    mj_tile = st.checkbox("패턴 타일링 (--tile)")
+                    mj_raw = st.checkbox("RAW 스타일 적용 (--style raw)")
+                    mj_draft = st.checkbox("초안 모드 (--draft)")
+
+                mj_params = f" --ar {mj_ar} --v {mj_ver} --q {mj_quality} --s {mj_stylize} --c {mj_chaos}"
+                if mj_weird > 0:
+                    mj_params += f" --w {mj_weird}"
+                if mj_tile:
+                    mj_params += " --tile"
+                if mj_raw:
+                    mj_params += " --style raw"
+                if mj_draft:
+                    mj_params += " --draft"
+                if mj_stop < 100:
+                    mj_params += f" --stop {mj_stop}"
+
+    with colB:
+        st.markdown("### ⚙️ 실행 옵션")
+        auto_poll = st.toggle("제출 후 자동 폴링", value=True, key="mj_auto_poll")
+        poll_interval = st.slider("폴링 간격(초)", 1.0, 10.0, 2.0, 0.5, key="mj_poll_interval")
+        max_wait = st.slider("최대 대기(초)", 10, 300, 120, 10, key="mj_max_wait")
+
+        st.markdown("---")
+        st.markdown("### 🔎 기존 job_id 조회")
+        existing_job_id = st.text_input("job_id 입력", key="mj_existing_job_id")
+
+        if st.button("상태 조회", key="mj_check_btn"):
+            if not existing_job_id.strip():
+                st.error("job_id를 입력하세요.")
+            else:
+                tmp_run_id = f"check-{uuid.uuid4()}"
+                blocks = []
+
+                def log(t: str, **kw):
+                    blocks.append({"t": t, **kw})
+
+                lease = None
+                try:
+                    result_store.set_inflight(
+                        "legnext",
+                        stage="job_check.start",
+                        ts=now_iso(),
+                        run_id=tmp_run_id,
+                        job_id=existing_job_id.strip(),
+                    )
+
+                    if sidebar.test_mode:
+                        sc, raw, j = legnext.mock_get_job(existing_job_id.strip())
+                    else:
+                        if os.getenv("KEY_POOL_JSON"):
+                            result_store.update_inflight("legnext", stage="job_check.acquire_lease")
+                            lease = acquire_lease(
+                                cfg,
+                                provider="legnext",
+                                run_id=tmp_run_id,
+                                user_id=st.session_state.user_id,
+                                session_id=st.session_state.session_id,
+                                school_id=st.session_state.get("school_id", "default"),
+                                wait=True,
+                                max_wait_sec=30,
+                                poll_interval_sec=1.0,
+                                request_units=1,
+                            )
+                            result_store.update_inflight(
+                                "legnext",
+                                stage="job_check.lease_acquired",
+                                lease_id=lease.lease_id,
+                                api_key_id=getattr(lease, "api_key_id", None),
+                            )
+                            api_key = lease.key_payload.get("api_key", "")
+                            if not api_key:
+                                raise RuntimeError("키 풀에서 legnext api_key를 얻지 못했습니다. KEY_POOL_JSON/시드 설정을 확인하세요.")
+                        else:
+                            api_key = cfg.legnext_api_key or ""
+                            if not api_key:
+                                raise RuntimeError("MJ_API_KEY(=LegNext API Key)가 없습니다. Secrets/환경변수 설정을 확인하세요.")
+
+                        sc, raw, j = legnext.get_job(existing_job_id.strip(), api_key)
+
+                    if sc == 200 and isinstance(j, dict) and j.get("job_id"):
+                        st.success(f"조회 성공 (status: {j.get('status')})")
+                        st.json(j)
+                        log("success", msg=f"조회 성공 (status: {j.get('status')})")
+                        log("json", obj=redact_obj(j))
+                        result_store.push("legnext", {
+                            "ts": now_iso(),
+                            "kind": "blocks",
+                            "run_id": tmp_run_id,
+                            "job_id": j.get("job_id"),
+                            "blocks": blocks,
+                        })
+                    else:
+                        st.error(f"조회 실패 (HTTP {sc})")
+                        st.text(raw)
+                        log("error", msg=f"조회 실패 (HTTP {sc})")
+                        log("json", obj={"http_status": sc, "raw": raw, "json": redact_obj(j) if isinstance(j, dict) else None})
+                        result_store.push("legnext", {
+                            "ts": now_iso(),
+                            "kind": "blocks",
+                            "run_id": tmp_run_id,
+                            "job_id": existing_job_id.strip(),
+                            "blocks": blocks,
+                        })
+
+                except Exception as e:
+                    st.error(str(e))
+                    log("error", msg=str(e))
+                    result_store.push("legnext", {
+                        "ts": now_iso(),
+                        "kind": "blocks",
+                        "run_id": tmp_run_id,
+                        "job_id": existing_job_id.strip(),
+                        "blocks": blocks,
+                    })
+                finally:
+                    if lease:
+                        release_lease(cfg, lease.lease_id)
+                    result_store.clear_inflight("legnext")
+
+    st.markdown("---")
+    submit = st.button("🚀 LegNext로 생성 요청(제출)", key="mj_submit_btn", use_container_width=True)
+
+    # ✅ submit 안 눌렀을 때: 저장된 결과를 “예전 UI처럼” 그대로 재생
+    if not submit:
+        result_store.render(
+            "legnext",
+            title=None,          # "이전 결과" 제목 없애기 (예전 UI와 최대한 동일)
+            show_history=False,  # 원하면 True
+            show_clear=False,    # 원하면 True
+            show_inflight=True,
+        )
+        return
+
+    provider = "legnext"
+    operation = "image.generate"
+    endpoint = f"{legnext.LEGNEXT_BASE}/diffusion"
+    run_id = str(uuid.uuid4())
+    start_t = time.time()
+
+    request_obj = {
+        "prompt": mj_prompt,
+        "mj_params": mj_params,
+        "auto_poll": auto_poll,
+        "poll_interval": poll_interval,
+        "max_wait": max_wait,
+        "mock": sidebar.test_mode,
+        "mock_scenario": sidebar.mock_scenario if sidebar.test_mode else None,
+    }
+
+    active_added = False
+    lease = None
+    api_key = ""
+
+    # ✅ “예전 화면”을 rerun에도 그대로 재생하기 위한 블록 로그
+    blocks = []
+
+    def log(t: str, **kw):
+        blocks.append({"t": t, **kw})
+
+    try:
+        guard_concurrency_or_raise(cfg)
+        add_active_job(cfg, run_id, provider, operation, "running")
+        active_added = True
+
+        insert_run(cfg, {
+            "run_id": run_id,
+            "created_at": now_iso(),
+            "user_id": st.session_state.user_id,
+            "session_id": st.session_state.session_id,
+            "provider": provider,
+            "operation": operation,
+            "endpoint": endpoint,
+            "request_json": json_dumps_safe(redact_obj(request_obj)),
+            "state": "running",
+        })
+
+        if not mj_prompt.strip():
+            raise RuntimeError("프롬프트를 입력하세요.")
+
+        if (not sidebar.test_mode) and (not os.getenv("KEY_POOL_JSON")) and (not cfg.legnext_api_key):
+            raise RuntimeError("KEY_POOL_JSON 또는 MJ_API_KEY(=LegNext API Key)를 등록해주세요.")
+
+        # inflight 시작
+        result_store.set_inflight(
+            "legnext",
+            stage="run.start",
+            ts=now_iso(),
+            run_id=run_id,
+        )
+
+        wait_ph = st.empty()
+        _last_wait = {"t": 0.0}
+
+        def _on_wait(info):
+            now = time.time()
+            if now - _last_wait["t"] < 0.7:
+                return
+            _last_wait["t"] = now
+
+            stt = info.get("state")
+            pos = info.get("pos")
+
+            if stt == "waiting_turn":
+                msg = f"⏳ 대기열 대기중… (내 순번: {pos})"
+                wait_ph.info(msg)
+                result_store.update_inflight("legnext", stage="run.waiting_turn", pos=pos, ts=now_iso())
+            elif stt == "waiting_key":
+                msg = "⏳ 내 차례지만 현재 사용 가능한 키가 없어 대기중… (동시성/RPM 제한)"
+                wait_ph.warning(msg)
+                result_store.update_inflight("legnext", stage="run.waiting_key", ts=now_iso())
+
+        # 키 확보
+        if sidebar.test_mode:
+            api_key = ""
+        else:
+            if os.getenv("KEY_POOL_JSON"):
+                result_store.update_inflight("legnext", stage="run.acquire_lease", ts=now_iso())
+                lease = acquire_lease(
+                    cfg,
+                    provider="legnext",
+                    run_id=run_id,
+                    user_id=st.session_state.user_id,
+                    session_id=st.session_state.session_id,
+                    school_id=st.session_state.get("school_id", "default"),
+                    wait=True,
+                    max_wait_sec=int(max_wait),
+                    poll_interval_sec=min(2.0, float(poll_interval)),
+                    request_units=1,
+                    on_wait=_on_wait,
+                )
+                api_key = lease.key_payload.get("api_key", "")
+                if not api_key:
+                    raise RuntimeError("키 풀에서 legnext api_key를 얻지 못했습니다. KEY_POOL_JSON/시드 설정을 확인하세요.")
+
+                result_store.update_inflight(
+                    "legnext",
+                    stage="run.lease_acquired",
+                    lease_id=lease.lease_id,
+                    api_key_id=getattr(lease, "api_key_id", None),
+                    ts=now_iso(),
+                )
+            else:
+                api_key = cfg.legnext_api_key or ""
+                if not api_key:
+                    raise RuntimeError("MJ_API_KEY(=LegNext API Key)를 얻지 못했습니다. 설정을 확인하세요.")
+                result_store.update_inflight("legnext", stage="run.key_from_cfg", ts=now_iso())
+
+        msg = "키 확보 완료. 작업 진행합니다."
+        wait_ph.success(msg)
+        log("success", msg=msg)
+
+        full_text = f"{mj_prompt}{mj_params}"
+        st.info("요청 텍스트(프롬프트+옵션) 미리보기")
+        st.code(full_text)
+        log("info", msg="요청 텍스트(프롬프트+옵션) 미리보기")
+        log("code", body=full_text)
+
+        result_store.update_inflight("legnext", stage="run.submitting", ts=now_iso())
+
+        with st.spinner("LegNext에 작업 제출 중..."):
+            if sidebar.test_mode:
+                sc, raw, j = legnext.mock_submit(full_text, sidebar.mock_scenario)
+            else:
+                sc, raw, j = legnext.submit(full_text, api_key)
+
+        update_run(cfg, run_id,
+                   http_status=sc,
+                   response_text=raw,
+                   response_json=json_dumps_safe(redact_obj(j)) if isinstance(j, (dict, list)) else None)
+
+        if sc != 200 or not isinstance(j, dict) or legnext.is_error_obj(j) or not j.get("job_id"):
+            analysis = analyze_error(cfg, provider, operation, endpoint,
+                                     {"text": full_text, "meta": request_obj},
+                                     sc, raw, j if isinstance(j, dict) else None, None)
+            update_run(cfg, run_id,
+                       gpt_analysis=json_dumps_safe(analysis),
+                       state="failed",
+                       error_text=f"Submit failed. HTTP={sc}\n{raw[:5000]}",
+                       duration_ms=int((time.time() - start_t) * 1000))
+
+            st.error(f"제출 실패 (HTTP {sc})")
+            st.text(raw)
+            if isinstance(j, dict):
+                st.json(j)
+            with st.expander("🧠 원인 분석", expanded=True):
+                st.json(analysis)
+
+            log("error", msg=f"제출 실패 (HTTP {sc})")
+            log("json", obj={"http_status": sc, "raw": raw, "json": redact_obj(j) if isinstance(j, dict) else None})
+            log("expander", label="🧠 원인 분석", expanded=True, blocks=[{"t": "json", "obj": analysis}])
+
+            result_store.push("legnext", {
+                "ts": now_iso(),
+                "kind": "blocks",
+                "run_id": run_id,
+                "job_id": "",
+                "blocks": blocks,
+            })
+            return
+
+        job_id = j["job_id"]
+        st.success(f"제출 성공! job_id = {job_id}")
+        st.json(j)
+        log("success", msg=f"제출 성공! job_id = {job_id}")
+        log("json", obj=redact_obj(j))
+
+        update_run(cfg, run_id, job_id=job_id, state="submitted")
+        touch_active_job(cfg, run_id, state="submitted")
+        result_store.update_inflight("legnext", stage="run.submitted", job_id=job_id, ts=now_iso())
+
+        if not auto_poll:
+            update_run(cfg, run_id, duration_ms=int((time.time() - start_t) * 1000))
+            result_store.push("legnext", {
+                "ts": now_iso(),
+                "kind": "blocks",
+                "run_id": run_id,
+                "job_id": job_id,
+                "blocks": blocks,
+            })
+            return
+
+        st.markdown("### ⏳ 자동 폴링 진행")
+        log("markdown", body="### ⏳ 자동 폴링 진행")
+
+        status_ph = st.empty()
+        prog = st.progress(0.0)
+
+        deadline = time.time() + float(max_wait)
+        last_json = None
+        last_status = ""
+
+        result_store.update_inflight("legnext", stage="run.polling", ts=now_iso())
+
+        while time.time() < deadline:
+            touch_active_job(cfg, run_id)
+            if lease:
+                heartbeat(cfg, lease.lease_id)
+
+            if lease and (not sidebar.test_mode):
+                consume_rpm(cfg, lease.api_key_id, units=1, wait=True, max_wait_sec=30, poll_interval_sec=1.0)
+
+            if sidebar.test_mode:
+                sc2, raw2, j2 = legnext.mock_get_job(job_id)
+            else:
+                sc2, raw2, j2 = legnext.get_job(job_id, api_key)
+
+            last_json = j2 if isinstance(j2, dict) else None
+
+            update_run(cfg, run_id,
+                       http_status=sc2,
+                       response_text=raw2,
+                       response_json=json_dumps_safe(redact_obj(j2)) if isinstance(j2, (dict, list)) else None)
+
+            if sc2 != 200 or not isinstance(j2, dict) or legnext.is_error_obj(j2):
+                analysis = analyze_error(cfg, provider, operation, f"{legnext.LEGNEXT_BASE}/job/{job_id}",
+                                         request_obj, sc2, raw2, j2 if isinstance(j2, dict) else None, None)
+                update_run(cfg, run_id,
+                           gpt_analysis=json_dumps_safe(analysis),
+                           state="failed",
+                           error_text=f"Poll failed. HTTP={sc2}\n{raw2[:5000]}")
+
+                st.error(f"폴링 실패 (HTTP {sc2})")
+                st.text(raw2)
+                with st.expander("🧠 원인 분석", expanded=True):
+                    st.json(analysis)
+
+                log("error", msg=f"폴링 실패 (HTTP {sc2})")
+                log("json", obj={"http_status": sc2, "raw": raw2, "json": redact_obj(j2) if isinstance(j2, dict) else None})
+                log("expander", label="🧠 원인 분석", expanded=True, blocks=[{"t": "json", "obj": analysis}])
+
+                result_store.push("legnext", {
+                    "ts": now_iso(),
+                    "kind": "blocks",
+                    "run_id": run_id,
+                    "job_id": job_id,
+                    "blocks": blocks,
+                })
+                return
+
+            status = (j2.get("status") or "").lower()
+            status_ph.info(f"status: {status}")
+            elapsed_ratio = 1.0 - max(0.0, (deadline - time.time()) / float(max_wait))
+            prog.progress(min(1.0, max(0.0, elapsed_ratio)))
+
+            # inflight는 status 바뀔 때만 갱신 (스팸 방지)
+            if status != last_status:
+                result_store.update_inflight("legnext", stage="run.polling", job_id=job_id, status=status, ts=now_iso())
+                last_status = status
+
+            if status in ("completed", "succeeded"):
+                out = j2.get("output") or {}
+                image_urls = []
+                if isinstance(out, dict):
+                    image_urls = out.get("image_urls") or []
+
+                st.success("완료!")
+                log("info", msg=f"status: {status}")
+                log("success", msg="완료!")
+
+                if image_urls:
+                    for u in image_urls:
+                        st.image(u)
+                    log("images", urls=image_urls)
+                else:
+                    st.json(j2)
+                    log("json", obj=redact_obj(j2))
+
+                update_run(cfg, run_id, state="completed", output_json=json_dumps_safe(redact_obj(out)))
+                touch_active_job(cfg, run_id, state="completed")
+
+                result_store.push("legnext", {
+                    "ts": now_iso(),
+                    "kind": "blocks",
+                    "run_id": run_id,
+                    "job_id": job_id,
+                    "blocks": blocks,
+                })
+                return
+
+            if status in ("failed", "error"):
+                analysis = analyze_error(cfg, provider, operation, f"{legnext.LEGNEXT_BASE}/job/{job_id}",
+                                         request_obj, sc2, raw2, j2, None)
+                update_run(cfg, run_id,
+                           gpt_analysis=json_dumps_safe(analysis),
+                           state="failed",
+                           error_text=f"Job failed.\n{raw2[:5000]}")
+
+                st.error("작업 실패 상태입니다.")
+                st.json(j2)
+                with st.expander("🧠 원인 분석", expanded=True):
+                    st.json(analysis)
+
+                log("error", msg="작업 실패 상태입니다.")
+                log("json", obj=redact_obj(j2))
+                log("expander", label="🧠 원인 분석", expanded=True, blocks=[{"t": "json", "obj": analysis}])
+
+                result_store.push("legnext", {
+                    "ts": now_iso(),
+                    "kind": "blocks",
+                    "run_id": run_id,
+                    "job_id": job_id,
+                    "blocks": blocks,
+                })
+                return
+
+            time.sleep(float(poll_interval))
+
+        # timeout
+        analysis = analyze_error(cfg, provider, operation, f"{legnext.LEGNEXT_BASE}/job/{job_id}",
+                                 request_obj, 200, "timeout", last_json, "timeout")
+        update_run(cfg, run_id,
+                   gpt_analysis=json_dumps_safe(analysis),
+                   state="failed",
+                   error_text=f"Timeout after {max_wait}s",
+                   duration_ms=int((time.time() - start_t) * 1000))
+
+        st.warning(f"최대 대기 시간({max_wait}s)을 초과했습니다.")
+        with st.expander("🧠 원인 분석", expanded=True):
+            st.json(analysis)
+
+        log("warning", msg=f"최대 대기 시간({max_wait}s)을 초과했습니다.")
+        log("expander", label="🧠 원인 분석", expanded=True, blocks=[{"t": "json", "obj": analysis}])
+
+        result_store.push("legnext", {
+            "ts": now_iso(),
+            "kind": "blocks",
+            "run_id": run_id,
+            "job_id": job_id,
+            "blocks": blocks,
+        })
+
+    except Exception as e:
+        err = "".join(traceback.format_exception(type(e), e, e.__traceback__))[:8000]
+        st.error(str(e))
+
+        try:
+            update_run(cfg, run_id,
+                       state="failed",
+                       error_text=err,
+                       duration_ms=int((time.time() - start_t) * 1000))
+        except Exception:
+            pass
+
+        analysis = analyze_error(cfg, provider, operation, endpoint, request_obj, None, None, None, err)
+        try:
+            update_run(cfg, run_id, gpt_analysis=json_dumps_safe(analysis))
+        except Exception:
+            pass
+
+        with st.expander("🧠 원인 분석(예외 발생)", expanded=True):
+            st.json(analysis)
+
+        log("error", msg=str(e))
+        log("expander", label="🧠 원인 분석(예외 발생)", expanded=True, blocks=[{"t": "json", "obj": analysis}])
+
+        result_store.push("legnext", {
+            "ts": now_iso(),
+            "kind": "blocks",
+            "run_id": run_id,
+            "job_id": "",
+            "blocks": blocks,
+        })
+
+    finally:
+        result_store.clear_inflight("legnext")
+        if lease:
+            release_lease(cfg, lease.lease_id)
+        if active_added:
+            remove_active_job(cfg, run_id)
+        if hasattr(sidebar, "refresh_counts"):
+            sidebar.refresh_counts()
+
+
+TAB = {
+    "tab_id": "legnext",
+    "title": "🎨 Midjourney (LegNext) - 완성형",
+    "required_features": {"tab.legnext"},
+    "render": render_legnext_tab,
+}

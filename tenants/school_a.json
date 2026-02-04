@@ -1,0 +1,5 @@
+{
+  "tenant_id": "school_a",
+  "layout": "school_a",
+  "enabled_features": ["tab.legnext"]
+}

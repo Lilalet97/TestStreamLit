@@ -1,0 +1,5 @@
+{
+  "tenant_id": "default",
+  "layout": "default",
+  "enabled_features": ["tab.legnext", "tab.kling"]
+}
