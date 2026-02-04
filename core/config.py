@@ -135,7 +135,7 @@ def load_config() -> AppConfig:
 
         runs_db_path=_get_secret_or_env("RUNS_DB_PATH", "runs.db"),
         user_max_concurrency=int(_get_secret_or_env("USER_MAX_CONCURRENCY", "1") or "1"),
-        global_max_concurrency=int(_get_secret_or_env("GLOBAL_MAX_CONCURRENCY", "2") or "2"),
+        global_max_concurrency=int(_get_secret_or_env("GLOBAL_MAX_CONCURRENCY", "4") or "4"),
 
         active_job_ttl_sec=int(_get_secret_or_env("ACTIVE_JOB_TTL_SEC", str(20 * 60)) or str(20 * 60)),
 
