@@ -61,6 +61,22 @@ def init_db(cfg: AppConfig):
         )
     """)
     cur.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            user_id TEXT PRIMARY KEY,
+            password_hash TEXT NOT NULL,
+            role TEXT NOT NULL DEFAULT 'user',
+            school_id TEXT NOT NULL DEFAULT 'default',
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT,
+            updated_at TEXT
+        )
+    """)
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_users_role_active
+        ON users(role, is_active)
+    """)
+
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS api_keys (
           api_key_id INTEGER PRIMARY KEY AUTOINCREMENT,
           provider TEXT NOT NULL,
@@ -307,3 +323,161 @@ def clear_my_active_jobs(cfg: AppConfig, session_only: bool = False, only_stale:
 
     conn.commit()
     conn.close()
+
+
+# ----------------------------
+# Auth / Users
+# ----------------------------
+
+def users_exist(cfg: AppConfig) -> bool:
+    conn = _db(cfg)
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) AS c FROM users")
+        return int(cur.fetchone()["c"]) > 0
+    finally:
+        conn.close()
+
+
+def get_user(cfg: AppConfig, user_id: str):
+    conn = _db(cfg)
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM users WHERE user_id=?", (user_id,))
+        return cur.fetchone()
+    finally:
+        conn.close()
+
+
+def list_users(cfg: AppConfig, include_inactive: bool = True):
+    conn = _db(cfg)
+    try:
+        cur = conn.cursor()
+        if include_inactive:
+            cur.execute("SELECT * FROM users ORDER BY role DESC, user_id ASC")
+        else:
+            cur.execute("SELECT * FROM users WHERE is_active=1 ORDER BY role DESC, user_id ASC")
+        return cur.fetchall()
+    finally:
+        conn.close()
+
+
+def upsert_user(cfg: AppConfig, user_id: str, password_hash: str, role: str = 'user', school_id: str = 'default', is_active: int = 1):
+    conn = _db(cfg)
+    try:
+        cur = conn.cursor()
+        ts = now_iso()
+        cur.execute(
+            """
+            INSERT INTO users (user_id, password_hash, role, school_id, is_active, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                password_hash=excluded.password_hash,
+                role=excluded.role,
+                school_id=excluded.school_id,
+                is_active=excluded.is_active,
+                updated_at=excluded.updated_at
+            """,
+            (user_id, password_hash, role, school_id, int(is_active), ts, ts),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def set_user_password(cfg: AppConfig, user_id: str, password_hash: str):
+    conn = _db(cfg)
+    try:
+        cur = conn.cursor()
+        cur.execute("UPDATE users SET password_hash=?, updated_at=? WHERE user_id=?", (password_hash, now_iso(), user_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def set_user_active(cfg: AppConfig, user_id: str, is_active: bool):
+    conn = _db(cfg)
+    try:
+        cur = conn.cursor()
+        cur.execute("UPDATE users SET is_active=?, updated_at=? WHERE user_id=?", (1 if is_active else 0, now_iso(), user_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def hard_delete_user(cfg: AppConfig, user_id: str):
+    conn = _db(cfg)
+    try:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM users WHERE user_id=?", (user_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# ----------------------------
+# Admin helpers (read-only)
+# ----------------------------
+
+def list_active_jobs_all(cfg: AppConfig, limit: int = 200, user_id: str | None = None):
+    conn = _db(cfg)
+    try:
+        cur = conn.cursor()
+        if user_id:
+            cur.execute(
+                """SELECT * FROM active_jobs WHERE user_id=? ORDER BY updated_at DESC LIMIT ?""",
+                (user_id, limit),
+            )
+        else:
+            cur.execute(
+                """SELECT * FROM active_jobs ORDER BY updated_at DESC LIMIT ?""",
+                (limit,),
+            )
+        return cur.fetchall()
+    finally:
+        conn.close()
+
+
+def list_runs_admin(cfg: AppConfig, limit: int = 200, user_id: str | None = None):
+    conn = _db(cfg)
+    try:
+        cur = conn.cursor()
+        if user_id:
+            cur.execute(
+                """SELECT * FROM runs WHERE user_id=? ORDER BY created_at DESC LIMIT ?""",
+                (user_id, limit),
+            )
+        else:
+            cur.execute(
+                """SELECT * FROM runs ORDER BY created_at DESC LIMIT ?""",
+                (limit,),
+            )
+        return cur.fetchall()
+    finally:
+        conn.close()
+
+
+def list_key_waiters(cfg: AppConfig, limit: int = 200):
+    conn = _db(cfg)
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """SELECT * FROM api_key_waiters ORDER BY enqueued_at ASC LIMIT ?""",
+            (limit,),
+        )
+        return cur.fetchall()
+    finally:
+        conn.close()
+
+
+def list_key_leases(cfg: AppConfig, limit: int = 200):
+    conn = _db(cfg)
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """SELECT * FROM api_key_leases ORDER BY acquired_at DESC LIMIT ?""",
+            (limit,),
+        )
+        return cur.fetchall()
+    finally:
+        conn.close()

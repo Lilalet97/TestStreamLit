@@ -5,6 +5,7 @@ from typing import Callable
 
 from core.config import AppConfig
 from core.db import list_runs, count_active_jobs, clear_my_active_jobs
+from core.auth import current_user, logout_user
 
 
 @dataclass
@@ -16,13 +17,22 @@ class SidebarState:
 
 
 def render_sidebar(cfg: AppConfig) -> SidebarState:
+    u = current_user()
+
     with st.sidebar:
-        st.markdown("## 🧑‍🏫 교육용 세션")
+        st.markdown("## 👤 로그인 정보")
+        if u:
+            st.write({"user_id": u.user_id, "role": u.role, "school_id": u.school_id})
+        else:
+            st.write({"user_id": st.session_state.get("user_id", "guest"), "role": "unknown"})
 
-        new_user = st.text_input("User ID", value=st.session_state.user_id)
-        if new_user != st.session_state.user_id:
-            st.session_state.user_id = new_user.strip() or "guest"
+        if st.button("로그아웃", use_container_width=True):
+            logout_user()
+            st.rerun()
 
+        st.markdown("---")
+
+        st.markdown("## 🧑‍🏫 세션")
         if st.button("새 세션 시작"):
             import uuid
             st.session_state.session_id = str(uuid.uuid4())
@@ -51,17 +61,14 @@ def render_sidebar(cfg: AppConfig) -> SidebarState:
 
         def _label(r):
             t = r["created_at"].replace("T", " ").replace("Z", "")
-            return f'{t} | {r["provider"]}/{r["operation"]} | {r["state"]}'
+            return f"{t} | {r['provider']}/{r['operation']} | {r['state']}"
 
         if hist:
             options = [r["run_id"] for r in hist]
 
-            # ✅ 현재 선택 유지 (가능하면)
+            # 현재 선택 유지(가능하면)
             prev_sel = st.session_state.get("selected_run_id")
-            if prev_sel in options:
-                idx = options.index(prev_sel)
-            else:
-                idx = 0
+            idx = options.index(prev_sel) if prev_sel in options else 0
 
             sel = st.selectbox(
                 "최근 실행 선택",
@@ -71,12 +78,8 @@ def render_sidebar(cfg: AppConfig) -> SidebarState:
                 key="selected_run_id",
             )
 
-            # ✅ 버튼 클릭만 상세 열기 트리거
             if st.button("선택한 실행 상세 열기", use_container_width=True):
-                if sel:
-                    st.session_state["_open_run_detail"] = True
-                else:
-                    st.session_state["_open_run_detail"] = False
+                st.session_state["_open_run_detail"] = bool(sel)
         else:
             st.info("실행 기록이 아직 없습니다.")
             st.session_state["selected_run_id"] = None
@@ -84,13 +87,17 @@ def render_sidebar(cfg: AppConfig) -> SidebarState:
 
         st.markdown("---")
         st.markdown("## 🧪 테스트 모드")
-        test_mode = st.toggle("MOCK 모드(크레딧 없이)", value=False, help="외부 API를 호출하지 않고 로컬에서 응답을 시뮬레이션합니다.")
+        test_mode = st.toggle(
+            "MOCK 모드(크레딧 없이)",
+            value=False,
+            help="외부 API를 호출하지 않고 로컬에서 응답을 시뮬레이션합니다.",
+        )
         mock_scenario = "SUCCESS"
         if test_mode:
             mock_scenario = st.selectbox(
                 "MOCK 시나리오",
                 ["SUCCESS", "FAILED_402", "FAILED_401", "FAILED_429", "SERVER_500", "TIMEOUT"],
-                index=0
+                index=0,
             )
 
         if st.button("🧹 내 활성 작업 강제 정리"):
