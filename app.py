@@ -16,7 +16,11 @@ from ui.registry import get_all_tabs, filter_tabs
 
 
 def main():
+    import sys
+    print(f"[BOOT] Python {sys.version}", flush=True)
+    print(f"[BOOT] load_config ...", flush=True)
     cfg = load_config()
+    print(f"[BOOT] turso_url={cfg.turso_database_url!r:.40}", flush=True)
 
     # 기본값 세팅
     if "school_id" not in st.session_state:
@@ -30,8 +34,11 @@ def main():
     )
 
     # DB 및 키풀 초기화
+    print("[BOOT] init_db ...", flush=True)
     init_db(cfg)
+    print("[BOOT] key_pool_bootstrap ...", flush=True)
     key_pool_bootstrap(cfg)
+    print("[BOOT] bootstrap done", flush=True)
 
     # stale active_jobs 정리(앱 실행당 1회)
     if "_did_cleanup_active_jobs" not in st.session_state:

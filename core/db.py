@@ -18,9 +18,38 @@ from core.config import AppConfig
 
 _SYNCED = False          # Turso 초기 sync 1회만 실행
 
-def _dict_factory(cursor, row):
-    """sqlite3.Row 대신 사용하는 범용 dict row factory (libsql 호환)."""
-    return {col[0]: row[idx] for idx, col in enumerate(cursor.description)}
+
+# ── libsql 호환 dict-row wrapper ──────────────────────────
+class _DictCursor:
+    """DB-API cursor를 감싸서 fetchone/fetchall이 dict를 반환."""
+    __slots__ = ("_cur",)
+    def __init__(self, cur): self._cur = cur
+    def execute(self, *a, **kw):
+        self._cur.execute(*a, **kw); return self
+    def fetchone(self):
+        row = self._cur.fetchone()
+        if row is None or not self._cur.description: return row
+        return dict(zip([d[0] for d in self._cur.description], row))
+    def fetchall(self):
+        rows = self._cur.fetchall()
+        if not rows or not self._cur.description: return rows
+        cols = [d[0] for d in self._cur.description]
+        return [dict(zip(cols, r)) for r in rows]
+    @property
+    def description(self): return self._cur.description
+    @property
+    def lastrowid(self): return self._cur.lastrowid
+
+class _DictConn:
+    """libsql connection을 감싸서 cursor가 dict row를 반환하도록 함."""
+    __slots__ = ("_conn",)
+    def __init__(self, conn): self._conn = conn
+    def cursor(self): return _DictCursor(self._conn.cursor())
+    def execute(self, *a, **kw): return _DictCursor(self._conn.execute(*a, **kw))
+    def commit(self): self._conn.commit()
+    def close(self): self._conn.close()
+# ──────────────────────────────────────────────────────────
+
 
 def _db(cfg: AppConfig):
     global _SYNCED
@@ -29,20 +58,20 @@ def _db(cfg: AppConfig):
 
     if url and _HAS_LIBSQL:
         # Turso 원격 DB (embedded replica: 로컬 캐시 + 원격 동기화)
-        conn = libsql.connect(cfg.runs_db_path, sync_url=url, auth_token=token)
+        raw = libsql.connect(cfg.runs_db_path, sync_url=url, auth_token=token)
         if not _SYNCED:
             try:
-                conn.sync()
+                raw.sync()
                 _SYNCED = True
             except Exception:
                 pass
+        conn = _DictConn(raw)
     elif _HAS_LIBSQL:
-        conn = libsql.connect(cfg.runs_db_path)
+        conn = _DictConn(libsql.connect(cfg.runs_db_path))
     else:
         # libsql 미설치 시 (Windows 개발환경 등) 기존 sqlite3 fallback
         conn = sqlite3.connect(cfg.runs_db_path, check_same_thread=False)
-
-    conn.row_factory = _dict_factory
+        conn.row_factory = sqlite3.Row
 
     try:
         conn.execute("PRAGMA journal_mode=WAL;")
