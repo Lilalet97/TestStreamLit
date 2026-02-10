@@ -31,9 +31,6 @@ def _seconds_to_next_minute(dt: Optional[datetime] = None) -> int:
     return max(1, int((next_min - dt).total_seconds()))
 
 # ---------- db helpers ----------
-_SYNCED = False          # Turso 초기 sync 1회만 실행
-
-
 # ── libsql 호환 dict-row wrapper ──────────────────────────
 class _DictCursor:
     """DB-API cursor를 감싸서 fetchone/fetchall이 dict를 반환."""
@@ -62,29 +59,36 @@ class _DictConn:
     def cursor(self): return _DictCursor(self._conn.cursor())
     def execute(self, *a, **kw): return _DictCursor(self._conn.execute(*a, **kw))
     def commit(self): self._conn.commit()
-    def close(self): self._conn.close()
+    def close(self): pass   # cached → 닫지 않음
 # ──────────────────────────────────────────────────────────
 
+_cached_conn = None      # libsql 커넥션 캐시 (생성 비용이 크므로 1회만)
 
 def _db(cfg: AppConfig):
-    global _SYNCED
+    global _cached_conn
     url = cfg.turso_database_url
     token = cfg.turso_auth_token
 
+    # libsql 경로: 캐시된 커넥션 재사용
+    if _HAS_LIBSQL and _cached_conn is not None:
+        return _DictConn(_cached_conn)
+
     if url and _HAS_LIBSQL:
         raw = libsql.connect(cfg.runs_db_path, sync_url=url, auth_token=token)
-        if not _SYNCED:
-            try:
-                raw.sync()
-                _SYNCED = True
-            except Exception:
-                pass
+        try:
+            raw.sync()
+        except Exception:
+            pass
+        _cached_conn = raw
         conn = _DictConn(raw)
     elif _HAS_LIBSQL:
-        conn = _DictConn(libsql.connect(cfg.runs_db_path))
+        raw = libsql.connect(cfg.runs_db_path)
+        _cached_conn = raw
+        conn = _DictConn(raw)
     else:
         conn = sqlite3.connect(cfg.runs_db_path, check_same_thread=False)
         conn.row_factory = sqlite3.Row
+        return conn
 
     try:
         conn.execute("PRAGMA journal_mode=WAL;")
