@@ -37,6 +37,8 @@ class _DictCursor:
     __slots__ = ("_cur",)
     def __init__(self, cur): self._cur = cur
     def execute(self, *a, **kw):
+        if len(a) >= 2 and isinstance(a[1], list):
+            a = (a[0], tuple(a[1]), *a[2:])
         self._cur.execute(*a, **kw); return self
     def fetchone(self):
         row = self._cur.fetchone()
@@ -57,7 +59,10 @@ class _DictConn:
     __slots__ = ("_conn",)
     def __init__(self, conn): self._conn = conn
     def cursor(self): return _DictCursor(self._conn.cursor())
-    def execute(self, *a, **kw): return _DictCursor(self._conn.execute(*a, **kw))
+    def execute(self, *a, **kw):
+        if len(a) >= 2 and isinstance(a[1], list):
+            a = (a[0], tuple(a[1]), *a[2:])
+        return _DictCursor(self._conn.execute(*a, **kw))
     def commit(self): self._conn.commit()
     def close(self): pass   # cached → 닫지 않음
 # ──────────────────────────────────────────────────────────
