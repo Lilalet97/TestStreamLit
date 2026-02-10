@@ -30,7 +30,8 @@ def _db(cfg: AppConfig):
     else:
         # libsql 미설치 시 (Windows 개발환경 등) 기존 sqlite3 fallback
         conn = sqlite3.connect(cfg.runs_db_path, check_same_thread=False)
-        conn.row_factory = sqlite3.Row
+
+    conn.row_factory = sqlite3.Row
 
     try:
         conn.execute("PRAGMA journal_mode=WAL;")
