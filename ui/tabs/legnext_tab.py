@@ -7,8 +7,8 @@ import os
 
 from core.config import AppConfig
 from core.db import (
-    guard_concurrency_or_raise, add_active_job, touch_active_job, remove_active_job,
-    insert_run, update_run, now_iso
+    guard_concurrency_or_raise, insert_run_and_activate, finish_run,
+    update_run, update_run_and_touch, now_iso
 )
 from core.redact import redact_obj, json_dumps_safe
 from core.analysis import analyze_error
@@ -141,10 +141,7 @@ def render_legnext_tab(cfg: AppConfig, sidebar: SidebarState):
 
     try:
         guard_concurrency_or_raise(cfg)
-        add_active_job(cfg, run_id, provider, operation, "running")
-        active_added = True
-
-        insert_run(cfg, {
+        insert_run_and_activate(cfg, {
             "run_id": run_id,
             "created_at": now_iso(),
             "user_id": st.session_state.user_id,
@@ -154,7 +151,8 @@ def render_legnext_tab(cfg: AppConfig, sidebar: SidebarState):
             "endpoint": endpoint,
             "request_json": json_dumps_safe(redact_obj(request_obj)),
             "state": "running",
-        })
+        }, provider, operation)
+        active_added = True
 
         if not mj_prompt.strip():
             raise RuntimeError("프롬프트를 입력하세요.")
@@ -303,8 +301,7 @@ def render_legnext_tab(cfg: AppConfig, sidebar: SidebarState):
         log("success", msg=f"제출 성공! job_id = {job_id}")
         log("json", obj=redact_obj(j))
 
-        update_run(cfg, run_id, job_id=job_id, state="submitted")
-        touch_active_job(cfg, run_id, state="submitted")
+        update_run_and_touch(cfg, run_id, active_state="submitted", job_id=job_id, state="submitted")
         result_store.update_inflight("legnext", stage="run.submitted", job_id=job_id, ts=now_iso())
 
         if not auto_poll:
@@ -327,12 +324,13 @@ def render_legnext_tab(cfg: AppConfig, sidebar: SidebarState):
         deadline = time.time() + float(max_wait)
         last_json = None
         last_status = ""
+        poll_count = 0
 
         result_store.update_inflight("legnext", stage="run.polling", ts=now_iso())
 
         while time.time() < deadline:
-            touch_active_job(cfg, run_id)
-            if lease:
+            # heartbeat는 3회마다 1번 (네트워크 커밋 절약)
+            if lease and poll_count % 3 == 0:
                 heartbeat(cfg, lease.lease_id)
 
             if lease and getattr(lease, "api_key_id", None):
@@ -353,10 +351,12 @@ def render_legnext_tab(cfg: AppConfig, sidebar: SidebarState):
 
             last_json = j2 if isinstance(j2, dict) else None
 
-            update_run(cfg, run_id,
+            # update_run + touch_active_job → 단일 커밋
+            update_run_and_touch(cfg, run_id,
                        http_status=sc2,
                        response_text=raw2,
                        response_json=json_dumps_safe(redact_obj(j2)) if isinstance(j2, (dict, list)) else None)
+            poll_count += 1
 
             if sc2 != 200 or not isinstance(j2, dict) or legnext.is_error_obj(j2):
                 analysis = analyze_error(cfg, provider, operation, f"{legnext.LEGNEXT_BASE}/job/{job_id}",
@@ -412,8 +412,8 @@ def render_legnext_tab(cfg: AppConfig, sidebar: SidebarState):
                     st.json(j2)
                     log("json", obj=redact_obj(j2))
 
-                update_run(cfg, run_id, state="completed", output_json=json_dumps_safe(redact_obj(out)))
-                touch_active_job(cfg, run_id, state="completed")
+                update_run_and_touch(cfg, run_id, active_state="completed",
+                                     state="completed", output_json=json_dumps_safe(redact_obj(out)))
 
                 result_store.push("legnext", {
                     "ts": now_iso(),
@@ -510,12 +510,22 @@ def render_legnext_tab(cfg: AppConfig, sidebar: SidebarState):
 
     finally:
         result_store.clear_inflight("legnext")
-        if lease:
-            release_lease(cfg, lease.lease_id)
+        try:
+            if lease:
+                release_lease(cfg, lease.lease_id)
+        except Exception:
+            pass
         if active_added:
-            remove_active_job(cfg, run_id)
+            try:
+                finish_run(cfg, run_id, remove_active=True,
+                           duration_ms=int((time.time() - start_t) * 1000))
+            except Exception:
+                pass
         if hasattr(sidebar, "refresh_counts"):
-            sidebar.refresh_counts()
+            try:
+                sidebar.refresh_counts()
+            except Exception:
+                pass
 
 
 TAB = {

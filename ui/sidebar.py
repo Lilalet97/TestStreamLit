@@ -1,8 +1,11 @@
 # ui/sidebar.py
 import base64
+from datetime import datetime, timezone, timedelta
 import streamlit as st
 from dataclasses import dataclass
 from typing import Callable
+
+_KST = timezone(timedelta(hours=9))
 
 from core.config import AppConfig
 from core.db import list_runs, count_active_jobs, clear_my_active_jobs
@@ -133,12 +136,17 @@ def render_sidebar(cfg: AppConfig) -> SidebarState:
 
         # ── 실행 히스토리 ──
         st.markdown("#### 실행 히스토리")
-        session_only = st.toggle("현재 세션만", value=True)
+        session_only = st.toggle("현재 세션만", value=False)
 
         hist = list_runs(cfg, st.session_state.user_id, session_only=session_only, limit=30)
 
         def _label(r):
-            t = r["created_at"].replace("T", " ").replace("Z", "")
+            raw = r["created_at"]
+            try:
+                dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+                t = dt.astimezone(_KST).strftime("%m-%d %H:%M")
+            except Exception:
+                t = raw.replace("T", " ").replace("Z", "")
             state = r["state"] or ""
             icon = {"completed": "✅", "failed": "❌", "running": "⏳"}.get(state, "◻️")
             return f"{icon} {r['provider']}/{r['operation']}  —  {t}"

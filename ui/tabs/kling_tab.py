@@ -7,8 +7,8 @@ import os
 
 from core.config import AppConfig
 from core.db import (
-    guard_concurrency_or_raise, add_active_job, remove_active_job,
-    insert_run, update_run, now_iso
+    guard_concurrency_or_raise, insert_run_and_activate, finish_run,
+    update_run, now_iso
 )
 from core.redact import redact_obj, json_dumps_safe
 from core.analysis import analyze_error
@@ -119,10 +119,7 @@ def render_kling_tab(cfg: AppConfig, sidebar: SidebarState):
 
     try:
         guard_concurrency_or_raise(cfg)
-        add_active_job(cfg, run_id, provider, operation, "running")
-        active_added = True
-
-        insert_run(cfg, {
+        insert_run_and_activate(cfg, {
             "run_id": run_id,
             "created_at": now_iso(),
             "user_id": st.session_state.user_id,
@@ -132,7 +129,8 @@ def render_kling_tab(cfg: AppConfig, sidebar: SidebarState):
             "endpoint": endpoint,
             "request_json": json_dumps_safe(redact_obj(request_obj)),
             "state": "running",
-        })
+        }, provider, operation)
+        active_added = True
 
         if not kl_prompt.strip():
             raise RuntimeError("프롬프트를 입력하세요.")
@@ -354,7 +352,9 @@ def render_kling_tab(cfg: AppConfig, sidebar: SidebarState):
 
     finally:
         try:
-            update_run(cfg, run_id, duration_ms=int((time.time() - start_t) * 1000))
+            finish_run(cfg, run_id,
+                       remove_active=active_added,
+                       duration_ms=int((time.time() - start_t) * 1000))
         except Exception:
             pass
 
@@ -363,8 +363,6 @@ def render_kling_tab(cfg: AppConfig, sidebar: SidebarState):
 
         if lease:
             release_lease(cfg, lease.lease_id)
-        if active_added:
-            remove_active_job(cfg, run_id)
         if hasattr(sidebar, "refresh_counts"):
             sidebar.refresh_counts()
 

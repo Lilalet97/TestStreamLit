@@ -1,19 +1,13 @@
 import json
 import os
-import sqlite3
 import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple, Callable
 
-try:
-    import libsql_experimental as libsql
-    _HAS_LIBSQL = True
-except ImportError:
-    _HAS_LIBSQL = False
-
 from core.config import AppConfig
+from core.database import get_db
 
 
 # ---------- time helpers ----------
@@ -29,79 +23,6 @@ def _seconds_to_next_minute(dt: Optional[datetime] = None) -> int:
     dt = dt or datetime.utcnow()
     next_min = dt.replace(second=0, microsecond=0) + timedelta(minutes=1)
     return max(1, int((next_min - dt).total_seconds()))
-
-# ---------- db helpers ----------
-# ── libsql 호환 dict-row wrapper ──────────────────────────
-class _DictCursor:
-    """DB-API cursor를 감싸서 fetchone/fetchall이 dict를 반환."""
-    __slots__ = ("_cur",)
-    def __init__(self, cur): self._cur = cur
-    def execute(self, *a, **kw):
-        if len(a) >= 2 and isinstance(a[1], list):
-            a = (a[0], tuple(a[1]), *a[2:])
-        self._cur.execute(*a, **kw); return self
-    def fetchone(self):
-        row = self._cur.fetchone()
-        if row is None or not self._cur.description: return row
-        return dict(zip([d[0] for d in self._cur.description], row))
-    def fetchall(self):
-        rows = self._cur.fetchall()
-        if not rows or not self._cur.description: return rows
-        cols = [d[0] for d in self._cur.description]
-        return [dict(zip(cols, r)) for r in rows]
-    @property
-    def description(self): return self._cur.description
-    @property
-    def lastrowid(self): return self._cur.lastrowid
-
-class _DictConn:
-    """libsql connection을 감싸서 cursor가 dict row를 반환하도록 함."""
-    __slots__ = ("_conn",)
-    def __init__(self, conn): self._conn = conn
-    def cursor(self): return _DictCursor(self._conn.cursor())
-    def execute(self, *a, **kw):
-        if len(a) >= 2 and isinstance(a[1], list):
-            a = (a[0], tuple(a[1]), *a[2:])
-        return _DictCursor(self._conn.execute(*a, **kw))
-    def commit(self): self._conn.commit()
-    def close(self): pass   # cached → 닫지 않음
-# ──────────────────────────────────────────────────────────
-
-_cached_conn = None      # libsql 커넥션 캐시 (생성 비용이 크므로 1회만)
-
-def _db(cfg: AppConfig):
-    global _cached_conn
-    url = cfg.turso_database_url
-    token = cfg.turso_auth_token
-
-    # libsql 경로: 캐시된 커넥션 재사용
-    if _HAS_LIBSQL and _cached_conn is not None:
-        return _DictConn(_cached_conn)
-
-    if url and _HAS_LIBSQL:
-        raw = libsql.connect(cfg.runs_db_path, sync_url=url, auth_token=token)
-        try:
-            raw.sync()
-        except Exception:
-            pass
-        _cached_conn = raw
-        conn = _DictConn(raw)
-    elif _HAS_LIBSQL:
-        raw = libsql.connect(cfg.runs_db_path)
-        _cached_conn = raw
-        conn = _DictConn(raw)
-    else:
-        conn = sqlite3.connect(cfg.runs_db_path, check_same_thread=False)
-        conn.row_factory = sqlite3.Row
-        return conn
-
-    try:
-        conn.execute("PRAGMA journal_mode=WAL;")
-        conn.execute("PRAGMA synchronous=NORMAL;")
-        conn.execute("PRAGMA busy_timeout=5000;")
-    except Exception:
-        pass
-    return conn
 
 class Txn:
     def __init__(self, conn):
@@ -180,7 +101,7 @@ def load_key_pool_spec(cfg: AppConfig) -> Dict[str, List[Dict[str, Any]]]:
     return spec
 
 def ensure_tables(cfg: AppConfig) -> None:
-    conn = _db(cfg)
+    conn = get_db(cfg)
     cur = conn.cursor()
 
     cur.execute("""
@@ -265,7 +186,7 @@ def seed_keys(cfg: AppConfig) -> None:
     if not spec:
         return
 
-    conn = _db(cfg)
+    conn = get_db(cfg)
     now = now_iso()
     with Txn(conn):
         cur = conn.cursor()
@@ -337,7 +258,7 @@ def cleanup_orphan_leases(cfg: AppConfig, lease_ttl_sec: Optional[int] = None) -
     ttl = int(lease_ttl_sec or cfg.active_job_ttl_sec or 120)
     cutoff = (datetime.utcnow() - timedelta(seconds=ttl)).isoformat() + "Z"
 
-    conn = _db(cfg)
+    conn = get_db(cfg)
     try:
         with Txn(conn):
             cur = conn.cursor()
@@ -571,7 +492,7 @@ def acquire_lease(
     ttl = int(lease_ttl_sec or cfg.active_job_ttl_sec or 120)
     deadline = time.time() + float(max_wait_sec)
 
-    conn = _db(cfg)
+    conn = get_db(cfg)
     try:
         while True:
             now = datetime.utcnow()
@@ -727,7 +648,7 @@ def acquire_lease(
         conn.close()
 
 def heartbeat(cfg: AppConfig, lease_id: str) -> None:
-    conn = _db(cfg)
+    conn = get_db(cfg)
     try:
         with Txn(conn):
             conn.execute("""
@@ -739,7 +660,7 @@ def heartbeat(cfg: AppConfig, lease_id: str) -> None:
         conn.close()
 
 def release_lease(cfg: AppConfig, lease_id: str, state: str = "released") -> None:
-    conn = _db(cfg)
+    conn = get_db(cfg)
     try:
         with Txn(conn):
             conn.execute("""
@@ -755,7 +676,7 @@ def consume_rpm(cfg: AppConfig, api_key_id: int, units: int = 1, wait: bool = Tr
                 on_wait: Optional[Callable[[Dict[str, Any]], None]] = None) -> None:
     
     deadline = time.time() + float(max_wait_sec)
-    conn = _db(cfg)
+    conn = get_db(cfg)
     try:
         while True:
             b = minute_bucket_iso()

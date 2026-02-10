@@ -1,93 +1,12 @@
 # core/db.py
-import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 import streamlit as st
 from typing import Optional
 import uuid
-from datetime import timedelta
-import os
-
-try:
-    import libsql_experimental as libsql
-    _HAS_LIBSQL = True
-except ImportError:
-    _HAS_LIBSQL = False
 
 from core.redact import json_dumps_safe
 from core.config import AppConfig
-
-# ── libsql 호환 dict-row wrapper ──────────────────────────
-class _DictCursor:
-    """DB-API cursor를 감싸서 fetchone/fetchall이 dict를 반환."""
-    __slots__ = ("_cur",)
-    def __init__(self, cur): self._cur = cur
-    def execute(self, *a, **kw):
-        if len(a) >= 2 and isinstance(a[1], list):
-            a = (a[0], tuple(a[1]), *a[2:])
-        self._cur.execute(*a, **kw); return self
-    def fetchone(self):
-        row = self._cur.fetchone()
-        if row is None or not self._cur.description: return row
-        return dict(zip([d[0] for d in self._cur.description], row))
-    def fetchall(self):
-        rows = self._cur.fetchall()
-        if not rows or not self._cur.description: return rows
-        cols = [d[0] for d in self._cur.description]
-        return [dict(zip(cols, r)) for r in rows]
-    @property
-    def description(self): return self._cur.description
-    @property
-    def lastrowid(self): return self._cur.lastrowid
-
-class _DictConn:
-    """libsql connection을 감싸서 cursor가 dict row를 반환하도록 함."""
-    __slots__ = ("_conn",)
-    def __init__(self, conn): self._conn = conn
-    def cursor(self): return _DictCursor(self._conn.cursor())
-    def execute(self, *a, **kw):
-        if len(a) >= 2 and isinstance(a[1], list):
-            a = (a[0], tuple(a[1]), *a[2:])
-        return _DictCursor(self._conn.execute(*a, **kw))
-    def commit(self): self._conn.commit()
-    def close(self): pass   # cached → 닫지 않음
-# ──────────────────────────────────────────────────────────
-
-_cached_conn = None      # libsql 커넥션 캐시 (생성 비용이 크므로 1회만)
-
-def _db(cfg: AppConfig):
-    global _cached_conn
-    url = cfg.turso_database_url
-    token = cfg.turso_auth_token
-
-    # libsql 경로: 캐시된 커넥션 재사용
-    if _HAS_LIBSQL and _cached_conn is not None:
-        return _DictConn(_cached_conn)
-
-    if url and _HAS_LIBSQL:
-        raw = libsql.connect(cfg.runs_db_path, sync_url=url, auth_token=token)
-        try:
-            raw.sync()
-        except Exception:
-            pass
-        _cached_conn = raw
-        conn = _DictConn(raw)
-    elif _HAS_LIBSQL:
-        raw = libsql.connect(cfg.runs_db_path)
-        _cached_conn = raw
-        conn = _DictConn(raw)
-    else:
-        # libsql 미설치 시 (Windows 개발환경 등) 기존 sqlite3 fallback
-        conn = sqlite3.connect(cfg.runs_db_path, check_same_thread=False)
-        conn.row_factory = sqlite3.Row
-        return conn
-
-    try:
-        conn.execute("PRAGMA journal_mode=WAL;")
-        conn.execute("PRAGMA synchronous=NORMAL;")
-        conn.execute("PRAGMA busy_timeout=5000;")
-    except Exception:
-        pass
-    return conn
+from core.database import get_db
 
 
 def now_iso():
@@ -100,7 +19,7 @@ def init_db(cfg: AppConfig):
     global _DB_INITIALIZED
     if _DB_INITIALIZED:
         return
-    conn = _db(cfg)
+    conn = get_db(cfg)
     cur = conn.cursor()
     cur.execute("""
         CREATE TABLE IF NOT EXISTS runs (
@@ -248,7 +167,7 @@ def init_db(cfg: AppConfig):
 
 
 def insert_run(cfg: AppConfig, row: dict):
-    conn = _db(cfg)
+    conn = get_db(cfg)
     cur = conn.cursor()
     cur.execute("""
         INSERT INTO runs (
@@ -266,10 +185,39 @@ def insert_run(cfg: AppConfig, row: dict):
     conn.close()
 
 
+def insert_run_and_activate(cfg: AppConfig, row: dict, provider: str, operation: str):
+    """insert_run + add_active_job → 단일 커밋."""
+    conn = get_db(cfg)
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO runs (
+            run_id, created_at, user_id, session_id, provider, operation, endpoint,
+            request_json, http_status, response_text, response_json, state, job_id,
+            output_json, gpt_analysis, error_text, duration_ms
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        row["run_id"], row["created_at"], row["user_id"], row["session_id"], row["provider"], row["operation"], row["endpoint"],
+        row.get("request_json"), row.get("http_status"), row.get("response_text"), row.get("response_json"),
+        row.get("state"), row.get("job_id"), row.get("output_json"), row.get("gpt_analysis"), row.get("error_text"),
+        row.get("duration_ms"),
+    ))
+    ts = now_iso()
+    cur.execute("""
+        INSERT OR REPLACE INTO active_jobs (
+            run_id, created_at, updated_at, user_id, session_id, provider, operation, state
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        row["run_id"], ts, ts, st.session_state.user_id, st.session_state.session_id,
+        provider, operation, "running",
+    ))
+    conn.commit()
+    conn.close()
+
+
 def update_run(cfg: AppConfig, run_id: str, **fields):
     if not fields:
         return
-    conn = _db(cfg)
+    conn = get_db(cfg)
     cur = conn.cursor()
     cols = ", ".join([f"{k}=?" for k in fields.keys()])
     vals = list(fields.values())
@@ -279,8 +227,41 @@ def update_run(cfg: AppConfig, run_id: str, **fields):
     conn.close()
 
 
+def update_run_and_touch(cfg: AppConfig, run_id: str, active_state: Optional[str] = None, **fields):
+    """update_run + touch_active_job → 단일 커밋 (폴링 루프용)."""
+    conn = get_db(cfg)
+    cur = conn.cursor()
+    if fields:
+        cols = ", ".join([f"{k}=?" for k in fields.keys()])
+        vals = list(fields.values())
+        vals.append(run_id)
+        cur.execute(f"UPDATE runs SET {cols} WHERE run_id=?", vals)
+    ts = now_iso()
+    if active_state is None:
+        cur.execute("UPDATE active_jobs SET updated_at=? WHERE run_id=?", (ts, run_id))
+    else:
+        cur.execute("UPDATE active_jobs SET updated_at=?, state=? WHERE run_id=?", (ts, active_state, run_id))
+    conn.commit()
+    conn.close()
+
+
+def finish_run(cfg: AppConfig, run_id: str, *, remove_active: bool = True, **fields):
+    """update_run + remove_active_job → 단일 커밋 (종료 시)."""
+    conn = get_db(cfg)
+    cur = conn.cursor()
+    if fields:
+        cols = ", ".join([f"{k}=?" for k in fields.keys()])
+        vals = list(fields.values())
+        vals.append(run_id)
+        cur.execute(f"UPDATE runs SET {cols} WHERE run_id=?", vals)
+    if remove_active:
+        cur.execute("DELETE FROM active_jobs WHERE run_id=?", (run_id,))
+    conn.commit()
+    conn.close()
+
+
 def add_active_job(cfg: AppConfig, run_id: str, provider: str, operation: str, state: str):
-    conn = _db(cfg)
+    conn = get_db(cfg)
     cur = conn.cursor()
     cur.execute("""
         INSERT OR REPLACE INTO active_jobs (
@@ -295,7 +276,7 @@ def add_active_job(cfg: AppConfig, run_id: str, provider: str, operation: str, s
 
 
 def touch_active_job(cfg: AppConfig, run_id: str, state: Optional[str] = None):
-    conn = _db(cfg)
+    conn = get_db(cfg)
     cur = conn.cursor()
     if state is None:
         cur.execute("UPDATE active_jobs SET updated_at=? WHERE run_id=?", (now_iso(), run_id))
@@ -306,7 +287,7 @@ def touch_active_job(cfg: AppConfig, run_id: str, state: Optional[str] = None):
 
 
 def remove_active_job(cfg: AppConfig, run_id: str):
-    conn = _db(cfg)
+    conn = get_db(cfg)
     cur = conn.cursor()
     cur.execute("DELETE FROM active_jobs WHERE run_id=?", (run_id,))
     conn.commit()
@@ -314,7 +295,7 @@ def remove_active_job(cfg: AppConfig, run_id: str):
 
 
 def count_active_jobs(cfg: AppConfig, user_id: Optional[str] = None) -> int:
-    conn = _db(cfg)
+    conn = get_db(cfg)
     cur = conn.cursor()
     if user_id:
         cur.execute("SELECT COUNT(*) AS c FROM active_jobs WHERE user_id=? AND state IN ('running','submitted')", (user_id,))
@@ -333,7 +314,7 @@ def guard_concurrency_or_raise(cfg: AppConfig):
 
 
 def list_runs(cfg: AppConfig, user_id: str, session_only: bool, limit: int = 30):
-    conn = _db(cfg)
+    conn = get_db(cfg)
     cur = conn.cursor()
     if session_only:
         cur.execute("""
@@ -355,7 +336,7 @@ def list_runs(cfg: AppConfig, user_id: str, session_only: bool, limit: int = 30)
 
 
 def get_run(cfg: AppConfig, run_id: str):
-    conn = _db(cfg)
+    conn = get_db(cfg)
     cur = conn.cursor()
     cur.execute("SELECT * FROM runs WHERE run_id=?", (run_id,))
     row = cur.fetchone()
@@ -373,7 +354,7 @@ def cleanup_orphan_active_jobs(cfg: AppConfig):
         cutoff_ts = datetime.utcnow().timestamp() - cfg.active_job_ttl_sec
         cutoff_str = datetime.utcfromtimestamp(cutoff_ts).isoformat() + "Z"
 
-        conn = _db(cfg)
+        conn = get_db(cfg)
         cur = conn.cursor()
         cur.execute("""
             DELETE FROM active_jobs
@@ -398,7 +379,7 @@ def clear_my_active_jobs(cfg: AppConfig, session_only: bool = False, only_stale:
     - session_only=True: 현재 세션만
     - only_stale=True: TTL 기준 지난 것만
     """
-    conn = _db(cfg)
+    conn = get_db(cfg)
     cur = conn.cursor()
 
     params = []
@@ -427,7 +408,7 @@ def clear_my_active_jobs(cfg: AppConfig, session_only: bool = False, only_stale:
 # ----------------------------
 
 def users_exist(cfg: AppConfig) -> bool:
-    conn = _db(cfg)
+    conn = get_db(cfg)
     try:
         cur = conn.cursor()
         cur.execute("SELECT COUNT(*) AS c FROM users")
@@ -437,7 +418,7 @@ def users_exist(cfg: AppConfig) -> bool:
 
 
 def get_user(cfg: AppConfig, user_id: str):
-    conn = _db(cfg)
+    conn = get_db(cfg)
     try:
         cur = conn.cursor()
         cur.execute("SELECT * FROM users WHERE user_id=?", (user_id,))
@@ -447,7 +428,7 @@ def get_user(cfg: AppConfig, user_id: str):
 
 
 def list_users(cfg: AppConfig, include_inactive: bool = True):
-    conn = _db(cfg)
+    conn = get_db(cfg)
     try:
         cur = conn.cursor()
         if include_inactive:
@@ -460,7 +441,7 @@ def list_users(cfg: AppConfig, include_inactive: bool = True):
 
 
 def upsert_user(cfg: AppConfig, user_id: str, password_hash: str, role: str = 'user', school_id: str = 'default', is_active: int = 1):
-    conn = _db(cfg)
+    conn = get_db(cfg)
     try:
         cur = conn.cursor()
         ts = now_iso()
@@ -493,7 +474,7 @@ def update_user_fields(cfg: AppConfig, user_id: str, *, role: str | None = None,
         return
     parts.append("updated_at=?"); params.append(now_iso())
     params.append(user_id)
-    conn = _db(cfg)
+    conn = get_db(cfg)
     try:
         conn.execute(f"UPDATE users SET {', '.join(parts)} WHERE user_id=?", params)
         conn.commit()
@@ -502,7 +483,7 @@ def update_user_fields(cfg: AppConfig, user_id: str, *, role: str | None = None,
 
 
 def set_user_password(cfg: AppConfig, user_id: str, password_hash: str):
-    conn = _db(cfg)
+    conn = get_db(cfg)
     try:
         cur = conn.cursor()
         cur.execute("UPDATE users SET password_hash=?, updated_at=? WHERE user_id=?", (password_hash, now_iso(), user_id))
@@ -512,7 +493,7 @@ def set_user_password(cfg: AppConfig, user_id: str, password_hash: str):
 
 
 def set_user_active(cfg: AppConfig, user_id: str, is_active: bool):
-    conn = _db(cfg)
+    conn = get_db(cfg)
     try:
         cur = conn.cursor()
         cur.execute("UPDATE users SET is_active=?, updated_at=? WHERE user_id=?", (1 if is_active else 0, now_iso(), user_id))
@@ -522,7 +503,7 @@ def set_user_active(cfg: AppConfig, user_id: str, is_active: bool):
 
 
 def hard_delete_user(cfg: AppConfig, user_id: str):
-    conn = _db(cfg)
+    conn = get_db(cfg)
     try:
         cur = conn.cursor()
         cur.execute("DELETE FROM users WHERE user_id=?", (user_id,))
@@ -538,7 +519,7 @@ def _expires_iso(ttl_sec: int) -> str:
 def create_user_session(cfg: AppConfig, user_id: str, role: str, school_id: str, ttl_sec: int = 86400) -> str:
     """Create a persistent login session and return opaque token."""
     token = uuid.uuid4().hex
-    conn = _db(cfg)
+    conn = get_db(cfg)
     try:
         cur = conn.cursor()
         now = now_iso()
@@ -560,7 +541,7 @@ def create_user_session(cfg: AppConfig, user_id: str, role: str, school_id: str,
 def get_user_session(cfg: AppConfig, token: str):
     if not token:
         return None
-    conn = _db(cfg)
+    conn = get_db(cfg)
     try:
         cur = conn.cursor()
         cur.execute(
@@ -575,7 +556,7 @@ def get_user_session(cfg: AppConfig, token: str):
 def touch_user_session(cfg: AppConfig, token: str):
     if not token:
         return
-    conn = _db(cfg)
+    conn = get_db(cfg)
     try:
         cur = conn.cursor()
         cur.execute("UPDATE user_sessions SET last_seen=? WHERE session_token=?", (now_iso(), token))
@@ -587,7 +568,7 @@ def touch_user_session(cfg: AppConfig, token: str):
 def revoke_user_session(cfg: AppConfig, token: str):
     if not token:
         return
-    conn = _db(cfg)
+    conn = get_db(cfg)
     try:
         cur = conn.cursor()
         cur.execute("UPDATE user_sessions SET revoked=1, last_seen=? WHERE session_token=?", (now_iso(), token))
@@ -601,7 +582,7 @@ def revoke_user_session(cfg: AppConfig, token: str):
 # ----------------------------
 
 def list_active_jobs_all(cfg: AppConfig, limit: int = 200, user_id: str | None = None):
-    conn = _db(cfg)
+    conn = get_db(cfg)
     try:
         cur = conn.cursor()
         if user_id:
@@ -620,7 +601,7 @@ def list_active_jobs_all(cfg: AppConfig, limit: int = 200, user_id: str | None =
 
 
 def list_runs_admin(cfg: AppConfig, limit: int = 200, user_id: str | None = None):
-    conn = _db(cfg)
+    conn = get_db(cfg)
     try:
         cur = conn.cursor()
         if user_id:
@@ -639,7 +620,7 @@ def list_runs_admin(cfg: AppConfig, limit: int = 200, user_id: str | None = None
 
 
 def list_key_waiters(cfg: AppConfig, limit: int = 200):
-    conn = _db(cfg)
+    conn = get_db(cfg)
     try:
         cur = conn.cursor()
         cur.execute(
@@ -652,7 +633,7 @@ def list_key_waiters(cfg: AppConfig, limit: int = 200):
 
 
 def list_key_leases(cfg: AppConfig, limit: int = 200):
-    conn = _db(cfg)
+    conn = get_db(cfg)
     try:
         cur = conn.cursor()
         cur.execute(
