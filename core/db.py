@@ -89,7 +89,12 @@ def now_iso():
     return datetime.utcnow().isoformat() + "Z"
 
 
+_DB_INITIALIZED = False
+
 def init_db(cfg: AppConfig):
+    global _DB_INITIALIZED
+    if _DB_INITIALIZED:
+        return
     conn = _db(cfg)
     cur = conn.cursor()
     cur.execute("""
@@ -234,6 +239,7 @@ def init_db(cfg: AppConfig):
     """)
     conn.commit()
     conn.close()
+    _DB_INITIALIZED = True
 
 
 def insert_run(cfg: AppConfig, row: dict):

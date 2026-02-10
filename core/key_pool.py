@@ -811,10 +811,17 @@ def consume_rpm(cfg: AppConfig, api_key_id: int, units: int = 1, wait: bool = Tr
         conn.close()
 
 
+_BOOTSTRAPPED = False
+
 def bootstrap(cfg: AppConfig) -> None:
     """
     app.py에서 1회 호출하는 것을 권장.
+    프로세스당 1회만 실행 (Streamlit rerun 시 스킵).
     """
+    global _BOOTSTRAPPED
+    if _BOOTSTRAPPED:
+        return
     ensure_tables(cfg)
     seed_keys(cfg)
     cleanup_orphan_leases(cfg)
+    _BOOTSTRAPPED = True
