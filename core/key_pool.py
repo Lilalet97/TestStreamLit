@@ -31,19 +31,31 @@ def _seconds_to_next_minute(dt: Optional[datetime] = None) -> int:
     return max(1, int((next_min - dt).total_seconds()))
 
 # ---------- db helpers ----------
+_SYNCED = False          # Turso 초기 sync 1회만 실행
+
+def _dict_factory(cursor, row):
+    """sqlite3.Row 대신 사용하는 범용 dict row factory (libsql 호환)."""
+    return {col[0]: row[idx] for idx, col in enumerate(cursor.description)}
+
 def _db(cfg: AppConfig):
+    global _SYNCED
     url = cfg.turso_database_url
     token = cfg.turso_auth_token
 
     if url and _HAS_LIBSQL:
         conn = libsql.connect(cfg.runs_db_path, sync_url=url, auth_token=token)
-        conn.sync()
+        if not _SYNCED:
+            try:
+                conn.sync()
+                _SYNCED = True
+            except Exception:
+                pass
     elif _HAS_LIBSQL:
         conn = libsql.connect(cfg.runs_db_path)
     else:
         conn = sqlite3.connect(cfg.runs_db_path, check_same_thread=False)
 
-    conn.row_factory = sqlite3.Row
+    conn.row_factory = _dict_factory
 
     try:
         conn.execute("PRAGMA journal_mode=WAL;")
