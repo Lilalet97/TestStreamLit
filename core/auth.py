@@ -11,6 +11,7 @@ import base64
 import hashlib
 import hmac
 import os
+import uuid
 from dataclasses import dataclass
 from typing import Optional
 
@@ -204,8 +205,15 @@ def logout_user(cfg: AppConfig):
     for k in ["auth_logged_in", "auth_user_id", "auth_role", "auth_school_id", "auth_session_token"]:
         st.session_state.pop(k, None)
 
+    # 세션 ID 갱신 → 이전 유저의 세션 기록과 분리
+    st.session_state.session_id = str(uuid.uuid4())
     st.session_state.user_id = "guest"
     st.session_state.school_id = "default"
+
+    # result_store 세션 내 히스토리 정리 (이전 유저 결과 제거)
+    for prefix in ("kling", "legnext"):
+        for suffix in ("history", "last", "inflight"):
+            st.session_state.pop(f"_rs:{prefix}:{suffix}", None)
 
 
 def current_user() -> Optional[AuthUser]:
