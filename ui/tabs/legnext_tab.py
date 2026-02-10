@@ -42,161 +42,66 @@ def render_legnext_tab(cfg: AppConfig, sidebar: SidebarState):
     
     result_store.init("legnext")
 
-    st.header("Midjourney via LegNext (Text → Image, Submit → Poll → Display)")
+    st.header("Midjourney via LegNext (Image)")
 
     # key pool 사용이 기본이면 cfg.legnext_api_key 체크는 'fallback' 용도임
     if (not sidebar.test_mode) and (not use_key_pool) and (not fallback_api_key):
         st.warning("Secrets 또는 환경변수에 MJ_API_KEY(=LegNext API Key) 또는 KEY_POOL_JSON을 설정해야 합니다.")
 
-    colA, colB = st.columns([2, 1])
+    mj_prompt = st.text_area(
+        "프롬프트 입력",
+        placeholder="A cinematic shot of a cyber-punk city...",
+        height=140,
+        key="mj_prompt",
+    )
 
-    with colA:
-        mj_prompt = st.text_area(
-            "프롬프트 입력",
-            placeholder="A cinematic shot of a cyber-punk city...",
-            height=140,
-            key="mj_prompt",
-        )
-        use_adv_mj = st.toggle("MJ 상세 파라미터 활성화", value=False, key="mj_toggle")
+    use_adv_mj = st.toggle("MJ 상세 파라미터 활성화", value=False, key="mj_toggle")
 
-        mj_params = ""
-        if use_adv_mj:
-            with st.expander("🛠️ MJ 파라미터 (프롬프트 뒤에 붙여 전송)", expanded=True):
-                c1, c2, c3 = st.columns(3)
-                with c1:
-                    st.markdown("### 📐 Canvas & Model")
-                    mj_ar = st.selectbox("화면 비율 (--ar)", ["1:1", "16:9", "9:16", "4:5", "2:3", "3:2", "21:9"])
-                    mj_ver = st.selectbox("모델 버전 (--v)", ["7", "6.1", "6.0", "5.2", "5.1", "Niji 6", "Niji 5"])
-                    mj_quality = st.select_slider("품질 (--q)", options=[0.25, 0.5, 1], value=1)
-                with c2:
-                    st.markdown("### 🎨 Artistic Control")
-                    mj_stylize = st.number_input("스타일 강도 (--s)", 0, 1000, 250, step=50)
-                    mj_chaos = st.number_input("카오스 (다양성, --c)", 0, 100, 0)
-                    mj_weird = st.number_input("기괴함 (--w)", 0, 3000, 0, step=100)
-                with c3:
-                    st.markdown("### ⚙️ Extra")
-                    mj_stop = st.slider("생성 중단 시점 (--stop)", 10, 100, 100)
-                    mj_tile = st.checkbox("패턴 타일링 (--tile)")
-                    mj_raw = st.checkbox("RAW 스타일 적용 (--style raw)")
-                    mj_draft = st.checkbox("초안 모드 (--draft)")
+    mj_params = ""
+    if use_adv_mj:
+        with st.expander("🛠️ MJ 파라미터 (프롬프트 뒤에 붙여 전송)", expanded=True):
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                st.markdown("### 📐 Canvas & Model")
+                mj_ar = st.selectbox("화면 비율 (--ar)", ["1:1", "16:9", "9:16", "4:5", "2:3", "3:2", "21:9"])
+                mj_ver = st.selectbox("모델 버전 (--v)", ["7", "6.1", "6.0", "5.2", "5.1", "Niji 6", "Niji 5"])
+                mj_quality = st.select_slider("품질 (--q)", options=[0.25, 0.5, 1], value=1)
+            with c2:
+                st.markdown("### 🎨 Artistic Control")
+                mj_stylize = st.number_input("스타일 강도 (--s)", 0, 1000, 250, step=50)
+                mj_chaos = st.number_input("카오스 (다양성, --c)", 0, 100, 0)
+                mj_weird = st.number_input("기괴함 (--w)", 0, 3000, 0, step=100)
+            with c3:
+                st.markdown("### ⚙️ Extra")
+                mj_stop = st.slider("생성 중단 시점 (--stop)", 10, 100, 100)
+                mj_tile = st.checkbox("패턴 타일링 (--tile)")
+                mj_raw = st.checkbox("RAW 스타일 적용 (--style raw)")
+                mj_draft = st.checkbox("초안 모드 (--draft)")
 
-                mj_params = f" --ar {mj_ar} --v {mj_ver} --q {mj_quality} --s {mj_stylize} --c {mj_chaos}"
-                if mj_weird > 0:
-                    mj_params += f" --w {mj_weird}"
-                if mj_tile:
-                    mj_params += " --tile"
-                if mj_raw:
-                    mj_params += " --style raw"
-                if mj_draft:
-                    mj_params += " --draft"
-                if mj_stop < 100:
-                    mj_params += f" --stop {mj_stop}"
+            mj_params = f" --ar {mj_ar} --v {mj_ver} --q {mj_quality} --s {mj_stylize} --c {mj_chaos}"
+            if mj_weird > 0:
+                mj_params += f" --w {mj_weird}"
+            if mj_tile:
+                mj_params += " --tile"
+            if mj_raw:
+                mj_params += " --style raw"
+            if mj_draft:
+                mj_params += " --draft"
+            if mj_stop < 100:
+                mj_params += f" --stop {mj_stop}"
+    
+    is_mode = st.toggle("⚙️ 실행 옵션", key="leg_play_mode")
+    auto_poll = True
+    poll_interval = 2.0
+    max_wait= 120
 
-    with colB:
-        st.markdown("### ⚙️ 실행 옵션")
+    if is_mode:
         auto_poll = st.toggle("제출 후 자동 폴링", value=True, key="mj_auto_poll")
         poll_interval = st.slider("폴링 간격(초)", 1.0, 10.0, 2.0, 0.5, key="mj_poll_interval")
         max_wait = st.slider("최대 대기(초)", 10, 300, 120, 10, key="mj_max_wait")
 
-        st.markdown("---")
-        st.markdown("### 🔎 기존 job_id 조회")
-        existing_job_id = st.text_input("job_id 입력", key="mj_existing_job_id")
-
-        if st.button("상태 조회", key="mj_check_btn"):
-            if not existing_job_id.strip():
-                st.error("job_id를 입력하세요.")
-            else:
-                tmp_run_id = f"check-{uuid.uuid4()}"
-                blocks = []
-
-                def log(t: str, **kw):
-                    blocks.append({"t": t, **kw})
-
-                lease = None
-                try:
-                    result_store.set_inflight(
-                        "legnext",
-                        stage="job_check.start",
-                        ts=now_iso(),
-                        run_id=tmp_run_id,
-                        job_id=existing_job_id.strip(),
-                    )
-
-                    if sidebar.test_mode:
-                        sc, raw, j = legnext.mock_get_job(existing_job_id.strip())
-                    else:
-                        if use_key_pool:
-                            result_store.update_inflight("legnext", stage="job_check.acquire_lease")
-                            lease = acquire_lease(
-                                cfg,
-                                provider="legnext",
-                                run_id=tmp_run_id,
-                                user_id=st.session_state.user_id,
-                                session_id=st.session_state.session_id,
-                                school_id=st.session_state.get("school_id", "default"),
-                                wait=True,
-                                max_wait_sec=30,
-                                poll_interval_sec=1.0,
-                                request_units=1,
-                            )
-                            result_store.update_inflight(
-                                "legnext",
-                                stage="job_check.lease_acquired",
-                                lease_id=lease.lease_id,
-                                api_key_id=getattr(lease, "api_key_id", None),
-                            )
-                            api_key = lease.key_payload.get("api_key", "")
-                            if not api_key:
-                                raise RuntimeError("키 풀에서 legnext api_key를 얻지 못했습니다. KEY_POOL_JSON/시드 설정을 확인하세요.")
-                        else:
-                            api_key = fallback_api_key
-                            if not api_key:
-                                raise RuntimeError("MJ_API_KEY(=LegNext API Key)가 없습니다. Secrets/환경변수 설정을 확인하세요.")
-
-                        sc, raw, j = legnext.get_job(existing_job_id.strip(), api_key)
-
-                    if sc == 200 and isinstance(j, dict) and j.get("job_id"):
-                        st.success(f"조회 성공 (status: {j.get('status')})")
-                        st.json(j)
-                        log("success", msg=f"조회 성공 (status: {j.get('status')})")
-                        log("json", obj=redact_obj(j))
-                        result_store.push("legnext", {
-                            "ts": now_iso(),
-                            "kind": "blocks",
-                            "run_id": tmp_run_id,
-                            "job_id": j.get("job_id"),
-                            "blocks": blocks,
-                        })
-                    else:
-                        st.error(f"조회 실패 (HTTP {sc})")
-                        st.text(raw)
-                        log("error", msg=f"조회 실패 (HTTP {sc})")
-                        log("json", obj={"http_status": sc, "raw": raw, "json": redact_obj(j) if isinstance(j, dict) else None})
-                        result_store.push("legnext", {
-                            "ts": now_iso(),
-                            "kind": "blocks",
-                            "run_id": tmp_run_id,
-                            "job_id": existing_job_id.strip(),
-                            "blocks": blocks,
-                        })
-
-                except Exception as e:
-                    st.error(str(e))
-                    log("error", msg=str(e))
-                    result_store.push("legnext", {
-                        "ts": now_iso(),
-                        "kind": "blocks",
-                        "run_id": tmp_run_id,
-                        "job_id": existing_job_id.strip(),
-                        "blocks": blocks,
-                    })
-                finally:
-                    if lease:
-                        release_lease(cfg, lease.lease_id)
-                    result_store.clear_inflight("legnext")
-
     st.markdown("---")
-    submit = st.button("🚀 LegNext로 생성 요청(제출)", key="mj_submit_btn", use_container_width=True)
+    submit = st.button("LegNext로 생성 요청(제출)", key="mj_submit_btn", width="stretch")
 
     if not submit:
         result_store.render(
@@ -615,7 +520,7 @@ def render_legnext_tab(cfg: AppConfig, sidebar: SidebarState):
 
 TAB = {
     "tab_id": "legnext",
-    "title": "🎨 Midjourney (LegNext) - 완성형",
+    "title": "🎨 Midjourney (LegNext)",
     "required_features": {"tab.legnext"},
     "render": render_legnext_tab,
 }

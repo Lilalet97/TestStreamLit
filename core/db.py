@@ -3,14 +3,35 @@ import sqlite3
 from datetime import datetime
 import streamlit as st
 from typing import Optional
+import uuid
+from datetime import timedelta
+import os
+
+try:
+    import libsql_experimental as libsql
+    _HAS_LIBSQL = True
+except ImportError:
+    _HAS_LIBSQL = False
 
 from core.redact import json_dumps_safe
 from core.config import AppConfig
 
 
 def _db(cfg: AppConfig):
-    conn = sqlite3.connect(cfg.runs_db_path, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
+    url = cfg.turso_database_url
+    token = cfg.turso_auth_token
+
+    if url and _HAS_LIBSQL:
+        # Turso 원격 DB (embedded replica: 로컬 캐시 + 원격 동기화)
+        conn = libsql.connect(cfg.runs_db_path, sync_url=url, auth_token=token)
+        conn.sync()
+    elif _HAS_LIBSQL:
+        conn = libsql.connect(cfg.runs_db_path)
+    else:
+        # libsql 미설치 시 (Windows 개발환경 등) 기존 sqlite3 fallback
+        conn = sqlite3.connect(cfg.runs_db_path, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+
     try:
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA synchronous=NORMAL;")
@@ -74,6 +95,27 @@ def init_db(cfg: AppConfig):
     cur.execute("""
         CREATE INDEX IF NOT EXISTS idx_users_role_active
         ON users(role, is_active)
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS user_sessions (
+            session_token TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            school_id TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            last_seen TEXT NOT NULL,
+            revoked INTEGER NOT NULL DEFAULT 0
+        )
+    """)
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_user_sessions_user
+        ON user_sessions(user_id)
+    """)
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_user_sessions_expires
+        ON user_sessions(expires_at)
     """)
 
     cur.execute("""
@@ -385,6 +427,25 @@ def upsert_user(cfg: AppConfig, user_id: str, password_hash: str, role: str = 'u
         conn.close()
 
 
+def update_user_fields(cfg: AppConfig, user_id: str, *, role: str | None = None, school_id: str | None = None):
+    """role, school_id 중 변경할 필드만 업데이트."""
+    parts, params = [], []
+    if role is not None:
+        parts.append("role=?"); params.append(role)
+    if school_id is not None:
+        parts.append("school_id=?"); params.append(school_id)
+    if not parts:
+        return
+    parts.append("updated_at=?"); params.append(now_iso())
+    params.append(user_id)
+    conn = _db(cfg)
+    try:
+        conn.execute(f"UPDATE users SET {', '.join(parts)} WHERE user_id=?", params)
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def set_user_password(cfg: AppConfig, user_id: str, password_hash: str):
     conn = _db(cfg)
     try:
@@ -410,6 +471,71 @@ def hard_delete_user(cfg: AppConfig, user_id: str):
     try:
         cur = conn.cursor()
         cur.execute("DELETE FROM users WHERE user_id=?", (user_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+def _expires_iso(ttl_sec: int) -> str:
+    dt = datetime.utcnow() + timedelta(seconds=int(ttl_sec))
+    return dt.isoformat() + "Z"
+
+
+def create_user_session(cfg: AppConfig, user_id: str, role: str, school_id: str, ttl_sec: int = 86400) -> str:
+    """Create a persistent login session and return opaque token."""
+    token = uuid.uuid4().hex
+    conn = _db(cfg)
+    try:
+        cur = conn.cursor()
+        now = now_iso()
+        exp = _expires_iso(ttl_sec)
+        cur.execute(
+            "INSERT INTO user_sessions(session_token,user_id,role,school_id,created_at,expires_at,last_seen,revoked) "
+            "VALUES (?,?,?,?,?,?,?,0)",
+            (token, user_id, role, school_id, now, exp, now),
+        )
+        conn.commit()
+        if getattr(cfg, "debug_auth", False):
+            import streamlit as st
+            st.sidebar.success(f"[AUTH-DBG] session created token head={token[:6]} exp={exp}")
+        return token
+    finally:
+        conn.close()
+
+
+def get_user_session(cfg: AppConfig, token: str):
+    if not token:
+        return None
+    conn = _db(cfg)
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT * FROM user_sessions WHERE session_token=? AND revoked=0 AND expires_at>?",
+            (token, now_iso()),
+        )
+        return cur.fetchone()
+    finally:
+        conn.close()
+
+
+def touch_user_session(cfg: AppConfig, token: str):
+    if not token:
+        return
+    conn = _db(cfg)
+    try:
+        cur = conn.cursor()
+        cur.execute("UPDATE user_sessions SET last_seen=? WHERE session_token=?", (now_iso(), token))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def revoke_user_session(cfg: AppConfig, token: str):
+    if not token:
+        return
+    conn = _db(cfg)
+    try:
+        cur = conn.cursor()
+        cur.execute("UPDATE user_sessions SET revoked=1, last_seen=? WHERE session_token=?", (now_iso(), token))
         conn.commit()
     finally:
         conn.close()

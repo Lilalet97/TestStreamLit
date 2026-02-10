@@ -39,7 +39,7 @@ def render_kling_tab(cfg: AppConfig, sidebar: SidebarState):
     # ✅ LegNext와 동일: 세션 결과 저장소 초기화
     result_store.init("kling")
 
-    st.header("Kling AI Image/Video (안정화 + MOCK 완전 지원)")
+    st.header("Kling (Image/Video)")
 
     if (not sidebar.test_mode) and (not use_key_pool) and (not (cfg.kling_access_key and cfg.kling_secret_key)):
         st.warning("Secrets/환경변수에 KLING_ACCESS_KEY, KLING_SECRET_KEY를 설정해야 합니다.")
@@ -66,14 +66,15 @@ def render_kling_tab(cfg: AppConfig, sidebar: SidebarState):
             if kl_seed != -1:
                 kl_args["seed"] = int(kl_seed)
 
-    is_video = st.toggle("🎥 비디오 생성 모드", key="kl_video_mode")
-    v_duration = None
-    v_creativity = None
+    is_video = st.toggle("⚙️ 비디오 생성 모드", key="kl_video_mode")
+    v_duration = 5
+    v_creativity = 5
     if is_video:
         v_duration = st.radio("길이 (초)", ["5", "10"], horizontal=True, key="kl_duration")
         v_creativity = st.slider("창의성 레벨", 0, 10, 5, key="kl_creativity")
 
-    submit = st.button("Kling API 요청", key="kl_btn", use_container_width=True)
+    st.markdown("---")
+    submit = st.button("Kling API 요청", key="kl_btn", width="stretch")
 
     # ✅ LegNext처럼: submit 안 눌렀으면 “저장된 blocks”를 기존 UI처럼 재생
     if not submit:
@@ -370,7 +371,7 @@ def render_kling_tab(cfg: AppConfig, sidebar: SidebarState):
 
 TAB = {
     "tab_id": "kling",
-    "title": "🎥 Kling AI Options",
+    "title": "🎥 Kling",
     "required_features": {"tab.kling"},
     "render": render_kling_tab,
 }

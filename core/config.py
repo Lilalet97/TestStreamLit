@@ -32,6 +32,12 @@ class AppConfig:
 
     tenant_config_dir: str
 
+    # Turso (libSQL remote DB)
+    turso_database_url: str = ""
+    turso_auth_token: str = ""
+
+    debug_auth: bool = False
+
     def get_enabled_tabs(self, school_id: str) -> List[str]:
         if school_id and school_id in self.enabled_tabs_by_school:
             return self.enabled_tabs_by_school[school_id]
@@ -53,6 +59,29 @@ class AppConfig:
         if t and isinstance(t.get("layout"), str):
             return t["layout"]
         return "default"
+
+    # ── Branding ──
+
+    def get_branding(self, school_id: str) -> dict:
+        """tenant JSON에서 branding 딕셔너리를 반환. 없으면 빈 dict."""
+        t = _load_tenant_json(self.tenant_config_dir, school_id)
+        if t and isinstance(t.get("branding"), dict):
+            return t["branding"]
+        return {}
+
+    def get_page_title(self, school_id: str) -> str:
+        return self.get_branding(school_id).get("page_title", "AIMZ AI 툴 프로젝트")
+
+    def get_browser_tab_title(self, school_id: str) -> str:
+        return self.get_branding(school_id).get(
+            "browser_tab_title", "Generative AI Multi-API Full Tester"
+        )
+
+    def get_logo_path(self, school_id: str) -> Optional[str]:
+        path = self.get_branding(school_id).get("logo_path")
+        if path and Path(path).exists():
+            return path
+        return None
 
 
 def _get_secret_or_env(key: str, default: str = "") -> str:
@@ -121,6 +150,7 @@ def load_config() -> AppConfig:
 
     # ✅ tenant json 폴더 (없으면 현재 폴더에서 찾도록 "." 기본)
     tenant_config_dir = _get_secret_or_env("TENANT_CONFIG_DIR", ".")
+    debug_auth = os.getenv("DEBUG_AUTH", "0") == "1"
 
     if "KEY_POOL_JSON" in st.secrets and not os.getenv("KEY_POOL_JSON"):
         os.environ["KEY_POOL_JSON"] = str(st.secrets["KEY_POOL_JSON"])
@@ -143,6 +173,11 @@ def load_config() -> AppConfig:
         enabled_tabs_by_school=enabled_tabs_by_school,
 
         tenant_config_dir=tenant_config_dir,
+
+        turso_database_url=_get_secret_or_env("TURSO_DATABASE_URL", ""),
+        turso_auth_token=_get_secret_or_env("TURSO_AUTH_TOKEN", ""),
+
+        debug_auth=debug_auth,
     )
 
 

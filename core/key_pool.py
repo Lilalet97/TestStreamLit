@@ -7,6 +7,12 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple, Callable
 
+try:
+    import libsql_experimental as libsql
+    _HAS_LIBSQL = True
+except ImportError:
+    _HAS_LIBSQL = False
+
 from core.config import AppConfig
 
 
@@ -25,11 +31,19 @@ def _seconds_to_next_minute(dt: Optional[datetime] = None) -> int:
     return max(1, int((next_min - dt).total_seconds()))
 
 # ---------- db helpers ----------
-def _db(cfg: AppConfig) -> sqlite3.Connection:
-    conn = sqlite3.connect(cfg.runs_db_path, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
+def _db(cfg: AppConfig):
+    url = cfg.turso_database_url
+    token = cfg.turso_auth_token
 
-    # SQLite 다중 클라이언트(단일 서버/멀티 세션)에서 동시성 안정성 ↑
+    if url and _HAS_LIBSQL:
+        conn = libsql.connect(cfg.runs_db_path, sync_url=url, auth_token=token)
+        conn.sync()
+    elif _HAS_LIBSQL:
+        conn = libsql.connect(cfg.runs_db_path)
+    else:
+        conn = sqlite3.connect(cfg.runs_db_path, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+
     try:
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA synchronous=NORMAL;")
@@ -39,10 +53,9 @@ def _db(cfg: AppConfig) -> sqlite3.Connection:
     return conn
 
 class Txn:
-    def __init__(self, conn: sqlite3.Connection):
+    def __init__(self, conn):
         self.conn = conn
     def __enter__(self):
-        # BEGIN IMMEDIATE: writer lock을 일찍 잡아 race를 줄임 (SQLite 전용)
         self.conn.execute("BEGIN IMMEDIATE;")
         return self.conn
     def __exit__(self, exc_type, exc, tb):
@@ -303,7 +316,7 @@ def cleanup_orphan_leases(cfg: AppConfig, lease_ttl_sec: Optional[int] = None) -
 
 
 # ---------- queue + acquire/release ----------
-def _ensure_waiter(cur: sqlite3.Cursor, provider: str, run_id: str,
+def _ensure_waiter(cur, provider: str, run_id: str,
                    user_id: str, session_id: str, school_id: str) -> str:
     waiter_id = str(uuid.uuid4())
     t = now_iso()
@@ -320,7 +333,7 @@ def _ensure_waiter(cur: sqlite3.Cursor, provider: str, run_id: str,
     row = cur.fetchone()
     return str(row["waiter_id"]) if row else waiter_id
 
-def _waiter_head_and_pos(cur: sqlite3.Cursor, provider: str, run_id: str) -> Tuple[Optional[str], Optional[int]]:
+def _waiter_head_and_pos(cur, provider: str, run_id: str) -> Tuple[Optional[str], Optional[int]]:
     cur.execute("""
         SELECT run_id
         FROM api_key_waiters
@@ -348,8 +361,8 @@ def _waiter_head_and_pos(cur: sqlite3.Cursor, provider: str, run_id: str) -> Tup
     pos = int(cur.fetchone()["c"])
     return head_run, pos
 
-def _select_best_key(cur: sqlite3.Cursor, provider: str, school_id: str,
-                     lease_cutoff_iso: str, bucket: str, request_units: int) -> Optional[sqlite3.Row]:
+def _select_best_key(cur, provider: str, school_id: str,
+                     lease_cutoff_iso: str, bucket: str, request_units: int):
     # active leases count
     # usage count in current minute bucket
     cur.execute(f"""
@@ -395,7 +408,7 @@ def _select_best_key(cur: sqlite3.Cursor, provider: str, school_id: str,
     return cur.fetchone()
 
 def _diagnose_block_reason(
-    cur: sqlite3.Cursor,
+    cur,
     provider: str,
     school_id: str,
     lease_cutoff_iso: str,
@@ -476,7 +489,7 @@ def _diagnose_block_reason(
     }
 
 
-def _inc_rpm(cur: sqlite3.Cursor, api_key_id: int, bucket: str, units: int) -> None:
+def _inc_rpm(cur, api_key_id: int, bucket: str, units: int) -> None:
     cur.execute("""
         INSERT INTO api_key_usage_minute(api_key_id, minute_bucket, count)
         VALUES (?, ?, ?)

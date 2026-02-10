@@ -1,5 +1,10 @@
 {
   "tenant_id": "default",
-  "layout": "default",
-  "enabled_features": ["tab.legnext", "tab.kling"]
+  "layout": "운영팀",
+  "enabled_features": ["tab.legnext", "tab.kling"],
+  "branding": {
+    "page_title": "운영팀!!",
+    "browser_tab_title": "운영 페이지",
+    "logo_path": null
+  }
 }

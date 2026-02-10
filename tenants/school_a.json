@@ -1,5 +1,10 @@
 {
   "tenant_id": "school_a",
-  "layout": "school_a",
-  "enabled_features": ["tab.legnext"]
+  "layout": "프로토타입 대학",
+  "enabled_features": ["tab.legnext"],
+  "branding": {
+    "page_title": "프로토타입 대학 AI 교육",
+    "browser_tab_title": "프로토타입 대학",
+    "logo_path": "tenants/logos/school_a.png"
+  }
 }

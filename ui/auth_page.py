@@ -10,63 +10,106 @@ from core.auth import (
     login_user,
     maybe_seed_admin_from_env,
     hash_password,
+    try_restore_login,
 )
 from core.db import upsert_user
+
+# ✅ 로그인 확정 요청을 임시로 저장할 session_state 키
+_PENDING_LOGIN_KEY = "_auth_pending_login"
 
 
 def render_auth_gate(cfg: AppConfig):
     """Ensure the user is authenticated.
 
-    - If first run and no users exist -> bootstrap admin
-    - Else -> login page
-
     Returns:
         AuthUser if logged in, else None (and renders UI)
     """
-    # Optional admin seeding (for headless deployments)
     maybe_seed_admin_from_env(cfg)
+
+    # ------------------------------------------------------------
+    # ✅ (1) 폼에서 "로그인 확정 요청"만 해두고 rerun된 케이스 처리
+    #     -> 여기(placeholder 밖)에서 login_user를 실행해야 쿠키가 안정적으로 남습니다.
+    # ------------------------------------------------------------
+    pending = st.session_state.pop(_PENDING_LOGIN_KEY, None)
+    if isinstance(pending, dict):
+        user = AuthUser(
+            user_id=pending.get("user_id", ""),
+            role=pending.get("role", "user"),
+            school_id=pending.get("school_id", "default"),
+        )
+        if user.user_id:
+            login_user(cfg, user, remember=True)
+            if getattr(cfg, "debug_auth", False):
+                token = st.session_state.get("auth_session_token", "")
+                st.sidebar.success(f"[AUTH-DBG] login_user done, token head={str(token)[:6]}")
+            return current_user()
+
+    # ------------------------------------------------------------
+    # ✅ (2) 쿠키/DB 세션 복구 시도 (F5 대응)
+    # ------------------------------------------------------------
+    restored = try_restore_login(cfg)
+    if restored:
+        return restored
 
     u = current_user()
     if u:
         return u
 
+    # ------------------------------------------------------------
+    # (3) 쿠키 hydration 대기
+    #     CookieController는 첫 렌더 시 브라우저 쿠키를 비동기로 읽음.
+    #     첫 run에서는 쿠키가 아직 없을 수 있으므로 로딩 상태를 표시하고,
+    #     컴포넌트의 자동 rerun을 기다림.
+    # ------------------------------------------------------------
+    if not st.session_state.get("_auth_cookies_checked"):
+        st.session_state["_auth_cookies_checked"] = True
+        st.info("로그인 확인 중...")
+        return None
+
+    # ------------------------------------------------------------
+    # (4) 아직 로그인 안 됐으면 bootstrap/login 화면
+    # ------------------------------------------------------------
     if is_bootstrap_needed(cfg):
         return _render_bootstrap_admin(cfg)
     return _render_login(cfg)
 
 
 def _render_bootstrap_admin(cfg: AppConfig):
-    st.title("🔐 초기 관리자 계정 생성")
-    st.info("처음 실행입니다. 운영팀(관리자) 계정을 먼저 만들어야 합니다.")
+    st.title("초기 관리자 생성")
+    st.write("첫 실행입니다. 관리자 계정을 생성해주세요.")
 
-    with st.form("bootstrap_admin"):
-        user_id = st.text_input("관리자 ID")
-        pw1 = st.text_input("비밀번호", type="password")
-        pw2 = st.text_input("비밀번호 확인", type="password")
-        school_id = st.text_input("기본 School ID", value="default")
-        submitted = st.form_submit_button("관리자 생성")
+    with st.form("bootstrap_admin_form"):
+        user_id = st.text_input("관리자 ID", value="admin")
+        password = st.text_input("관리자 PW", type="password")
+        school_id = st.text_input("학교 ID", value="default")
+        submitted = st.form_submit_button("생성", width="stretch")
 
-    if not submitted:
-        return None
+    if submitted:
+        user_id = (user_id or "").strip()
+        school_id = (school_id or "default").strip() or "default"
 
-    user_id = (user_id or "").strip()
-    school_id = (school_id or "default").strip() or "default"
+        if not user_id or not password:
+            st.error("ID/PW를 입력해주세요.")
+            return None
 
-    if not user_id:
-        st.error("관리자 ID를 입력하세요.")
-        return None
-    if not pw1:
-        st.error("비밀번호를 입력하세요.")
-        return None
-    if pw1 != pw2:
-        st.error("비밀번호가 일치하지 않습니다.")
-        return None
+        upsert_user(
+            cfg,
+            user_id=user_id,
+            password_hash=hash_password(password),
+            role="admin",
+            school_id=school_id,
+            is_active=1,
+        )
 
-    ph = hash_password(pw1)
-    upsert_user(cfg, user_id=user_id, password_hash=ph, role="admin", school_id=school_id, is_active=1)
-    login_user(AuthUser(user_id=user_id, role="admin", school_id=school_id))
-    st.success("관리자 계정이 생성되었습니다. 로그인 완료.")
-    st.rerun()
+        # ✅ 여기서 login_user 호출하지 말고, auth gate 최상단에서 처리하도록 넘김
+        st.session_state[_PENDING_LOGIN_KEY] = {
+            "user_id": user_id,
+            "role": "admin",
+            "school_id": school_id,
+        }
+        st.rerun()
+
+    return None
 
 
 def _render_login(cfg: AppConfig):
@@ -74,22 +117,26 @@ def _render_login(cfg: AppConfig):
 
     with st.form("login_form"):
         user_id = st.text_input("ID")
-        password = st.text_input("비밀번호", type="password")
-        submitted = st.form_submit_button("로그인")
+        password = st.text_input("PW", type="password")
+        submitted = st.form_submit_button("로그인", width="stretch")
 
-    if not submitted:
-        return None
+    if submitted:
+        user_id = (user_id or "").strip()
+        if not user_id or not password:
+            st.error("ID/PW를 입력해주세요.")
+            return None
 
-    user_id = (user_id or "").strip()
-    if not user_id or not password:
-        st.error("ID/비밀번호를 입력하세요.")
-        return None
+        u = authenticate(cfg, user_id, password)
+        if not u:
+            st.error("로그인 실패: ID/PW를 확인해주세요.")
+            return None
 
-    u = authenticate(cfg, user_id=user_id, password=password)
-    if not u:
-        st.error("로그인 실패: ID/비밀번호를 확인하세요(또는 계정이 비활성화 상태일 수 있습니다).")
-        return None
+        # ✅ 여기서 login_user 호출하지 말고, auth gate 최상단에서 처리하도록 넘김
+        st.session_state[_PENDING_LOGIN_KEY] = {
+            "user_id": u.user_id,
+            "role": u.role,
+            "school_id": u.school_id,
+        }
+        st.rerun()
 
-    login_user(u)
-    st.success("로그인 성공")
-    st.rerun()
+    return None
