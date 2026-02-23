@@ -35,7 +35,7 @@ def call_with_lease(
     session_id: Optional[str] = None,
     school_id: Optional[str] = None,
     max_wait_sec: int = 60,
-    lease_ttl_sec: Optional[int] = None,
+    lease_ttl_sec: Optional[int] = 120,
 ) -> Any:
     """
     test_mode=True  → mock_fn() 호출 (키 풀 사용하지 않음)

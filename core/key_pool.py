@@ -522,6 +522,15 @@ def acquire_lease(
                       AND (last_heartbeat_at IS NULL OR last_heartbeat_at='' OR last_heartbeat_at < ?)
                 """, (now_iso(), lease_cutoff))
 
+                # stale waiter 정리: max_wait_sec(60s) 초과 + 여유 → 2분 이상 된 waiting 삭제
+                # Streamlit Cloud에서 이전 세션이 비정상 종료되어 남은 고아 waiter 방지
+                _waiter_cutoff = (now - timedelta(minutes=2)).isoformat() + "Z"
+                cur.execute("""
+                    DELETE FROM api_key_waiters
+                    WHERE state='waiting'
+                      AND updated_at < ?
+                """, (_waiter_cutoff,))
+
                 if wait:
                     _ensure_waiter(cur, provider, run_id, user_id, session_id, school_id)
                     head_run, pos = _waiter_head_and_pos(cur, provider, run_id)
