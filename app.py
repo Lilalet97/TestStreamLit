@@ -9,10 +9,11 @@ from core.config import load_config, ensure_session_ids
 from core.db import init_db, cleanup_orphan_active_jobs
 from core.key_pool import bootstrap as key_pool_bootstrap
 from ui.auth_page import render_auth_gate
-from ui.admin_page import render_admin_page
-from ui.sidebar import render_sidebar
+from ui.admin_page import render_admin_page, render_viewer_page
+from ui.sidebar import render_profile_card, render_sidebar
 from ui.run_detail import maybe_open_run_detail_dialog
 from ui.registry import get_all_tabs, filter_tabs
+from ui.floating_chat import render_floating_chat
 
 
 def main():
@@ -52,19 +53,53 @@ def main():
 
     # set_page_config은 이미 호출되었으므로, 탭 제목이 달라졌으면 JS로 동적 갱신
     # st.markdown은 <script>를 제거하므로 components.html을 사용 (iframe → parent 접근)
+    # sidebar에 렌더링: GPT 탭 CSS(.stMainBlockContainer iframe)가 이 iframe을
+    # 전체화면으로 확장하여 탭 콘텐츠를 가리는 문제 방지
     if school_id != prev_school_id:
         actual_title = cfg.get_browser_tab_title(school_id)
-        components.html(
-            f"<script>parent.document.title = {actual_title!r};</script>",
-            height=0,
-        )
+        with st.sidebar:
+            components.html(
+                f"<script>parent.document.title = {actual_title!r};</script>",
+                height=0,
+            )
 
-    # 운영 계정이면 운영 페이지로 라우팅
+    # 역할별 라우팅
     if auth_user.role == "admin":
         render_admin_page(cfg)
         return
+    elif auth_user.role == "viewer":
+        render_viewer_page(cfg)
+        return
 
-    # --- User UI ---
+    # --- User UI (teacher / student) ---
+
+    # 탭 목록 준비 (사이드바에서 선택 UI를 먼저 렌더링하기 위해 선행 계산)
+    enabled_features = set(cfg.get_enabled_features(school_id))
+    all_tabs = get_all_tabs()
+    visible_tabs = filter_tabs(all_tabs, enabled_features)
+
+    if not visible_tabs:
+        st.warning(
+            f"이 학교({school_id})는 현재 오픈된 탭이 없습니다.\n"
+            f"- enabled_features: {sorted(enabled_features)}"
+        )
+        return
+
+    # 1) 프로필 카드 (최상단)
+    render_profile_card(cfg)
+
+    # 2) 페이지 타이틀 + 탭 선택
+    with st.sidebar:
+        st.markdown(f"### {cfg.get_page_title(school_id)}")
+        selected_idx = st.radio(
+            "페이지 선택",
+            options=range(len(visible_tabs)),
+            format_func=lambda i: visible_tabs[i].title,
+            key="selected_tab",
+            label_visibility="collapsed",
+        )
+
+    # 3) 나머지 사이드바 (세션, 동시실행, 히스토리, 테스트모드)
     sidebar_state = render_sidebar(cfg)
 
     # 키 풀 상태를 사이드바 하단에 간결하게 표시
@@ -81,27 +116,17 @@ def main():
         else:
             st.caption("🔑 키 풀 미설정")
 
-    st.title(cfg.get_page_title(school_id))
-
+    # 메인 영역: 선택된 탭 콘텐츠만 렌더링
     maybe_open_run_detail_dialog(cfg)
+    visible_tabs[selected_idx].render(cfg, sidebar_state)
 
-    # enabled_features는 tenant json(default.json/school_a.json)을 우선 사용
-    enabled_features = set(cfg.get_enabled_features(school_id))
-
-    all_tabs = get_all_tabs()
-    visible_tabs = filter_tabs(all_tabs, enabled_features)
-
-    if not visible_tabs:
-        st.warning(
-            f"이 학교({school_id})는 현재 오픈된 탭이 없습니다.\n"
-            f"- enabled_features: {sorted(enabled_features)}"
-        )
-        return
-
-    tab_objs = st.tabs([t.title for t in visible_tabs])
-    for tab_obj, tab_def in zip(tab_objs, visible_tabs):
-        with tab_obj:
-            tab_def.render(cfg, sidebar_state)
+    # 플로팅 채팅 (teacher/student만)
+    # sidebar에 렌더링: 채팅 iframe(1px)이 .stMainBlockContainer에 있으면
+    # GPT 탭 CSS가 전체화면으로 확장하여 빈 공간 생성. sidebar는 CSS 영향 밖.
+    # 채팅 UI는 parent.document.body에 position:fixed로 주입되므로 위치 무관.
+    if auth_user.role in ("teacher", "student"):
+        with st.sidebar:
+            render_floating_chat(cfg)
 
 
 if __name__ == "__main__":

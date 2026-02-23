@@ -11,9 +11,13 @@ class TabSpec:
 
 def get_all_tabs() -> List[TabSpec]:
     # 여기에서만 탭을 등록한다 (추가 시 이 파일만 수정)
-    from ui.tabs.legnext_tab import TAB as LEGNEXT_TAB
-    from ui.tabs.kling_tab import TAB as KLING_TAB
-    
+    from ui.tabs.mj_tab import TAB as MJ_TAB
+    from ui.tabs.gpt_tab import TAB as GPT_TAB
+    from ui.tabs.suno_tab import TAB as SUNO_TAB
+    from ui.tabs.kling_web_tab import TAB as KLING_WEB_TAB
+    from ui.tabs.elevenlabs_tab import TAB as ELEVENLABS_TAB
+    from ui.tabs.nanobanana_tab import TAB as NANOBANANA_TAB
+
     def _to_spec(d: Dict) -> TabSpec:
         return TabSpec(
             tab_id=d["tab_id"],
@@ -22,7 +26,7 @@ def get_all_tabs() -> List[TabSpec]:
             render=d["render"],
         )
 
-    return [_to_spec(LEGNEXT_TAB), _to_spec(KLING_TAB)]
+    return [_to_spec(GPT_TAB), _to_spec(MJ_TAB), _to_spec(SUNO_TAB), _to_spec(KLING_WEB_TAB), _to_spec(ELEVENLABS_TAB), _to_spec(NANOBANANA_TAB)]
 
 
 def filter_tabs(all_tabs: List[TabSpec], enabled_features: Set[str]) -> List[TabSpec]:

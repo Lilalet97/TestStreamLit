@@ -11,10 +11,6 @@ from pathlib import Path
 @dataclass(frozen=True)
 class AppConfig:
     # Keys
-    legnext_api_key: str
-    kling_access_key: str
-    kling_secret_key: str
-
     openai_api_key: str
     openai_model: str
 
@@ -36,7 +32,30 @@ class AppConfig:
     turso_database_url: str = ""
     turso_auth_token: str = ""
 
+    # Suno
+    suno_accounts_json: str = "[]"
+
+    # ElevenLabs
+    elevenlabs_api_key: str = ""
+
+    # NanoBanana (Google Imagen / Gemini)
+    google_api_key: str = ""
+
     debug_auth: bool = False
+
+    def get_suno_accounts(self) -> List[dict]:
+        """secrets에서 로드한 Suno 계정 목록 반환."""
+        try:
+            return json.loads(self.suno_accounts_json)
+        except Exception:
+            return []
+
+    def get_suno_account(self, suno_id: int) -> Optional[dict]:
+        """특정 번호의 Suno 계정 반환. 없으면 None."""
+        for acc in self.get_suno_accounts():
+            if acc.get("id") == suno_id:
+                return acc
+        return None
 
     def get_enabled_tabs(self, school_id: str) -> List[str]:
         if school_id and school_id in self.enabled_tabs_by_school:
@@ -145,7 +164,7 @@ def _load_tenant_json(tenant_dir: str, school_id: str) -> Optional[dict]:
     return None
 
 def load_config() -> AppConfig:
-    enabled_tabs_default = _parse_csv_list(_get_secret_or_env("ENABLED_TABS", "legnext,kling"))
+    enabled_tabs_default = _parse_csv_list(_get_secret_or_env("ENABLED_TABS", "gpt,mj"))
     enabled_tabs_by_school = _parse_tabs_by_school(_get_secret_or_env("TABS_BY_SCHOOL_JSON", ""))
 
     # ✅ tenant json 폴더 (없으면 현재 폴더에서 찾도록 "." 기본)
@@ -156,10 +175,6 @@ def load_config() -> AppConfig:
         os.environ["KEY_POOL_JSON"] = str(st.secrets["KEY_POOL_JSON"])
 
     return AppConfig(
-        legnext_api_key=_get_secret_or_env("MJ_API_KEY", ""),
-        kling_access_key=_get_secret_or_env("KLING_ACCESS_KEY", ""),
-        kling_secret_key=_get_secret_or_env("KLING_SECRET_KEY", ""),
-
         openai_api_key=_get_secret_or_env("OPENAI_API_KEY", ""),
         openai_model=_get_secret_or_env("OPENAI_MODEL", "gpt-4o-mini"),
 
@@ -176,6 +191,12 @@ def load_config() -> AppConfig:
 
         turso_database_url=_get_secret_or_env("TURSO_DATABASE_URL", ""),
         turso_auth_token=_get_secret_or_env("TURSO_AUTH_TOKEN", ""),
+
+        suno_accounts_json=_get_secret_or_env("SUNO_ACCOUNTS_JSON", "[]"),
+
+        elevenlabs_api_key=_get_secret_or_env("ELEVENLABS_API_KEY", ""),
+
+        google_api_key=_get_secret_or_env("GOOGLE_API_KEY", ""),
 
         debug_auth=debug_auth,
     )

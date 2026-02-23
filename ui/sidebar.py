@@ -7,16 +7,19 @@ from typing import Callable
 
 _KST = timezone(timedelta(hours=9))
 
+from pathlib import Path
+
 from core.config import AppConfig
 from core.db import list_runs, count_active_jobs, clear_my_active_jobs
 from core.auth import current_user, logout_user
+
+_LOGO_DIR = Path(__file__).resolve().parent.parent / "Sources"
 
 
 @dataclass
 class SidebarState:
     session_only: bool
     test_mode: bool
-    mock_scenario: str
     refresh_counts: Callable[[], None]
 
 
@@ -27,7 +30,7 @@ def _encode_logo(path: str) -> str:
 
 
 def _role_badge(role: str) -> str:
-    colors = {"admin": "#e74c3c", "user": "#3498db"}
+    colors = {"admin": "#e74c3c", "viewer": "#e67e22", "teacher": "#2ecc71", "student": "#3498db"}
     bg = colors.get(role, "#95a5a6")
     return (
         f'<span style="background:{bg};color:#fff;padding:2px 8px;'
@@ -36,18 +39,28 @@ def _role_badge(role: str) -> str:
     )
 
 
-def render_sidebar(cfg: AppConfig) -> SidebarState:
+def render_profile_card(cfg: AppConfig) -> None:
+    """사이드바 최상단 프로필 카드 + 로그아웃 버튼."""
     u = current_user()
 
     with st.sidebar:
-        # ── 프로필 카드 ──
+        # ── 회사 로고 ──
+        _logo_file = _LOGO_DIR / "aimz_CI_logo_aimz_signature_white.png"
+        if _logo_file.exists():
+            _b64 = _encode_logo(str(_logo_file))
+            st.markdown(
+                f'<div style="text-align:left;margin:-140px 0px -100px;padding:0 4px;pointer-events:none;">'
+                f'<img src="data:image/png;base64,{_b64}" '
+                f'style="width:90%;height:auto;opacity:.9;pointer-events:none;">'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
         if u:
             uid, role, school = u.user_id, u.role, u.school_id
         else:
             uid = st.session_state.get("user_id", "guest")
             role, school = "unknown", "default"
 
-        # 학교 로고가 있으면 아바타 원 대신 로고 표시
         logo_path = cfg.get_logo_path(school)
         if logo_path:
             avatar_html = (
@@ -96,16 +109,20 @@ def render_sidebar(cfg: AppConfig) -> SidebarState:
             unsafe_allow_html=True,
         )
 
-        if st.button("로그아웃", icon=":material/logout:", use_container_width=True):
+        if st.button("로그아웃", icon=":material/logout:", width='stretch'):
             logout_user(cfg)
             st.rerun()
 
         st.markdown("---")
 
+
+def render_sidebar(cfg: AppConfig) -> SidebarState:
+    with st.sidebar:
+
         # ── 세션 ──
         st.markdown("#### 세션")
         sid = st.session_state.session_id
-        if st.button("새 세션 시작", icon=":material/refresh:", use_container_width=True):
+        if st.button("새 세션 시작", icon=":material/refresh:", width='stretch'):
             import uuid
             st.session_state.session_id = str(uuid.uuid4())
             st.rerun()
@@ -166,7 +183,7 @@ def render_sidebar(cfg: AppConfig) -> SidebarState:
                 label_visibility="collapsed",
             )
 
-            if st.button("상세 보기", icon=":material/open_in_new:", use_container_width=True):
+            if st.button("상세 보기", icon=":material/open_in_new:", width='stretch'):
                 st.session_state["_open_run_detail"] = bool(sel)
         else:
             st.info("실행 기록이 아직 없습니다.")
@@ -182,15 +199,8 @@ def render_sidebar(cfg: AppConfig) -> SidebarState:
             value=False,
             help="외부 API를 호출하지 않고 로컬에서 응답을 시뮬레이션합니다.",
         )
-        mock_scenario = "SUCCESS"
-        if test_mode:
-            mock_scenario = st.selectbox(
-                "시나리오",
-                ["SUCCESS", "FAILED_402", "FAILED_401", "FAILED_429", "SERVER_500", "TIMEOUT"],
-                index=0,
-            )
 
-        if st.button("내 활성 작업 강제 정리", icon=":material/delete_sweep:", use_container_width=True):
+        if st.button("내 활성 작업 강제 정리", icon=":material/delete_sweep:", width='stretch'):
             clear_my_active_jobs(cfg, session_only=False, only_stale=False)
             st.success("정리 완료!")
             st.rerun()
@@ -198,6 +208,5 @@ def render_sidebar(cfg: AppConfig) -> SidebarState:
     return SidebarState(
         session_only=session_only,
         test_mode=test_mode,
-        mock_scenario=mock_scenario,
         refresh_counts=refresh_counts,
     )

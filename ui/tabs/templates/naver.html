@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+  /* ── 리셋 & 기본 ── */
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html { height:100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Malgun Gothic", "맑은 고딕",
+                 "Apple SD Gothic Neo", sans-serif;
+    background: #f5f6f8;
+    color: #333;
+    -webkit-font-smoothing: antialiased;
+    min-height:100%;
+  }
+  a { text-decoration:none; color:inherit; }
+  ul { list-style:none; }
+  button { cursor:pointer; border:none; background:none; font-family:inherit; }
+
+  /* ── 상단 네비게이션 ── */
+  .top-nav {
+    background: #fff;
+    border-bottom: 1px solid #e4e8eb;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding: 0 20px;
+    font-size: 12px;
+    color: #666;
+  }
+  .top-nav a { margin-left: 14px; color: #666; }
+  .top-nav a:hover { text-decoration: underline; }
+
+  /* ── 헤더 (로고 + 검색) ── */
+  .header {
+    background: #fff;
+    padding: 20px 0 14px;
+    text-align: center;
+  }
+  .logo {
+    font-size: 38px;
+    font-weight: 800;
+    color: #03c75a;
+    letter-spacing: -1px;
+    margin-bottom: 16px;
+  }
+  .search-wrap {
+    display: inline-flex;
+    align-items: center;
+    width: 580px;
+    max-width: 90vw;
+    height: 50px;
+    border: 2px solid #03c75a;
+    border-radius: 6px;
+    overflow: hidden;
+    background: #fff;
+  }
+  .search-wrap input {
+    flex: 1;
+    height: 100%;
+    border: none;
+    outline: none;
+    padding: 0 16px;
+    font-size: 16px;
+    color: #333;
+  }
+  .search-wrap input::placeholder { color: #aaa; }
+  .search-btn {
+    width: 56px;
+    height: 100%;
+    background: #03c75a;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .search-btn svg { fill: #fff; }
+
+  /* ── 퀵 서비스 링크 ── */
+  .quick-links {
+    display: flex;
+    justify-content: center;
+    gap: 6px;
+    padding: 12px 0 6px;
+    background: #fff;
+    border-bottom: 1px solid #e4e8eb;
+  }
+  .quick-links a {
+    font-size: 13px;
+    color: #333;
+    padding: 4px 12px;
+    border-radius: 18px;
+    transition: background 0.15s;
+  }
+  .quick-links a:hover { background: #f0f1f3; }
+
+  /* ── 메인 컨테이너 ── */
+  .main-container {
+    max-width: 1080px;
+    margin: 20px auto;
+    display: grid;
+    grid-template-columns: 1fr 300px;
+    gap: 20px;
+    padding: 0 16px;
+  }
+
+  /* ── 뉴스 카드 ── */
+  .card {
+    background: #fff;
+    border-radius: 12px;
+    box-shadow: 0 1px 3px rgba(0,0,0,.06);
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+  .card-title {
+    font-size: 16px;
+    font-weight: 700;
+    margin-bottom: 14px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .card-title .badge {
+    background: #03c75a;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 10px;
+  }
+
+  /* 뉴스 아이템 */
+  .news-item {
+    display: flex;
+    gap: 14px;
+    padding: 10px 0;
+    border-bottom: 1px solid #f1f2f4;
+    transition: background 0.15s;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .news-item:last-child { border-bottom: none; }
+  .news-item:hover { background: #fafbfc; }
+  .news-thumb {
+    width: 90px; height: 60px;
+    border-radius: 6px;
+    background: #e8e9ec;
+    flex-shrink: 0;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    color: #999;
+  }
+  .news-text h4 {
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.4;
+    margin-bottom: 4px;
+    color: #222;
+  }
+  .news-text p {
+    font-size: 12px;
+    color: #888;
+    line-height: 1.4;
+  }
+
+  /* ── 사이드 패널 ── */
+  /* 로그인 카드 */
+  .login-card {
+    text-align: center;
+    padding: 28px 20px;
+  }
+  .login-card .avatar {
+    width: 56px; height: 56px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #03c75a, #00b843);
+    margin: 0 auto 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 24px;
+    color: #fff;
+  }
+  .login-card p {
+    font-size: 13px;
+    color: #666;
+    margin-bottom: 16px;
+  }
+  .login-btn {
+    display: inline-block;
+    background: #03c75a;
+    color: #fff;
+    font-size: 14px;
+    font-weight: 600;
+    padding: 10px 40px;
+    border-radius: 6px;
+    transition: background 0.15s;
+  }
+  .login-btn:hover { background: #00b843; }
+
+  /* 실시간 검색어 */
+  .trending-list li {
+    display: flex;
+    align-items: center;
+    padding: 8px 4px;
+    font-size: 13px;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: background 0.15s;
+  }
+  .trending-list li:hover { background: #fafbfc; }
+  .trending-rank {
+    font-weight: 700;
+    color: #03c75a;
+    width: 24px;
+    text-align: center;
+    margin-right: 10px;
+    font-size: 14px;
+  }
+  .trending-keyword { flex:1; color:#333; }
+  .trending-change {
+    font-size: 11px;
+    color: #e74c3c;
+  }
+
+  /* ── 서비스 그리드 ── */
+  .service-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    padding: 4px;
+  }
+  .service-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 12px 6px;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .service-item:hover { background: #f0f1f3; }
+  .service-icon {
+    width: 42px; height: 42px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    color: #fff;
+    font-weight: 700;
+  }
+  .service-item span {
+    font-size: 12px;
+    color: #555;
+  }
+
+  /* ── 광고 배너 ── */
+  .ad-banner {
+    background: linear-gradient(135deg, #e8f5e9, #c8e6c9);
+    border-radius: 12px;
+    padding: 20px;
+    text-align: center;
+    color: #2e7d32;
+  }
+  .ad-banner h3 { font-size: 16px; font-weight: 700; margin-bottom: 6px; }
+  .ad-banner p { font-size: 12px; opacity: 0.8; }
+
+  /* ── 푸터 ── */
+  .footer {
+    text-align: center;
+    padding: 30px 16px;
+    font-size: 11px;
+    color: #aaa;
+    max-width: 1080px;
+    margin: 0 auto;
+  }
+  .footer a { color: #888; margin: 0 8px; }
+
+  /* ── 반응형 ── */
+  @media (max-width: 768px) {
+    .main-container {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+</head>
+<body>
+
+<!-- 상단 네비게이션 -->
+<div class="top-nav">
+  <a href="#" data-action="mail">메일</a>
+  <a href="#" data-action="cafe">카페</a>
+  <a href="#" data-action="blog">블로그</a>
+  <a href="#" data-action="shopping">쇼핑</a>
+  <a href="#" data-action="pay">Pay</a>
+  <a href="#" data-action="tv">TV</a>
+</div>
+
+<!-- 헤더: 로고 + 검색 -->
+<div class="header">
+  <div class="logo">NAVER</div>
+  <div class="search-wrap">
+    <input type="text" id="searchInput" placeholder="검색어를 입력해 주세요." />
+    <button class="search-btn" data-action="search">
+      <svg width="24" height="24" viewBox="0 0 24 24">
+        <path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0016 9.5 6.5 6.5 0 109.5 16c1.61
+          0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49
+          19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5
+          9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
+      </svg>
+    </button>
+  </div>
+</div>
+
+<!-- 퀵 링크 -->
+<div class="quick-links">
+  <a href="#" data-action="news">뉴스</a>
+  <a href="#" data-action="sports">스포츠</a>
+  <a href="#" data-action="entertainment">연예</a>
+  <a href="#" data-action="economy">경제</a>
+  <a href="#" data-action="webtoon">웹툰</a>
+  <a href="#" data-action="series">시리즈</a>
+  <a href="#" data-action="vibe">바이브</a>
+  <a href="#" data-action="map">지도</a>
+</div>
+
+<!-- 메인 콘텐츠 -->
+<div class="main-container">
+
+  <!-- 왼쪽: 뉴스 + 서비스 -->
+  <div class="left-col">
+
+    <!-- 뉴스 헤드라인 -->
+    <div class="card">
+      <div class="card-title">
+        <span>오늘의 뉴스</span>
+        <span class="badge">LIVE</span>
+      </div>
+      <div class="news-item" data-action="news-1">
+        <div class="news-thumb">IMG</div>
+        <div class="news-text">
+          <h4>AI 기술 발전으로 교육 패러다임 전환 가속화</h4>
+          <p>교육부, 2026년 AI 활용 맞춤형 교육 시범사업 확대 발표</p>
+        </div>
+      </div>
+      <div class="news-item" data-action="news-2">
+        <div class="news-thumb">IMG</div>
+        <div class="news-text">
+          <h4>글로벌 반도체 시장, 올해 사상 최대 매출 전망</h4>
+          <p>HBM·AI 칩 수요 폭발… 삼성·SK 설비투자 확대</p>
+        </div>
+      </div>
+      <div class="news-item" data-action="news-3">
+        <div class="news-thumb">IMG</div>
+        <div class="news-text">
+          <h4>봄철 꽃샘추위 주의보… 이번 주 전국 영하권</h4>
+          <p>기상청 "수도권 아침 기온 -5도… 건강관리 유의"</p>
+        </div>
+      </div>
+      <div class="news-item" data-action="news-4">
+        <div class="news-thumb">IMG</div>
+        <div class="news-text">
+          <h4>K-콘텐츠 수출 100억 달러 돌파 임박</h4>
+          <p>넷플릭스·디즈니+ 한국 오리지널 콘텐츠 경쟁 과열</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- 서비스 그리드 -->
+    <div class="card">
+      <div class="card-title">서비스</div>
+      <div class="service-grid">
+        <div class="service-item" data-action="svc-mail">
+          <div class="service-icon" style="background:#03c75a;">✉</div>
+          <span>메일</span>
+        </div>
+        <div class="service-item" data-action="svc-cafe">
+          <div class="service-icon" style="background:#2db400;">☕</div>
+          <span>카페</span>
+        </div>
+        <div class="service-item" data-action="svc-blog">
+          <div class="service-icon" style="background:#00c73c;">✏</div>
+          <span>블로그</span>
+        </div>
+        <div class="service-item" data-action="svc-kin">
+          <div class="service-icon" style="background:#0068ff;">?</div>
+          <span>지식iN</span>
+        </div>
+        <div class="service-item" data-action="svc-shopping">
+          <div class="service-icon" style="background:#f53c3c;">🛒</div>
+          <span>쇼핑</span>
+        </div>
+        <div class="service-item" data-action="svc-pay">
+          <div class="service-icon" style="background:#1ec800;">₩</div>
+          <span>페이</span>
+        </div>
+        <div class="service-item" data-action="svc-webtoon">
+          <div class="service-icon" style="background:#00d564;">📖</div>
+          <span>웹툰</span>
+        </div>
+        <div class="service-item" data-action="svc-map">
+          <div class="service-icon" style="background:#1ec800;">📍</div>
+          <span>지도</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 광고 배너 -->
+    <div class="card ad-banner">
+      <h3>네이버 클라우드와 함께하는 AI 교육</h3>
+      <p>HyperCLOVA X로 더 스마트한 학습 경험을 만나보세요</p>
+    </div>
+  </div>
+
+  <!-- 오른쪽 사이드 -->
+  <div class="right-col">
+
+    <!-- 로그인 카드 -->
+    <div class="card login-card">
+      <div class="avatar">N</div>
+      <p>네이버를 더 안전하고 편리하게<br>이용하세요.</p>
+      <button class="login-btn" data-action="naver-login">로그인</button>
+    </div>
+
+    <!-- 실시간 검색어 -->
+    <div class="card">
+      <div class="card-title">급상승 검색어</div>
+      <ul class="trending-list">
+        <li data-action="trend-1"><span class="trending-rank">1</span><span class="trending-keyword">AI 에이전트</span><span class="trending-change">▲ 12</span></li>
+        <li data-action="trend-2"><span class="trending-rank">2</span><span class="trending-keyword">반도체 ETF</span><span class="trending-change">▲ 5</span></li>
+        <li data-action="trend-3"><span class="trending-rank">3</span><span class="trending-keyword">봄 날씨</span><span class="trending-change">▲ 23</span></li>
+        <li data-action="trend-4"><span class="trending-rank">4</span><span class="trending-keyword">넷플릭스 신작</span><span class="trending-change">▲ 8</span></li>
+        <li data-action="trend-5"><span class="trending-rank">5</span><span class="trending-keyword">스트림릿</span><span class="trending-change">NEW</span></li>
+        <li data-action="trend-6"><span class="trending-rank">6</span><span class="trending-keyword">환율 전망</span><span class="trending-change">▲ 3</span></li>
+        <li data-action="trend-7"><span class="trending-rank">7</span><span class="trending-keyword">코딩 교육</span><span class="trending-change">▲ 15</span></li>
+        <li data-action="trend-8"><span class="trending-rank">8</span><span class="trending-keyword">클라우드 서비스</span><span class="trending-change">▲ 2</span></li>
+        <li data-action="trend-9"><span class="trending-rank">9</span><span class="trending-keyword">운동 루틴</span><span class="trending-change">NEW</span></li>
+        <li data-action="trend-10"><span class="trending-rank">10</span><span class="trending-keyword">ChatGPT 대안</span><span class="trending-change">▲ 7</span></li>
+      </ul>
+    </div>
+
+  </div>
+
+</div>
+
+<!-- 푸터 -->
+<div class="footer">
+  <a href="#">이용약관</a>|
+  <a href="#">개인정보처리방침</a>|
+  <a href="#">청소년보호정책</a>|
+  <a href="#">네이버 정책</a>|
+  <a href="#">고객센터</a>
+  <p style="margin-top:10px;">ⓒ NAVER Corp. (테스트용 디자인 복제 — 실제 서비스 아님)</p>
+</div>
+
+<script>
+  // ── 이벤트 수집 (나중에 Streamlit Custom Component 양방향 통신용) ──
+  // 모든 data-action 요소 클릭 → 콘솔 + (향후) Streamlit.setComponentValue 연결
+  document.addEventListener("click", function(e) {
+    var el = e.target.closest("[data-action]");
+    if (!el) return;
+    e.preventDefault();
+    var action = el.getAttribute("data-action");
+    console.log("[NAVER-DEMO] clicked:", action);
+
+    // 향후 Streamlit Custom Component 양방향 통신 연결 시:
+    // if (window.Streamlit) {
+    //   window.Streamlit.setComponentValue({ action: action, ts: Date.now() });
+    // }
+  });
+
+  // 검색 Enter 키
+  document.getElementById("searchInput").addEventListener("keydown", function(e) {
+    if (e.key === "Enter") {
+      console.log("[NAVER-DEMO] search:", e.target.value);
+    }
+  });
+</script>
+
+</body>
+</html>

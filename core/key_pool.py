@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple, Callable
 
 from core.config import AppConfig
-from core.database import get_db
+from core.database import get_db, throttled_sync, force_sync
 
 
 # ---------- time helpers ----------
@@ -33,6 +33,7 @@ class Txn:
     def __exit__(self, exc_type, exc, tb):
         if exc_type is None:
             self.conn.execute("COMMIT;")
+            throttled_sync()  # 트랜잭션 커밋 후 Turso 동기화
         else:
             self.conn.execute("ROLLBACK;")
         return False
@@ -77,23 +78,32 @@ def load_key_pool_spec(cfg: AppConfig) -> Dict[str, List[Dict[str, Any]]]:
 
     # 기존 코드 호환: cfg의 단일 키를 1개짜리 풀로 변환
     spec: Dict[str, List[Dict[str, Any]]] = {}
-    if cfg.legnext_api_key:
-        spec["legnext"] = [{
-            "name": "legnext-1",
-            "api_key": cfg.legnext_api_key,
-            "concurrency_limit": 1,
+    if cfg.openai_api_key:
+        spec["openai"] = [{
+            "name": "openai-fallback",
+            "api_key": cfg.openai_api_key,
+            "concurrency_limit": 3,
             "rpm_limit": 60,
             "priority": 0,
             "tenant_scope": "*",
             "is_active": True,
         }]
-    if cfg.kling_access_key and cfg.kling_secret_key:
-        spec["kling"] = [{
-            "name": "kling-1",
-            "access_key": cfg.kling_access_key,
-            "secret_key": cfg.kling_secret_key,
-            "concurrency_limit": 1,
-            "rpm_limit": 60,
+    if cfg.elevenlabs_api_key:
+        spec["elevenlabs"] = [{
+            "name": "elevenlabs-fallback",
+            "api_key": cfg.elevenlabs_api_key,
+            "concurrency_limit": 2,
+            "rpm_limit": 30,
+            "priority": 0,
+            "tenant_scope": "*",
+            "is_active": True,
+        }]
+    if cfg.google_api_key:
+        spec["google_imagen"] = [{
+            "name": "google-imagen-fallback",
+            "api_key": cfg.google_api_key,
+            "concurrency_limit": 2,
+            "rpm_limit": 30,
             "priority": 0,
             "tenant_scope": "*",
             "is_active": True,
@@ -206,7 +216,7 @@ def seed_keys(cfg: AppConfig) -> None:
                 expires_at = item.get("expires_at")
 
                 # provider별 payload 구성
-                if provider == "legnext":
+                if provider in ("openai", "midjourney", "elevenlabs", "google_imagen"):
                     api_key = (item.get("api_key") or "").strip()
                     if not api_key:
                         continue
@@ -750,4 +760,5 @@ def bootstrap(cfg: AppConfig) -> None:
     ensure_tables(cfg)
     seed_keys(cfg)
     cleanup_orphan_leases(cfg)
+    force_sync()  # 키 풀 초기화 결과를 Turso에 즉시 반영
     _BOOTSTRAPPED = True

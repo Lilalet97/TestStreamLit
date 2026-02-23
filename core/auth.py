@@ -31,6 +31,8 @@ class AuthUser:
     role: str
     school_id: str
 
+VALID_ROLES = ("admin", "viewer", "teacher", "student")
+
 COOKIE_NAME = "auth_token"
 COOKIE_CTRL_KEY = "auth_cookie_controller_v1"
 DEFAULT_SESSION_TTL_SEC = 24 * 60 * 60  # 24h
@@ -38,7 +40,10 @@ DEFAULT_SESSION_TTL_SEC = 24 * 60 * 60  # 24h
 def _cookies() -> CookieController:
     # 매 run마다 새로 생성해야 컴포넌트가 렌더링되어 브라우저 쿠키를 읽을 수 있음.
     # session_state에 캐시하면 F5 이후 컴포넌트가 재렌더링되지 않아 쿠키 복원 불가.
-    return CookieController(key=COOKIE_CTRL_KEY)
+    # sidebar에 렌더링: GPT 탭 CSS(.stMainBlockContainer iframe)가
+    # CookieController iframe을 전체화면으로 확장하여 탭 콘텐츠를 가리는 문제 방지.
+    with st.sidebar:
+        return CookieController(key=COOKIE_CTRL_KEY)
 
 def _b64e(b: bytes) -> str:
     return base64.urlsafe_b64encode(b).decode("ascii").rstrip("=")
@@ -128,7 +133,8 @@ def try_restore_login(cfg: AppConfig) -> Optional[AuthUser]:
     _auth_dbg(cfg, f"db session found={bool(srow)}")
     if not srow:
         try:
-            ctrl.remove(COOKIE_NAME)
+            with st.sidebar:
+                ctrl.remove(COOKIE_NAME)
             _auth_dbg(cfg, "cookie removed (no db session)")
         except Exception as exc:
             _auth_dbg(cfg, f"cookie remove error: {type(exc).__name__}: {exc}")
@@ -138,7 +144,8 @@ def try_restore_login(cfg: AppConfig) -> Optional[AuthUser]:
     _auth_dbg(cfg, f"user row found={bool(urow)} is_active={(urow['is_active'] if urow else None)}")
     if not urow or int(urow["is_active"]) != 1:
         try:
-            ctrl.remove(COOKIE_NAME)
+            with st.sidebar:
+                ctrl.remove(COOKIE_NAME)
             _auth_dbg(cfg, "cookie removed (user missing/inactive)")
         except Exception as exc:
             _auth_dbg(cfg, f"cookie remove error: {type(exc).__name__}: {exc}")
@@ -176,15 +183,16 @@ def login_user(cfg: AppConfig, user: AuthUser, remember: bool = True):
         st.session_state["auth_session_token"] = token
 
         try:
-            ctrl = _cookies()
+            # sidebar에서 모든 CookieController 렌더링 수행
+            # ctrl.set()도 내부적으로 컴포넌트를 렌더할 수 있어
+            # .stMainBlockContainer에 남으면 GPT 탭 CSS가 전체화면으로 확장함
+            with st.sidebar:
+                ctrl = _cookies()
+                ctrl.set(COOKIE_NAME, token)
 
-            # ✅ max_age 옵션 제거 (패키지 구현에 따라 실패/무시될 수 있음)
-            ctrl.set(COOKIE_NAME, token)
-
-            # ✅ 저장 직후 read-back (DEBUG_AUTH=1일 때만 콘솔로 확인)
-            if os.getenv("DEBUG_AUTH", "0") == "1":
-                got = str(ctrl.get(COOKIE_NAME) or "").strip()
-                print(f"[AUTH-DBG] cookie set -> readback len={len(got)} head={got[:8]}")
+                if os.getenv("DEBUG_AUTH", "0") == "1":
+                    got = str(ctrl.get(COOKIE_NAME) or "").strip()
+                    print(f"[AUTH-DBG] cookie set -> readback len={len(got)} head={got[:8]}")
         except Exception as e:
             if os.getenv("DEBUG_AUTH", "0") == "1":
                 print(f"[AUTH-DBG] cookie set FAILED: {type(e).__name__}: {e}")
@@ -198,7 +206,8 @@ def logout_user(cfg: AppConfig):
         except Exception:
             pass
         try:
-            _cookies().remove(COOKIE_NAME)
+            with st.sidebar:
+                _cookies().remove(COOKIE_NAME)
         except Exception:
             pass
 
@@ -210,17 +219,35 @@ def logout_user(cfg: AppConfig):
     st.session_state.user_id = "guest"
     st.session_state.school_id = "default"
 
-    # result_store 세션 내 히스토리 정리 (이전 유저 결과 제거)
-    for prefix in ("kling", "legnext"):
-        for suffix in ("history", "last", "inflight"):
-            st.session_state.pop(f"_rs:{prefix}:{suffix}", None)
+    # MJ 갤러리 세션 상태 정리
+    for k in ("mj_gallery", "_mj_db_loaded", "_mj_processed_actions", "_mj_pending_submit"):
+        st.session_state.pop(k, None)
+
+    # GPT Chat 세션 상태 정리
+    for k in ("gpt_conversations", "gpt_active_id", "_gpt_db_loaded", "_gpt_processed_actions", "_gpt_pending_send"):
+        st.session_state.pop(k, None)
+
+    # NanoBanana 세션 상태 정리
+    for k in ("nb_sessions", "nb_active_id", "_nb_db_loaded", "_nb_processed_actions", "_nb_pending_generate"):
+        st.session_state.pop(k, None)
+
+    # Kling 세션 상태 정리
+    for k in ("kling_web_history", "_kling_db_loaded", "_kling_processed_actions", "_kling_pending_generate"):
+        st.session_state.pop(k, None)
+
+    # ElevenLabs 세션 상태 정리
+    for k in ("elevenlabs_history", "_elevenlabs_db_loaded", "_el_processed_actions", "_el_pending_generate"):
+        st.session_state.pop(k, None)
+
+    # 플로팅 채팅 세션 상태 정리
+    st.session_state.pop("_chat_last_ts", None)
 
 
 def current_user() -> Optional[AuthUser]:
     if not st.session_state.get("auth_logged_in"):
         return None
     uid = st.session_state.get("auth_user_id") or ""
-    role = st.session_state.get("auth_role") or "user"
+    role = st.session_state.get("auth_role") or "student"
     sid = st.session_state.get("auth_school_id") or st.session_state.get("school_id") or "default"
     if not uid:
         return None

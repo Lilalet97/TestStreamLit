@@ -1,0 +1,1101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+/* ── Reset & Base ── */
+*{margin:0;padding:0;box-sizing:border-box;}
+html,body{height:100%;margin:0;overflow:hidden;}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  background:#131318;color:#e4e4e7;font-size:14px;
+}
+button{cursor:pointer;border:none;background:none;font-family:inherit;color:inherit;}
+::-webkit-scrollbar{width:6px;}
+::-webkit-scrollbar-track{background:transparent;}
+::-webkit-scrollbar-thumb{background:#333;border-radius:3px;}
+
+/* ── Layout ── */
+#app{display:flex;flex-direction:column;height:100vh;width:100%;}
+
+/* Top Bar */
+.top-bar{
+  height:48px;min-height:48px;
+  display:flex;align-items:center;justify-content:space-between;
+  padding:0 20px;
+  border-bottom:1px solid #27272a;
+  background:#18181b;
+}
+.top-bar-left{display:flex;align-items:center;gap:12px;}
+.logo{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;color:#e4e4e7;}
+.logo-icon{
+  width:24px;height:24px;border-radius:4px;
+  background:#27272a;display:flex;align-items:center;justify-content:center;
+  font-size:11px;color:#a1a1aa;
+}
+.top-bar-right{display:flex;align-items:center;gap:6px;}
+.top-btn{
+  padding:6px 12px;border-radius:6px;font-size:12px;font-weight:500;
+  color:#a1a1aa;border:1px solid #27272a;background:transparent;
+  transition:all .15s;
+}
+.top-btn:hover{color:#e4e4e7;border-color:#3f3f46;}
+.char-count{font-size:12px;color:#52525b;margin-left:8px;}
+
+/* Body */
+.body-wrap{flex:1;display:flex;overflow:hidden;min-height:0;}
+
+/* Main Panel */
+.main-panel{
+  flex:1;display:flex;flex-direction:column;
+  padding:24px 32px;overflow-y:auto;
+  position:relative;
+}
+.text-wrap{flex:1;display:flex;flex-direction:column;}
+.text-wrap textarea{
+  width:100%;flex:1;min-height:200px;resize:none;
+  background:transparent;border:none;outline:none;
+  color:#e4e4e7;font-size:16px;line-height:1.8;
+  font-family:inherit;
+}
+.text-wrap textarea::placeholder{color:#3f3f46;}
+
+/* Suggestion Chips Area */
+.chips-area{margin-top:auto;padding-top:24px;}
+.chips-label{font-size:13px;color:#52525b;margin-bottom:10px;font-weight:400;}
+.chips{display:flex;flex-wrap:wrap;gap:8px;}
+.chip{
+  padding:8px 14px;border-radius:20px;
+  background:transparent;border:1px solid #27272a;
+  color:#a1a1aa;font-size:13px;transition:all .15s;
+  display:flex;align-items:center;gap:6px;
+}
+.chip:hover{background:#1f1f23;color:#e4e4e7;border-color:#3f3f46;}
+.chip svg{width:14px;height:14px;flex-shrink:0;opacity:0.6;}
+
+/* Generate Button */
+.btn-generate{
+  padding:12px 28px;border-radius:10px;font-size:14px;font-weight:600;
+  background:#e4e4e7;color:#18181b;
+  width:100%;transition:all .15s;
+  margin-top:16px;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;gap:8px;
+}
+.btn-generate:hover{background:#fafafa;}
+.btn-generate:disabled{opacity:0.3;cursor:not-allowed;}
+.btn-generate svg{width:14px;height:14px;}
+
+/* ── Settings Panel ── */
+.settings-panel{
+  width:320px;min-width:280px;
+  border-left:1px solid #27272a;
+  display:flex;flex-direction:column;
+  background:#18181b;
+}
+
+/* Settings Tabs */
+.settings-tabs{
+  display:flex;border-bottom:1px solid #27272a;
+  padding:0 20px;gap:0;flex-shrink:0;
+}
+.settings-tab{
+  padding:14px 16px;font-size:14px;font-weight:500;
+  color:#52525b;cursor:pointer;border-bottom:2px solid transparent;
+  transition:all .15s;
+}
+.settings-tab:hover{color:#a1a1aa;}
+.settings-tab.active{color:#e4e4e7;border-bottom-color:#e4e4e7;}
+
+.settings-body{flex:1;overflow-y:auto;padding:20px;}
+
+/* Selector (Voice / Model) */
+.setting-group{margin-bottom:20px;}
+.setting-label{font-size:14px;color:#e4e4e7;margin-bottom:8px;font-weight:600;}
+.selector{
+  background:#27272a;border:1px solid #3f3f46;border-radius:10px;
+  padding:10px 14px;cursor:pointer;position:relative;
+  display:flex;align-items:center;justify-content:space-between;
+  transition:border-color .15s;
+}
+.selector:hover{border-color:#52525b;}
+.selector-left{display:flex;align-items:center;gap:10px;}
+.voice-avatar{
+  width:28px;height:28px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  font-size:12px;
+}
+.model-badge{
+  width:28px;height:28px;border-radius:50%;
+  border:2px solid #52525b;
+  display:flex;align-items:center;justify-content:center;
+  font-size:9px;font-weight:700;color:#a1a1aa;
+}
+.selector-text{font-size:14px;color:#e4e4e7;font-weight:500;}
+.selector-arrow{color:#52525b;font-size:16px;transition:transform .2s;}
+.selector.open .selector-arrow{transform:rotate(180deg);}
+
+/* Dropdown */
+.dropdown{
+  display:none;position:absolute;top:calc(100% + 4px);left:0;right:0;
+  background:#27272a;border:1px solid #3f3f46;border-radius:10px;
+  max-height:300px;overflow-y:auto;z-index:100;
+  box-shadow:0 8px 24px rgba(0,0,0,0.5);
+}
+.dropdown.show{display:block;}
+.dropdown-item{
+  padding:10px 14px;cursor:pointer;
+  display:flex;align-items:center;justify-content:space-between;
+  transition:background .1s;
+}
+.dropdown-item:hover{background:#3f3f46;}
+.dropdown-item.active{background:#3f3f46;}
+.dropdown-item .di-left{display:flex;align-items:center;gap:10px;}
+.dropdown-item .di-name{font-size:13px;color:#e4e4e7;font-weight:500;}
+.dropdown-item .di-desc{font-size:11px;color:#71717a;margin-top:1px;}
+.dropdown-item .di-check{color:#e4e4e7;font-size:14px;display:none;}
+.dropdown-item.active .di-check{display:block;}
+
+/* Slider */
+.slider-group{margin-bottom:20px;}
+.slider-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;}
+.slider-name{font-size:14px;color:#e4e4e7;font-weight:600;}
+.slider-labels{display:flex;justify-content:space-between;font-size:11px;color:#52525b;margin-top:6px;}
+input[type="range"]{
+  width:100%;height:4px;-webkit-appearance:none;appearance:none;
+  background:#3f3f46;border-radius:2px;outline:none;
+}
+input[type="range"]::-webkit-slider-thumb{
+  -webkit-appearance:none;width:16px;height:16px;border-radius:50%;
+  background:#e4e4e7;cursor:pointer;
+  box-shadow:0 1px 4px rgba(0,0,0,0.3);
+}
+input[type="range"]::-moz-range-thumb{
+  width:16px;height:16px;border-radius:50%;border:none;
+  background:#e4e4e7;cursor:pointer;
+}
+input[type="range"]::-webkit-slider-runnable-track{height:4px;border-radius:2px;}
+
+/* Toggle */
+.toggle-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;}
+.toggle-row .toggle-label{font-size:14px;color:#e4e4e7;font-weight:600;}
+.toggle{
+  width:42px;height:24px;border-radius:12px;
+  background:#3f3f46;position:relative;cursor:pointer;
+  transition:background .2s;flex-shrink:0;
+}
+.toggle.on{background:#e4e4e7;}
+.toggle .knob{
+  width:18px;height:18px;border-radius:50%;
+  background:#18181b;position:absolute;top:3px;left:3px;
+  transition:left .2s;
+}
+.toggle.on .knob{left:21px;background:#18181b;}
+.toggle:not(.on) .knob{background:#71717a;}
+
+/* Reset + Speaker Boost row */
+.bottom-row{display:flex;align-items:center;justify-content:space-between;margin-top:4px;}
+.boost-row{display:flex;align-items:center;gap:8px;}
+.boost-row .toggle{width:36px;height:20px;border-radius:10px;}
+.boost-row .toggle .knob{width:14px;height:14px;top:3px;left:3px;}
+.boost-row .toggle.on .knob{left:19px;}
+.boost-label{font-size:13px;color:#a1a1aa;font-weight:500;}
+.btn-reset{
+  font-size:13px;color:#52525b;cursor:pointer;
+  display:flex;align-items:center;gap:4px;
+  transition:color .15s;background:none;border:none;
+}
+.btn-reset:hover{color:#a1a1aa;}
+.btn-reset svg{width:14px;height:14px;}
+
+/* ── Bottom Player Bar ── */
+.player-bar{
+  display:none;
+  height:72px;min-height:72px;
+  background:#1f1f23;
+  border-top:1px solid #27272a;
+  padding:0 20px;
+  align-items:center;
+  gap:16px;
+}
+.player-bar.show{display:flex;}
+
+.player-info{
+  flex:0 0 auto;max-width:280px;min-width:0;
+  display:flex;align-items:center;gap:10px;
+}
+.player-info-text{min-width:0;}
+.player-title{
+  font-size:13px;color:#e4e4e7;font-weight:500;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.player-meta{
+  font-size:11px;color:#71717a;margin-top:2px;
+  display:flex;align-items:center;gap:4px;
+}
+.player-voice-dot{
+  width:10px;height:10px;border-radius:50%;flex-shrink:0;
+}
+
+.player-controls{
+  display:flex;align-items:center;gap:12px;flex-shrink:0;
+}
+.player-controls button{
+  width:32px;height:32px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  transition:background .15s;color:#a1a1aa;
+}
+.player-controls button:hover{background:#27272a;color:#e4e4e7;}
+.player-controls button.play-btn{
+  width:40px;height:40px;background:#e4e4e7;color:#18181b;
+}
+.player-controls button.play-btn:hover{background:#fafafa;}
+.player-controls button svg{width:16px;height:16px;}
+
+.player-progress{flex:1;display:flex;align-items:center;gap:10px;min-width:0;}
+.player-time{font-size:11px;color:#71717a;white-space:nowrap;flex-shrink:0;min-width:40px;}
+.progress-track{
+  flex:1;height:4px;background:#3f3f46;border-radius:2px;
+  cursor:pointer;position:relative;min-width:60px;
+}
+.progress-fill{
+  height:100%;background:#e4e4e7;border-radius:2px;
+  width:0;transition:width 0.1s linear;
+}
+
+.player-actions{
+  display:flex;align-items:center;gap:4px;flex-shrink:0;
+}
+.player-actions button{
+  width:32px;height:32px;border-radius:6px;
+  display:flex;align-items:center;justify-content:center;
+  color:#52525b;transition:all .15s;
+}
+.player-actions button:hover{color:#e4e4e7;background:#27272a;}
+.player-actions button svg{width:16px;height:16px;}
+.player-actions .close-btn{
+  width:32px;height:32px;border-radius:50%;
+  border:1px solid #3f3f46;margin-left:8px;
+}
+
+/* Loading Spinner (in player bar) */
+.player-loading{
+  display:flex;align-items:center;gap:10px;flex:1;
+}
+.player-loading .spinner{
+  width:20px;height:20px;
+  border:2px solid #27272a;border-top-color:#e4e4e7;
+  border-radius:50%;animation:spin 1s linear infinite;
+}
+.player-loading span{font-size:13px;color:#71717a;}
+@keyframes spin{to{transform:rotate(360deg);}}
+
+/* ── History Tab ── */
+.history-content{display:none;flex:1;overflow-y:auto;padding:16px 20px;}
+.history-content.show{display:block;}
+.settings-body.hide{display:none;}
+
+.history-search{
+  width:100%;padding:8px 12px;border-radius:8px;
+  background:#27272a;border:1px solid #3f3f46;
+  color:#e4e4e7;font-size:13px;outline:none;
+  margin-bottom:12px;
+}
+.history-search::placeholder{color:#52525b;}
+.history-search:focus{border-color:#52525b;}
+
+.history-filters{display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap;}
+.history-filter{
+  padding:4px 10px;border-radius:14px;font-size:11px;
+  background:transparent;border:1px solid #3f3f46;color:#71717a;
+  transition:all .15s;
+}
+.history-filter:hover{color:#a1a1aa;border-color:#52525b;}
+
+.history-date{
+  font-size:11px;color:#52525b;text-align:center;
+  padding:8px 0;font-weight:500;
+}
+.history-item{
+  padding:10px 12px;border-radius:8px;margin-bottom:4px;
+  cursor:pointer;transition:background .15s;
+}
+.history-item:hover{background:#27272a;}
+.history-item.active{background:#27272a;}
+.history-item-title{
+  font-size:13px;color:#e4e4e7;font-weight:400;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.history-item-meta{
+  font-size:11px;color:#71717a;margin-top:3px;
+  display:flex;align-items:center;gap:4px;
+}
+.history-item-meta .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;}
+.history-empty{text-align:center;padding:40px 20px;color:#3f3f46;font-size:13px;}
+
+/* Responsive */
+@media(max-width:1100px){
+  .settings-panel{width:280px;min-width:240px;}
+  .main-panel{padding:20px 24px;}
+}
+@media(max-width:900px){
+  .settings-panel{display:none;}
+  .main-panel{padding:16px;}
+}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- Top Bar -->
+  <div class="top-bar">
+    <div class="top-bar-left">
+      <div class="logo">
+        <div class="logo-icon">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="2" width="4" height="20" rx="1"/><rect x="16" y="2" width="4" height="20" rx="1"/></svg>
+        </div>
+        Text to Speech
+      </div>
+    </div>
+    <div class="top-bar-right">
+      <button class="top-btn">Feedback</button>
+      <button class="top-btn">Docs</button>
+      <span class="char-count" id="charCount">0</span>
+    </div>
+  </div>
+
+  <div class="body-wrap">
+    <!-- Main Panel -->
+    <div class="main-panel">
+      <div class="text-wrap">
+        <textarea id="textInput" placeholder="Start typing here or paste any text you want to turn into lifelike speech..."></textarea>
+      </div>
+
+      <!-- Suggestion Chips (always visible) -->
+      <div class="chips-area" id="chipsArea">
+        <div class="chips-label">Get started with</div>
+        <div class="chips" id="chipArea"></div>
+      </div>
+
+      <button class="btn-generate" id="btnGenerate">
+        <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
+        Generate speech
+      </button>
+    </div>
+
+    <!-- Settings Panel -->
+    <div class="settings-panel" id="settingsPanel">
+      <div class="settings-tabs">
+        <div class="settings-tab active" id="tabSettings">Settings</div>
+        <div class="settings-tab" id="tabHistory">History</div>
+      </div>
+
+      <div class="settings-body" id="settingsBody">
+        <!-- Voice -->
+        <div class="setting-group">
+          <div class="setting-label">Voice</div>
+          <div class="selector" id="voiceSelector">
+            <div class="selector-left">
+              <div class="voice-avatar" id="voiceAvatar" style="background:#e8956a;">&#x1f399;</div>
+              <div class="selector-text" id="voiceSelText">Rachel</div>
+            </div>
+            <span class="selector-arrow">&#x203a;</span>
+            <div class="dropdown" id="voiceDropdown"></div>
+          </div>
+        </div>
+
+        <!-- Model -->
+        <div class="setting-group">
+          <div class="setting-label">Model</div>
+          <div class="selector" id="modelSelector">
+            <div class="selector-left">
+              <div class="model-badge" id="modelBadge">V2</div>
+              <div class="selector-text" id="modelSelText">Eleven Multilingual v2</div>
+            </div>
+            <span class="selector-arrow">&#x203a;</span>
+            <div class="dropdown" id="modelDropdown"></div>
+          </div>
+        </div>
+
+        <!-- Sliders -->
+        <div id="slidersWrap"></div>
+
+        <!-- Language Override Toggle -->
+        <div class="toggle-row">
+          <span class="toggle-label">Language Override</span>
+          <div class="toggle" id="toggleLang"><div class="knob"></div></div>
+        </div>
+
+        <!-- Speaker Boost + Reset Row -->
+        <div class="bottom-row">
+          <div class="boost-row">
+            <div class="toggle on" id="toggleBoost" style="width:36px;height:20px;border-radius:10px;"><div class="knob" style="width:14px;height:14px;top:3px;"></div></div>
+            <span class="boost-label">Speaker boost</span>
+          </div>
+          <button class="btn-reset" id="btnReset">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>
+            Reset values
+          </button>
+        </div>
+      </div>
+
+      <!-- History Content -->
+      <div class="history-content" id="historyContent">
+        <input class="history-search" id="historySearch" type="text" placeholder="Search history...">
+        <div class="history-filters">
+          <button class="history-filter">+ Voice</button>
+          <button class="history-filter">+ Model</button>
+          <button class="history-filter">+ Date</button>
+        </div>
+        <div id="historyList"></div>
+        <div class="history-empty" id="historyEmpty">No history yet</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bottom Player Bar -->
+  <div class="player-bar" id="playerBar">
+    <div class="player-info" id="playerInfo">
+      <div class="player-info-text">
+        <div class="player-title" id="playerTitle">-</div>
+        <div class="player-meta">
+          <span class="player-voice-dot" id="playerDot" style="background:#e8956a;"></span>
+          <span id="playerVoice">-</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="player-controls" id="playerControls">
+      <button id="playerRew" title="Rewind">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12.5 8.14v7.72L6.82 12 12.5 8.14M22 12l-10 6V6l10 6M2 6h2v12H2V6z"/></svg>
+      </button>
+      <button class="play-btn" id="playerPlay" title="Play">
+        <svg viewBox="0 0 24 24" fill="currentColor" id="playIcon"><polygon points="5,3 19,12 5,21"/></svg>
+      </button>
+      <button id="playerFwd" title="Forward">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M11.5 15.86V8.14L17.18 12l-5.68 3.86M2 12l10-6v12L2 12m18-6h2v12h-2V6z"/></svg>
+      </button>
+    </div>
+
+    <div class="player-progress" id="playerProgress">
+      <span class="player-time" id="playerTimeCur">0:00</span>
+      <div class="progress-track" id="progressTrack">
+        <div class="progress-fill" id="progressFill"></div>
+      </div>
+      <span class="player-time" id="playerTimeDur">0:00</span>
+    </div>
+
+    <!-- Loading state (hidden by default, shown when generating) -->
+    <div class="player-loading" id="playerLoading" style="display:none;">
+      <div class="spinner"></div>
+      <span>Generating...</span>
+    </div>
+
+    <div class="player-actions">
+      <button title="Share">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+      </button>
+      <button id="playerDownload" title="Download">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      </button>
+      <button class="close-btn" id="playerClose" title="Close">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- Hidden audio element -->
+  <audio id="hiddenAudio" preload="metadata"></audio>
+</div>
+
+<script>
+/* ══════════════════════════════════════
+   Streamlit Component Protocol
+   ══════════════════════════════════════ */
+function sendMsg(type,data){window.parent.postMessage(Object.assign({isStreamlitMessage:true,type:type},data),"*");}
+function init(){sendMsg("streamlit:componentReady",{apiVersion:1});}
+function setFrameHeight(h){sendMsg("streamlit:setFrameHeight",{height:h});}
+function setComponentValue(v){sendMsg("streamlit:setComponentValue",{value:v});}
+
+/* ══════════════════════════════════════
+   Data
+   ══════════════════════════════════════ */
+var VOICES = [
+  {id:"21m00Tcm4TlvDq8ikWAM", name:"Rachel",  gender:"Female", accent:"American",  desc:"Calm, warm narrator",       color:"#e8956a"},
+  {id:"AZnzlk1XvdvUeBnXmlld", name:"Domi",    gender:"Female", accent:"American",  desc:"Strong, confident",         color:"#7c8aff"},
+  {id:"EXAVITQu4vr4xnSDxMaL", name:"Bella",   gender:"Female", accent:"American",  desc:"Soft, gentle",              color:"#ff7eb3"},
+  {id:"ErXwobaYiN019PkySvjV", name:"Antoni",   gender:"Male",   accent:"American",  desc:"Well-rounded, expressive",  color:"#4ecdc4"},
+  {id:"MF3mGyEYCl7XYWbV9V6O", name:"Elli",    gender:"Female", accent:"American",  desc:"Youthful, bright",          color:"#ffe66d"},
+  {id:"TxGEqnHWrfWFTfGW9XjX", name:"Josh",    gender:"Male",   accent:"American",  desc:"Deep, engaging",            color:"#6bcb77"},
+  {id:"VR6AewLTigWG4xSOukaG", name:"Arnold",   gender:"Male",   accent:"American",  desc:"Crisp, authoritative",      color:"#ff6b6b"},
+  {id:"pNInz6obpgDQGcFmaJgB", name:"Adam",    gender:"Male",   accent:"American",  desc:"Deep, resonant",            color:"#845ef7"},
+  {id:"yoZ06aMxZJJ28mfd3POQ", name:"Sam",     gender:"Male",   accent:"American",  desc:"Raspy, dynamic",            color:"#339af0"}
+];
+var selectedVoiceIdx = 0;
+
+var MODELS = [
+  {id:"eleven_multilingual_v2", label:"Eleven Multilingual v2", desc:"Most expressive, multi-language", badge:"V2"},
+  {id:"eleven_turbo_v2_5",     label:"Eleven Turbo v2.5",      desc:"Fastest, low latency",            badge:"T2"},
+  {id:"eleven_monolingual_v1", label:"Eleven English v1",      desc:"Classic English model",           badge:"V1"}
+];
+var selectedModelIdx = 0;
+
+var SLIDER_DEFS = {
+  speed:              {val:1.0,  min:0.5, max:2.0, step:0.05, label:"Speed",              left:"Slower",       right:"Faster"},
+  stability:          {val:0.5,  min:0,   max:1.0, step:0.01, label:"Stability",           left:"More variable",right:"More stable"},
+  similarity:         {val:0.75, min:0,   max:1.0, step:0.01, label:"Similarity",          left:"Low",          right:"High"},
+  style_exaggeration: {val:0.0,  min:0,   max:1.0, step:0.01, label:"Style Exaggeration",  left:"None",         right:"Exaggerated"}
+};
+var settings = {};
+for(var k in SLIDER_DEFS) settings[k] = SLIDER_DEFS[k].val;
+
+var langOverride = false;
+var speakerBoost = true;
+
+var CHIPS = [
+  {icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/><path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/></svg>',
+   label:'Narrate a story', text:'Once upon a time in a land far, far away, there lived a young adventurer who dreamed of exploring the unknown reaches of the world.'},
+  {icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>',
+   label:'Tell a silly joke', text:'Why did the chicken cross the road? To get to the other side! But the real question is \u2014 who was watching?'},
+  {icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-4"/></svg>',
+   label:'Record an advertisement', text:'Introducing the all-new product that will revolutionize your daily routine. Try it today and experience the difference!'},
+  {icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>',
+   label:'Speak in different languages', text:'Welcome to our international broadcast. Today we bring you news from across the globe, connecting cultures and communities.'},
+  {icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/></svg>',
+   label:'Direct a dramatic movie scene', text:'The rain poured down as she stood at the edge of the bridge, her heart pounding with a decision that would change everything forever.'},
+  {icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/></svg>',
+   label:'Hear from a video game character', text:'The final boss awaits at the top of the tower. Gather your strength, hero \u2014 this is the battle that will decide the fate of the realm.'},
+  {icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>',
+   label:'Introduce your podcast', text:'Hello and welcome to another episode of our podcast. Today we have a very special guest who will share their incredible journey with us.'},
+  {icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>',
+   label:'Guide a meditation class', text:'Close your eyes and take a deep breath. Feel the tension leaving your body as you focus on the gentle rhythm of your breathing.'}
+];
+
+/* ══════════════════════════════════════
+   State
+   ══════════════════════════════════════ */
+var resultItems = [];
+var _loadingTimers = {};
+var activePlayerItem = null; // currently shown in player bar
+
+/* ══════════════════════════════════════
+   Build UI
+   ══════════════════════════════════════ */
+
+/* -- Settings / History Tabs -- */
+document.getElementById("tabSettings").addEventListener("click", function(){
+  this.classList.add("active");
+  document.getElementById("tabHistory").classList.remove("active");
+  document.getElementById("settingsBody").classList.remove("hide");
+  document.getElementById("historyContent").classList.remove("show");
+});
+document.getElementById("tabHistory").addEventListener("click", function(){
+  this.classList.add("active");
+  document.getElementById("tabSettings").classList.remove("active");
+  document.getElementById("settingsBody").classList.add("hide");
+  document.getElementById("historyContent").classList.add("show");
+  renderHistoryPanel();
+});
+
+/* -- Chips -- */
+(function(){
+  var wrap = document.getElementById("chipArea");
+  CHIPS.forEach(function(c){
+    var b = document.createElement("button");
+    b.className = "chip";
+    b.innerHTML = c.icon + ' ' + c.label;
+    b.addEventListener("click", function(){
+      document.getElementById("textInput").value = c.text;
+      updateCharCount();
+    });
+    wrap.appendChild(b);
+  });
+})();
+
+/* -- Voice Dropdown -- */
+function buildVoiceDropdown(){
+  var dd = document.getElementById("voiceDropdown");
+  dd.innerHTML = "";
+  VOICES.forEach(function(v,i){
+    var d = document.createElement("div");
+    d.className = "dropdown-item" + (i === selectedVoiceIdx ? " active" : "");
+    d.innerHTML =
+      '<div class="di-left">' +
+        '<div class="voice-avatar" style="background:' + v.color + ';width:24px;height:24px;border-radius:50%;font-size:10px;display:flex;align-items:center;justify-content:center;">&#x1f399;</div>' +
+        '<div><div class="di-name">' + v.name + ' <span style="color:#71717a;font-size:11px;">' + v.gender + ' \xb7 ' + v.accent + '</span></div>' +
+        '<div class="di-desc">' + v.desc + '</div></div>' +
+      '</div>' +
+      '<span class="di-check">\u2713</span>';
+    d.addEventListener("click", function(e){
+      e.stopPropagation();
+      selectedVoiceIdx = i;
+      updateVoiceDisplay();
+      dd.classList.remove("show");
+      document.getElementById("voiceSelector").classList.remove("open");
+    });
+    dd.appendChild(d);
+  });
+}
+function updateVoiceDisplay(){
+  var v = VOICES[selectedVoiceIdx];
+  document.getElementById("voiceSelText").textContent = v.name;
+  document.getElementById("voiceAvatar").style.background = v.color;
+  buildVoiceDropdown();
+}
+buildVoiceDropdown();
+
+document.getElementById("voiceSelector").addEventListener("click", function(e){
+  if(e.target.closest(".dropdown")) return;
+  var dd = document.getElementById("voiceDropdown");
+  var open = dd.classList.toggle("show");
+  this.classList.toggle("open", open);
+  document.getElementById("modelDropdown").classList.remove("show");
+  document.getElementById("modelSelector").classList.remove("open");
+});
+
+/* -- Model Dropdown -- */
+function buildModelDropdown(){
+  var dd = document.getElementById("modelDropdown");
+  dd.innerHTML = "";
+  MODELS.forEach(function(m,i){
+    var d = document.createElement("div");
+    d.className = "dropdown-item" + (i === selectedModelIdx ? " active" : "");
+    d.innerHTML =
+      '<div class="di-left">' +
+        '<div class="model-badge" style="width:24px;height:24px;font-size:8px;">' + m.badge + '</div>' +
+        '<div><div class="di-name">' + m.label + '</div>' +
+        '<div class="di-desc">' + m.desc + '</div></div>' +
+      '</div>' +
+      '<span class="di-check">\u2713</span>';
+    d.addEventListener("click", function(e){
+      e.stopPropagation();
+      selectedModelIdx = i;
+      updateModelDisplay();
+      dd.classList.remove("show");
+      document.getElementById("modelSelector").classList.remove("open");
+    });
+    dd.appendChild(d);
+  });
+}
+function updateModelDisplay(){
+  var m = MODELS[selectedModelIdx];
+  document.getElementById("modelSelText").textContent = m.label;
+  document.getElementById("modelBadge").textContent = m.badge;
+  buildModelDropdown();
+}
+buildModelDropdown();
+
+document.getElementById("modelSelector").addEventListener("click", function(e){
+  if(e.target.closest(".dropdown")) return;
+  var dd = document.getElementById("modelDropdown");
+  var open = dd.classList.toggle("show");
+  this.classList.toggle("open", open);
+  document.getElementById("voiceDropdown").classList.remove("show");
+  document.getElementById("voiceSelector").classList.remove("open");
+});
+
+/* Close dropdowns on outside click */
+document.addEventListener("click", function(e){
+  if(!e.target.closest("#voiceSelector")){
+    document.getElementById("voiceDropdown").classList.remove("show");
+    document.getElementById("voiceSelector").classList.remove("open");
+  }
+  if(!e.target.closest("#modelSelector")){
+    document.getElementById("modelDropdown").classList.remove("show");
+    document.getElementById("modelSelector").classList.remove("open");
+  }
+});
+
+/* -- Sliders -- */
+(function(){
+  var wrap = document.getElementById("slidersWrap");
+  var keys = ["speed","stability","similarity","style_exaggeration"];
+  keys.forEach(function(k){
+    var s = SLIDER_DEFS[k];
+    var grp = document.createElement("div");
+    grp.className = "slider-group";
+    grp.innerHTML =
+      '<div class="slider-header"><span class="slider-name">' + s.label + '</span></div>' +
+      '<div class="slider-labels"><span>' + s.left + '</span><span>' + s.right + '</span></div>' +
+      '<input type="range" id="sl_' + k + '" min="' + s.min + '" max="' + s.max + '" step="' + s.step + '" value="' + s.val + '">';
+    wrap.appendChild(grp);
+    var inp = document.getElementById("sl_" + k);
+    updateSliderFill(inp);
+    inp.addEventListener("input", function(){
+      settings[k] = parseFloat(this.value);
+      updateSliderFill(this);
+    });
+  });
+})();
+
+function updateSliderFill(inp){
+  var min = parseFloat(inp.min), max = parseFloat(inp.max), val = parseFloat(inp.value);
+  var pct = ((val - min) / (max - min)) * 100;
+  inp.style.background = 'linear-gradient(to right, #e4e4e7 0%, #e4e4e7 ' + pct + '%, #3f3f46 ' + pct + '%, #3f3f46 100%)';
+}
+
+/* -- Toggles -- */
+document.getElementById("toggleLang").addEventListener("click", function(){
+  langOverride = !langOverride;
+  this.classList.toggle("on", langOverride);
+});
+document.getElementById("toggleBoost").addEventListener("click", function(){
+  speakerBoost = !speakerBoost;
+  this.classList.toggle("on", speakerBoost);
+});
+
+/* -- Reset -- */
+document.getElementById("btnReset").addEventListener("click", function(){
+  for(var k in SLIDER_DEFS){
+    settings[k] = SLIDER_DEFS[k].val;
+    var inp = document.getElementById("sl_" + k);
+    inp.value = settings[k];
+    updateSliderFill(inp);
+  }
+  langOverride = false;
+  speakerBoost = true;
+  document.getElementById("toggleLang").classList.remove("on");
+  document.getElementById("toggleBoost").classList.add("on");
+});
+
+/* -- Char Count -- */
+function updateCharCount(){
+  var len = document.getElementById("textInput").value.length;
+  document.getElementById("charCount").textContent = len + " chars";
+}
+document.getElementById("textInput").addEventListener("input", updateCharCount);
+
+/* ══════════════════════════════════════
+   History Panel
+   ══════════════════════════════════════ */
+function escHtml(s){
+  var d = document.createElement("div"); d.textContent = s; return d.innerHTML;
+}
+
+function getVoiceColor(voiceName){
+  for(var i = 0; i < VOICES.length; i++){
+    if(VOICES[i].name === voiceName) return VOICES[i].color;
+  }
+  return "#e8956a";
+}
+
+function renderHistoryPanel(){
+  var list = document.getElementById("historyList");
+  var empty = document.getElementById("historyEmpty");
+  var query = (document.getElementById("historySearch").value || "").toLowerCase().trim();
+  list.innerHTML = "";
+
+  var filtered = resultItems.filter(function(item){
+    if(!query) return true;
+    return (item.text || "").toLowerCase().indexOf(query) !== -1 ||
+           (item.voiceName || "").toLowerCase().indexOf(query) !== -1;
+  });
+
+  if(filtered.length === 0){
+    empty.style.display = "block";
+    empty.textContent = query ? "No matches" : "No history yet";
+    return;
+  }
+  empty.style.display = "none";
+
+  filtered.forEach(function(item){
+    var d = document.createElement("div");
+    d.className = "history-item" + (activePlayerItem && activePlayerItem.id === item.id ? " active" : "");
+    var color = getVoiceColor(item.voiceName);
+    d.innerHTML =
+      '<div class="history-item-title">' + escHtml(item.text || "...") + '</div>' +
+      '<div class="history-item-meta">' +
+        '<span class="dot" style="background:' + color + ';"></span>' +
+        '<span>' + escHtml(item.voiceName) + '</span>' +
+      '</div>';
+    d.addEventListener("click", function(){
+      loadPlayerItem(item);
+      renderHistoryPanel();
+    });
+    list.appendChild(d);
+  });
+}
+
+document.getElementById("historySearch").addEventListener("input", renderHistoryPanel);
+
+/* ══════════════════════════════════════
+   Bottom Player Bar
+   ══════════════════════════════════════ */
+var audioEl = document.getElementById("hiddenAudio");
+var _rafId = null;
+
+function fmtTime(s){
+  if(!s || isNaN(s)) return "0:00";
+  var m = Math.floor(s / 60);
+  var sec = Math.floor(s % 60);
+  return m + ":" + (sec < 10 ? "0" : "") + sec;
+}
+
+function loadPlayerItem(item){
+  // 기존 재생 정리
+  audioEl.pause();
+  audioEl.src = "";
+
+  activePlayerItem = item;
+  var bar = document.getElementById("playerBar");
+  bar.classList.add("show");
+
+  document.getElementById("playerTitle").textContent = (item.text || "").substring(0, 80) + (item.text && item.text.length > 80 ? "..." : "");
+  document.getElementById("playerVoice").textContent = item.voiceName;
+  document.getElementById("playerDot").style.background = getVoiceColor(item.voiceName);
+
+  var controls = document.getElementById("playerControls");
+  var progress = document.getElementById("playerProgress");
+  var loading = document.getElementById("playerLoading");
+
+  if(item.loading){
+    controls.style.display = "none";
+    progress.style.display = "none";
+    loading.style.display = "flex";
+    loading.querySelector("span").textContent = "Generating...";
+    loading.querySelector(".spinner").style.display = "";
+  } else if(item.audioUrl){
+    // 오디오 URL 재생
+    controls.style.display = "flex";
+    progress.style.display = "flex";
+    loading.style.display = "none";
+    audioEl.src = item.audioUrl;
+    audioEl.load();
+    updatePlayIcon(false);
+  } else {
+    controls.style.display = "none";
+    progress.style.display = "none";
+    loading.style.display = "flex";
+    loading.querySelector("span").textContent = "No audio";
+    loading.querySelector(".spinner").style.display = "none";
+  }
+
+  setFrameHeight(document.body.scrollHeight);
+}
+
+function closePlayer(){
+  activePlayerItem = null;
+  audioEl.pause();
+  audioEl.src = "";
+  document.getElementById("playerBar").classList.remove("show");
+  if(_rafId) cancelAnimationFrame(_rafId);
+  setFrameHeight(document.body.scrollHeight);
+  renderHistoryPanel();
+}
+
+function updatePlayIcon(playing){
+  var icon = document.getElementById("playIcon");
+  if(playing){
+    icon.innerHTML = '<rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/>';
+  } else {
+    icon.innerHTML = '<polygon points="5,3 19,12 5,21"/>';
+  }
+}
+
+function updateProgressUI(){
+  if(!audioEl.duration) return;
+  var pct = (audioEl.currentTime / audioEl.duration) * 100;
+  document.getElementById("progressFill").style.width = pct + "%";
+  document.getElementById("playerTimeCur").textContent = fmtTime(audioEl.currentTime);
+  document.getElementById("playerTimeDur").textContent = fmtTime(audioEl.duration);
+  if(!audioEl.paused){
+    _rafId = requestAnimationFrame(updateProgressUI);
+  }
+}
+
+// Play/Pause
+document.getElementById("playerPlay").addEventListener("click", function(){
+  if(!audioEl.src) return;
+  if(audioEl.paused){
+    audioEl.play();
+    updatePlayIcon(true);
+    _rafId = requestAnimationFrame(updateProgressUI);
+  } else {
+    audioEl.pause();
+    updatePlayIcon(false);
+  }
+});
+
+// Rewind 10s
+document.getElementById("playerRew").addEventListener("click", function(){
+  audioEl.currentTime = Math.max(0, audioEl.currentTime - 10);
+  updateProgressUI();
+});
+
+// Forward 10s
+document.getElementById("playerFwd").addEventListener("click", function(){
+  audioEl.currentTime = Math.min(audioEl.duration || 0, audioEl.currentTime + 10);
+  updateProgressUI();
+});
+
+// Click on progress bar
+document.getElementById("progressTrack").addEventListener("click", function(e){
+  if(!audioEl.duration) return;
+  var rect = this.getBoundingClientRect();
+  var pct = (e.clientX - rect.left) / rect.width;
+  audioEl.currentTime = pct * audioEl.duration;
+  updateProgressUI();
+});
+
+// Audio ended
+audioEl.addEventListener("ended", function(){
+  updatePlayIcon(false);
+  document.getElementById("progressFill").style.width = "0%";
+  document.getElementById("playerTimeCur").textContent = "0:00";
+});
+
+audioEl.addEventListener("loadedmetadata", function(){
+  document.getElementById("playerTimeDur").textContent = fmtTime(audioEl.duration);
+});
+
+// Download
+document.getElementById("playerDownload").addEventListener("click", function(){
+  if(audioEl.src){
+    var a = document.createElement("a");
+    a.href = audioEl.src;
+    a.download = "elevenlabs_tts.mp3";
+    a.target = "_blank";
+    a.click();
+  }
+});
+
+// Close
+document.getElementById("playerClose").addEventListener("click", closePlayer);
+
+/* ══════════════════════════════════════
+   Mock Audio Samples (테스트용 샘플 음성)
+   ══════════════════════════════════════ */
+var MOCK_AUDIO_URLS = [
+  "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3",
+  "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3",
+  "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3",
+  "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3",
+  "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-5.mp3",
+  "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-6.mp3",
+  "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-7.mp3",
+  "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-8.mp3",
+  "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-9.mp3"
+];
+var _mockAudioIdx = 0;
+
+function completeLoading(id){
+  // Mock: 실제 오디오 URL로 DB 저장 확인 가능
+  // 실제 API 연동 시 여기서 ElevenLabs API 응답 URL을 반환
+  var url = MOCK_AUDIO_URLS[_mockAudioIdx % MOCK_AUDIO_URLS.length];
+  _mockAudioIdx++;
+  setComponentValue({
+    action: "loading_complete",
+    item_id: id,
+    audio_url: url,
+    ts: Date.now()
+  });
+}
+
+function setupLoadingTimers(items){
+  var activeTs = {};
+  items.forEach(function(item){
+    if(!item.loading || !item.loadingTs) return;
+    var ts = item.loadingTs;
+    activeTs[ts] = true;
+    if(_loadingTimers[ts]) return;
+    var elapsed = Date.now() - ts;
+    var remaining = Math.max(0, 5000 - elapsed);
+    _loadingTimers[ts] = setTimeout(function(){
+      delete _loadingTimers[ts];
+      completeLoading(item.id);
+    }, remaining);
+  });
+  Object.keys(_loadingTimers).forEach(function(k){
+    if(!activeTs[k]){
+      clearTimeout(_loadingTimers[k]);
+      delete _loadingTimers[k];
+    }
+  });
+}
+
+/* ══════════════════════════════════════
+   Generate Button
+   ══════════════════════════════════════ */
+var _generateLock = false;
+document.getElementById("btnGenerate").addEventListener("click", function(){
+  if(_generateLock) return;
+  var text = document.getElementById("textInput").value.trim();
+  if(!text) return;
+  _generateLock = true;
+
+  var v = VOICES[selectedVoiceIdx];
+  var m = MODELS[selectedModelIdx];
+  var itemId = "tts_" + Date.now();
+  var ts = Date.now();
+
+  setComponentValue({
+    action: "generate",
+    item_id: itemId,
+    text: text,
+    voice_id: v.id,
+    voice_name: v.name,
+    model_id: m.id,
+    model_label: m.label,
+    settings: {
+      speed: settings.speed,
+      stability: settings.stability,
+      similarity: settings.similarity,
+      style_exaggeration: settings.style_exaggeration
+    },
+    language_override: langOverride,
+    speaker_boost: speakerBoost,
+    ts: ts
+  });
+});
+
+/* ══════════════════════════════════════
+   Streamlit Render (Receive History)
+   ══════════════════════════════════════ */
+var _lastHistoryKey = "";
+
+window.addEventListener("message", function(event){
+  if(event.data.type !== "streamlit:render") return;
+  var args = event.data.args || {};
+  setFrameHeight(document.body.scrollHeight);
+
+  var hist = args.history || [];
+  var key = hist.map(function(h){
+    return (h.item_id || "") + "|" + (h.loading ? "1" : "0") + "|" + (h.audio_url || "");
+  }).join(";;");
+
+  if(key === _lastHistoryKey) return;
+  _lastHistoryKey = key;
+  _generateLock = false;
+
+  resultItems = [];
+  for(var i = 0; i < hist.length; i++){
+    var h = hist[i];
+    resultItems.push({
+      id: h.item_id || ("hist_" + i),
+      text: h.text || "",
+      voiceName: h.voice_name || "",
+      modelLabel: h.model_label || "",
+      settings: h.settings || {},
+      audioUrl: h.audio_url || null,
+      loading: !!h.loading,
+      loadingTs: h.loading_ts || 0
+    });
+  }
+
+  // Auto-show latest item in player bar
+  if(resultItems.length > 0){
+    var latest = resultItems[0];
+    // If player is not showing, or the active item was updated (e.g. loading → complete)
+    if(!activePlayerItem || activePlayerItem.id === latest.id){
+      loadPlayerItem(latest);
+    }
+  }
+
+  renderHistoryPanel();
+  setupLoadingTimers(resultItems);
+});
+
+init();
+</script>
+</body>
+</html>

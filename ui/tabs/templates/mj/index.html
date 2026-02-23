@@ -1,0 +1,1525 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+/* ── 리셋 ── */
+*{margin:0;padding:0;box-sizing:border-box;}
+html,body{height:100%;margin:0;}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  background:#0e0e10;
+  color:#d0d0d0;
+}
+a{text-decoration:none;color:inherit;}
+button{cursor:pointer;border:none;background:none;font-family:inherit;color:inherit;}
+
+/* ── 전체 래퍼 ── */
+#app-root{display:flex;height:100%;width:100%;overflow:hidden;}
+
+/* ── 콘텐츠 영역 ── */
+.content-area{flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden;position:relative;}
+.gallery-wrap{flex:1;min-height:0;overflow-y:auto;}
+
+/* ── 좌측 사이드바 ── */
+.sidebar{
+  width:200px;min-width:200px;background:#18181b;
+  border-right:1px solid #27272a;
+  display:flex;flex-direction:column;
+  padding:0;gap:0;overflow:hidden;
+  transition:width .25s cubic-bezier(.4,0,.2,1),min-width .25s cubic-bezier(.4,0,.2,1);
+}
+.sidebar-header{
+  width:100%;height:56px;flex-shrink:0;
+  display:flex;align-items:center;
+  padding:0 16px;gap:10px;
+  border-bottom:1px solid #27272a;
+  overflow:hidden;white-space:nowrap;
+  transition:padding .25s;
+}
+.sidebar-header .brand-short{
+  font-size:17px;font-weight:800;color:#e4e4e7;letter-spacing:-.5px;
+  flex-shrink:0;display:none;
+}
+.sidebar-header .brand{
+  font-size:17px;font-weight:700;color:#e4e4e7;letter-spacing:-.3px;
+  overflow:hidden;white-space:nowrap;
+  transition:opacity .2s;
+}
+.sidebar-body{
+  flex:1;width:100%;display:flex;flex-direction:column;
+  padding:8px 8px;gap:2px;
+  overflow-y:auto;
+}
+.sidebar-body::-webkit-scrollbar{width:4px;}
+.sidebar-body::-webkit-scrollbar-track{background:transparent;}
+.sidebar-body::-webkit-scrollbar-thumb{background:#3f3f46;border-radius:2px;}
+.sidebar-body .spacer{flex:1;}
+.sb-section{
+  font-size:10px;font-weight:700;color:#52525b;
+  letter-spacing:.08em;text-transform:uppercase;
+  padding:14px 10px 6px;
+  overflow:hidden;white-space:nowrap;
+  transition:opacity .2s,max-height .25s;max-height:40px;
+}
+.sb-item{
+  display:flex;align-items:center;gap:10px;
+  width:100%;padding:8px 10px;border-radius:8px;
+  font-size:13px;font-weight:500;color:#a1a1aa;
+  transition:background .12s,color .12s,padding .25s;
+  cursor:pointer;border:none;background:none;
+  font-family:inherit;text-align:left;
+  overflow:hidden;white-space:nowrap;
+}
+.sb-item:hover{background:#27272a;color:#d4d4d8;}
+.sb-item.active{background:#dc2626;color:#fff;}
+.sb-item svg{width:18px;height:18px;flex-shrink:0;}
+.sb-item .beta-badge{
+  font-size:9px;font-weight:700;color:#22c55e;
+  margin-left:auto;
+}
+
+/* ── 상단 바 ── */
+.top-bar{
+  height:56px;background:#18181b;border-bottom:1px solid #27272a;
+  display:flex;align-items:center;padding:0 12px;gap:12px;
+  flex-shrink:0;
+}
+.prompt-wrap{
+  flex:1;height:38px;
+  display:flex;align-items:center;
+  background:#27272a;border:1px solid #3f3f46;border-radius:10px;
+  padding:0 12px;gap:8px;
+}
+.prompt-wrap input{
+  flex:1;height:100%;border:none;outline:none;
+  background:transparent;color:#e4e4e7;font-size:14px;
+}
+#submitBtn{
+  width:30px;height:30px;border-radius:8px;
+  display:flex;align-items:center;justify-content:center;
+  background:#5865f2;color:#fff;flex-shrink:0;transition:background .15s;
+}
+#submitBtn:hover{background:#4752c4;}
+#settingsBtn{
+  width:28px;height:28px;border-radius:6px;
+  display:flex;align-items:center;justify-content:center;
+  flex-shrink:0;transition:opacity .15s;
+}
+#settingsBtn.active{opacity:1!important;color:#ef4444;}
+#attachBtn{position:relative;}
+#attachBtn:hover{opacity:.8!important;background:#3f3f46;}
+.attach-badge{
+  position:absolute;top:-4px;right:-4px;
+  min-width:16px;height:16px;
+  background:#ef4444;color:#fff;
+  font-size:10px;font-weight:700;
+  border-radius:8px;
+  display:flex;align-items:center;justify-content:center;
+  padding:0 4px;
+  pointer-events:none;
+}
+.top-actions{display:flex;align-items:center;gap:4px;flex-shrink:0;margin-left:auto;}
+.top-actions button{
+  width:36px;height:36px;border-radius:8px;
+  display:flex;align-items:center;justify-content:center;
+}
+
+/* ── 설정 패널 (오버레이) ── */
+.settings-panel{
+  display:none;
+  grid-template-columns:1fr 1fr;
+  gap:16px;
+  padding:20px 24px;
+  background:rgba(14,14,16,.97);
+  border-bottom:1px solid #27272a;
+  position:absolute;
+  top:56px;left:0;right:0;
+  z-index:90;
+  max-height:calc(100% - 56px);
+  overflow-y:auto;
+}
+.settings-panel.open{display:grid;}
+.setting-card{
+  background:#18181b;border:1px solid #27272a;border-radius:12px;
+  padding:20px 24px;
+}
+.setting-card h3{
+  font-size:15px;font-weight:600;color:#e4e4e7;
+  text-align:center;margin-bottom:16px;
+}
+.setting-row{
+  display:flex;align-items:center;justify-content:space-between;
+  margin-bottom:14px;
+}
+.setting-row:last-child{margin-bottom:0;}
+.setting-label{font-size:13px;color:#a1a1aa;font-weight:500;}
+
+/* ── 토글 버튼 그룹 ── */
+.toggle-group{
+  display:flex;border:1px solid #3f3f46;border-radius:8px;overflow:hidden;
+}
+.toggle-btn{
+  padding:6px 14px;font-size:12px;font-weight:600;
+  color:#71717a;background:transparent;
+  transition:all .12s;border:none;cursor:pointer;
+}
+.toggle-btn:not(:last-child){border-right:1px solid #3f3f46;}
+.toggle-btn.active{background:#ef4444;color:#fff;}
+
+/* ── 셀렉트 (버전) ── */
+.ver-select{
+  background:#27272a;border:1px solid #3f3f46;border-radius:6px;
+  color:#e4e4e7;font-size:12px;padding:5px 8px;
+  outline:none;cursor:pointer;
+}
+.ver-select option{background:#18181b;color:#e4e4e7;}
+
+/* ── 슬라이더 ── */
+.slider-wrap{flex:1;margin-left:16px;display:flex;align-items:center;gap:8px;}
+.slider-wrap input[type=range]{
+  -webkit-appearance:none;appearance:none;
+  flex:1;height:4px;border-radius:2px;
+  background:#3f3f46;outline:none;
+}
+.slider-wrap input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none;appearance:none;
+  width:14px;height:14px;border-radius:50%;
+  background:#e4e4e7;cursor:pointer;border:2px solid #0e0e10;
+}
+.slider-val{font-size:11px;color:#71717a;min-width:32px;text-align:right;}
+
+/* ── 비율 미리보기 ── */
+.ar-preview{
+  width:120px;height:120px;
+  border:1px solid #3f3f46;border-radius:8px;
+  display:flex;align-items:center;justify-content:center;
+  margin:0 auto 12px;position:relative;
+}
+.ar-preview-inner{
+  border:1px solid #71717a;border-radius:4px;
+  display:flex;align-items:center;justify-content:center;
+  font-size:12px;color:#a1a1aa;font-weight:600;
+  transition:all .2s;
+}
+
+/* ── 갤러리 영역 ── */
+.gallery{padding:24px 48px 60px;}
+.gallery-wrap::-webkit-scrollbar{width:6px;}
+.gallery-wrap::-webkit-scrollbar-track{background:transparent;}
+.gallery-wrap::-webkit-scrollbar-thumb{background:#3f3f46;border-radius:3px;}
+
+.date-header{font-size:14px;font-weight:600;color:#e4e4e7;margin:8px 0 20px;}
+
+/* ── 생성 카드 ── */
+.gen-card{display:flex;gap:28px;margin-bottom:40px;}
+.gen-grid{
+  display:grid;grid-template-columns:repeat(4,1fr);gap:3px;
+  flex:3;min-width:0;border-radius:8px;overflow:hidden;flex-shrink:0;
+}
+.gen-grid[data-layout="landscape"]{grid-template-columns:1fr 1fr;}
+.gen-img{position:relative;overflow:hidden;cursor:pointer;aspect-ratio:3/4;}
+.gen-grid[data-layout="landscape"] .gen-img{aspect-ratio:16/9;}
+.gen-img:hover .img-overlay{opacity:1;}
+.gen-img img{width:100%;height:100%;object-fit:cover;display:block;}
+.img-placeholder{width:100%;height:100%;display:block;}
+.img-overlay{
+  position:absolute;inset:0;background:rgba(0,0,0,.4);
+  opacity:0;transition:opacity .2s;
+  display:flex;align-items:center;justify-content:center;
+}
+.img-overlay svg{opacity:.8;}
+
+.gen-info{
+  display:flex;flex-direction:column;justify-content:flex-start;
+  gap:10px;flex:2;min-width:200px;padding-top:8px;
+}
+.gen-prompt{font-size:15px;line-height:1.6;color:#a1a1aa;word-break:break-word;}
+.gen-attached{display:flex;gap:6px;flex-wrap:wrap;}
+.gen-attached-img{
+  width:48px;height:48px;border-radius:8px;overflow:hidden;
+  border:1px solid #3f3f46;flex-shrink:0;
+}
+.gen-attached-img img{width:100%;height:100%;object-fit:cover;display:block;}
+.gen-tags{display:flex;gap:6px;flex-wrap:wrap;}
+.gen-tag{
+  font-size:11px;color:#71717a;border:1px solid #3f3f46;
+  border-radius:6px;padding:2px 8px;white-space:nowrap;
+}
+
+/* ── 로딩 상태 ── */
+.gen-card-loading .gen-grid{position:relative;pointer-events:none;}
+.gen-card-loading .gen-img{opacity:.5;}
+.gen-card-loading .gen-grid::after{
+  content:'';position:absolute;inset:0;z-index:2;
+  background:linear-gradient(90deg,transparent 0%,rgba(255,255,255,.06) 50%,transparent 100%);
+  background-size:200% 100%;
+  animation:shimmer 1.8s ease-in-out infinite;
+  border-radius:12px;pointer-events:none;
+}
+@keyframes shimmer{
+  0%{background-position:200% 0;}
+  100%{background-position:-200% 0;}
+}
+.loading-overlay{
+  position:absolute;inset:0;z-index:3;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:10px;border-radius:12px;
+}
+.loading-spinner{
+  width:28px;height:28px;border:3px solid rgba(255,255,255,.15);
+  border-top-color:#a78bfa;border-radius:50%;
+  animation:spin .8s linear infinite;
+}
+@keyframes spin{to{transform:rotate(360deg);}}
+.loading-text{
+  font-size:13px;font-weight:500;color:#d4d4d8;
+  letter-spacing:.3px;
+}
+.loading-elapsed{
+  font-size:11px;color:#71717a;font-variant-numeric:tabular-nums;
+}
+
+/* ── Placeholder 그라데이션 ── */
+.ph-1{background:linear-gradient(135deg,#001a1a 0%,#003333 30%,#00b3b3 60%,#001a1a 100%);}
+.ph-2{background:linear-gradient(225deg,#001a1a 0%,#004d4d 40%,#00e6e6 70%,#001a1a 100%);}
+.ph-3{background:linear-gradient(315deg,#002626 0%,#006666 35%,#00cccc 65%,#001a1a 100%);}
+.ph-4{background:linear-gradient(45deg,#001a1a 0%,#003d3d 30%,#00b3b3 55%,#002626 100%);}
+.ph-5{background:linear-gradient(160deg,#1a0a00 0%,#4d2600 25%,#ff8c1a 50%,#4d2600 75%,#1a0a00 100%);}
+.ph-6{background:linear-gradient(200deg,#0d0700 0%,#331a00 30%,#e67300 55%,#331a00 80%,#0d0700 100%);}
+.ph-7{background:linear-gradient(340deg,#1a0d00 0%,#663300 20%,#ff9933 45%,#663300 70%,#1a0d00 100%);}
+.ph-8{background:linear-gradient(20deg,#0d0700 0%,#4d2200 35%,#cc6600 60%,#331500 85%,#0d0700 100%);}
+.ph-9{background:linear-gradient(140deg,#1a0d00 0%,#804000 30%,#ffaa33 55%,#4d2200 80%,#0d0700 100%);}
+.ph-10{background:linear-gradient(260deg,#0d0700 0%,#663300 25%,#e68a00 50%,#4d2200 75%,#1a0a00 100%);}
+.ph-11{background:linear-gradient(80deg,#1a0a00 0%,#994d00 30%,#ffb347 55%,#663300 80%,#0d0700 100%);}
+.ph-12{background:linear-gradient(300deg,#0d0700 0%,#804000 20%,#e6a030 45%,#4d2200 70%,#1a0a00 100%);}
+.ph-1,.ph-2,.ph-3,.ph-4{background-size:100% 100%;position:relative;}
+.ph-1::after,.ph-2::after,.ph-3::after,.ph-4::after{
+  content:"";position:absolute;inset:0;
+  background:
+    repeating-linear-gradient(0deg,transparent,transparent 8px,rgba(0,255,255,.06) 8px,rgba(0,255,255,.06) 9px),
+    repeating-linear-gradient(90deg,transparent,transparent 8px,rgba(0,255,255,.06) 8px,rgba(0,255,255,.06) 9px);
+  pointer-events:none;
+}
+
+/* ── 첨부 패널 (오버레이) ── */
+.attach-panel{
+  display:none;flex-direction:column;
+  background:rgba(14,14,16,.97);
+  border-bottom:1px solid #27272a;
+  position:absolute;
+  top:56px;left:0;right:0;
+  z-index:90;
+  max-height:calc(100% - 56px);
+  overflow-y:auto;
+}
+.attach-panel.open{display:flex;}
+
+/* 탭 헤더 */
+.attach-tabs{
+  display:flex;align-items:stretch;
+  border-bottom:1px solid #27272a;
+  padding:0;min-height:64px;
+}
+.attach-tab{
+  flex:1;display:flex;align-items:center;gap:10px;
+  padding:14px 16px;
+  border:none;background:none;cursor:pointer;
+  font-family:inherit;text-align:left;
+  border-right:1px solid #27272a;
+  transition:background .12s;
+  position:relative;
+}
+.attach-tab:last-of-type{border-right:none;}
+.attach-tab:hover{background:#1c1c1f;}
+.attach-tab.active{background:#1c1c1f;}
+.attach-tab.active::after{
+  content:"";position:absolute;bottom:0;left:0;right:0;
+  height:2px;background:#ef4444;
+}
+.attach-tab-icon{
+  width:20px;height:20px;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;
+}
+.attach-tab-icon svg{width:18px;height:18px;}
+.attach-tab-text{display:flex;flex-direction:column;gap:2px;min-width:0;}
+.attach-tab-title{font-size:13px;font-weight:600;color:#e4e4e7;white-space:nowrap;}
+.attach-tab.active .attach-tab-title{color:#ef4444;}
+.attach-tab-desc{font-size:11px;color:#71717a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.attach-tab-thumbs{
+  display:flex;gap:4px;align-items:center;
+  margin-left:auto;flex-shrink:0;overflow:hidden;
+}
+.attach-tab-thumb{
+  width:48px;height:48px;border-radius:6px;overflow:hidden;
+  position:relative;flex-shrink:0;border:1px solid #3f3f46;
+}
+.attach-tab-thumb img{width:100%;height:100%;object-fit:cover;}
+.attach-tab-thumb-del{
+  position:absolute;top:2px;right:2px;
+  width:16px;height:16px;border-radius:50%;
+  background:rgba(0,0,0,.75);color:#e4e4e7;
+  display:flex;align-items:center;justify-content:center;
+  opacity:0;transition:opacity .12s;
+  border:none;cursor:pointer;padding:0;
+}
+.attach-tab-thumb:hover .attach-tab-thumb-del{opacity:1;}
+.attach-tab-thumb-del:hover{background:rgba(239,68,68,.9);}
+
+/* 탭 콘텐츠 */
+.attach-body{
+  display:flex;gap:0;padding:16px 20px;min-height:200px;
+}
+.attach-upload{
+  width:200px;min-width:200px;height:200px;
+  border:2px dashed #3f3f46;border-radius:12px;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:10px;color:#71717a;font-size:13px;
+  cursor:pointer;transition:border-color .15s,background .15s;
+  margin-right:16px;flex-shrink:0;
+}
+.attach-upload:hover{border-color:#52525b;background:rgba(39,39,42,.4);}
+.attach-upload svg{opacity:.5;}
+.attach-upload-text{text-align:center;line-height:1.4;}
+.attach-images{
+  flex:1;display:flex;flex-wrap:wrap;gap:8px;
+  align-content:flex-start;min-height:0;
+}
+.attach-thumb{
+  width:100px;height:100px;border-radius:8px;overflow:hidden;
+  position:relative;cursor:pointer;border:2px solid transparent;
+  transition:border-color .12s;
+}
+.attach-thumb:hover{border-color:#ef4444;}
+.attach-thumb img{width:100%;height:100%;object-fit:cover;}
+.attach-thumb.selected{border-color:#ef4444;}
+.attach-thumb-del{
+  position:absolute;top:4px;right:4px;
+  width:22px;height:22px;border-radius:50%;
+  background:rgba(0,0,0,.7);color:#e4e4e7;
+  display:flex;align-items:center;justify-content:center;
+  opacity:0;transition:opacity .12s;
+  border:none;cursor:pointer;
+}
+.attach-thumb:hover .attach-thumb-del{opacity:1;}
+.attach-thumb-del:hover{background:rgba(239,68,68,.8);}
+.attach-empty{
+  flex:1;display:flex;align-items:center;justify-content:center;
+  color:#3f3f46;font-size:13px;
+}
+
+/* ── 검색 바 ── */
+.search-wrap{
+  display:none;
+  flex:1;height:38px;
+  align-items:center;
+  background:#27272a;border:1px solid #3f3f46;border-radius:10px;
+  padding:0 12px;gap:8px;
+}
+.search-wrap.active{display:flex;}
+.search-wrap input{
+  flex:1;height:100%;border:none;outline:none;
+  background:transparent;color:#e4e4e7;font-size:14px;
+}
+#searchCloseBtn{
+  width:28px;height:28px;border-radius:6px;
+  display:flex;align-items:center;justify-content:center;
+  flex-shrink:0;color:#a1a1aa;transition:color .15s;
+}
+#searchCloseBtn:hover{color:#e4e4e7;}
+.search-highlight{background:#ef4444;color:#fff;border-radius:2px;padding:0 1px;}
+.no-results{text-align:center;padding:80px 0;color:#52525b;font-size:15px;}
+
+/* ── 라이트박스 ── */
+.lightbox{
+  display:none;position:fixed;inset:0;z-index:200;
+  background:rgba(0,0,0,.85);
+  align-items:center;justify-content:center;
+  flex-direction:column;
+}
+.lightbox.open{display:flex;}
+.lightbox-toolbar{
+  position:absolute;top:16px;right:16px;
+  display:flex;gap:8px;z-index:201;
+}
+.lightbox-toolbar button{
+  width:40px;height:40px;border-radius:10px;
+  background:rgba(255,255,255,.1);
+  display:flex;align-items:center;justify-content:center;
+  color:#e4e4e7;transition:background .15s;
+}
+.lightbox-toolbar button:hover{background:rgba(255,255,255,.2);}
+.lightbox-content{
+  max-width:90%;max-height:85%;
+  display:flex;align-items:center;justify-content:center;
+}
+.lightbox-content img{
+  max-width:100%;max-height:85vh;
+  border-radius:8px;object-fit:contain;
+  box-shadow:0 8px 32px rgba(0,0,0,.5);
+}
+.lightbox-placeholder{
+  width:60vw;max-width:700px;aspect-ratio:1/1;
+  border-radius:8px;
+  display:flex;align-items:center;justify-content:center;
+  font-size:16px;color:#71717a;
+  box-shadow:0 8px 32px rgba(0,0,0,.5);
+}
+
+/* ── 반응형 ── */
+@media(max-width:1200px){
+  .sidebar{width:56px;min-width:56px;}
+  .sidebar-header{justify-content:center;padding:0 14px;}
+  .sidebar-header .brand{opacity:0;width:0;overflow:hidden;}
+  .sidebar-header .brand-short{display:block;}
+  .sidebar-body{padding:8px 6px;}
+  .sb-section{opacity:0;max-height:0;padding:0 10px;overflow:hidden;}
+  .sb-item{justify-content:center;padding:8px;font-size:0;gap:0;}
+  .sb-item svg{width:20px;height:20px;}
+  .sb-item .beta-badge{display:none;}
+  .gen-card{flex-direction:column;}
+  .gen-grid{width:100%;min-width:0;}
+  .gen-info{min-width:0;}
+  .settings-panel{grid-template-columns:1fr;}
+  .gallery{padding:24px 28px 60px;}
+}
+@media(max-width:900px){
+  .gallery{padding:20px 16px 48px;}
+  .gen-card{gap:16px;margin-bottom:28px;}
+}
+</style>
+</head>
+<body>
+<div id="app-root">
+
+  <!-- ===== 좌측 사이드바 ===== -->
+  <nav class="sidebar">
+    <div class="sidebar-header">
+      <span class="brand-short">MJ</span>
+      <span class="brand">Midjourney</span>
+    </div>
+    <div class="sidebar-body">
+      <!-- 메인 메뉴 -->
+      <button class="sb-item" data-action="explore">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
+        Explore
+      </button>
+      <button class="sb-item active" data-action="create">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+        Create
+      </button>
+      <button class="sb-item" data-action="edit">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+        Edit
+      </button>
+      <button class="sb-item" data-action="organize">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+        Organize
+      </button>
+
+      <!-- AESTHETICS 섹션 -->
+      <div class="sb-section">Aesthetics</div>
+      <button class="sb-item" data-action="personalize">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+        Personalize
+      </button>
+      <button class="sb-item" data-action="moodboards">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="9" x2="9" y2="21"/></svg>
+        Moodboards
+      </button>
+      <button class="sb-item" data-action="style-creator">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>
+        Style Creator
+        <span class="beta-badge">Beta</span>
+      </button>
+
+      <!-- COMMUNITY 섹션 -->
+      <div class="sb-section">Community</div>
+      <button class="sb-item" data-action="chat">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+        Chat
+      </button>
+      <button class="sb-item" data-action="tasks">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 9V5a3 3 0 00-6 0v4"/><rect x="5" y="9" width="14" height="12" rx="2"/></svg>
+        Tasks
+      </button>
+
+      <div class="spacer"></div>
+
+      <!-- 하단 메뉴 -->
+      <button class="sb-item" data-action="help">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9 9a3 3 0 015.12 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        Help
+      </button>
+      <button class="sb-item" data-action="updates">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
+        Updates
+      </button>
+      <button class="sb-item" data-action="darkmode">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1111.21 3a7 7 0 009.79 9.79z"/></svg>
+        Dark Mode
+      </button>
+      <button class="sb-item" data-action="account" style="margin-bottom:4px;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M20 21a8 8 0 10-16 0"/></svg>
+        My Account
+      </button>
+    </div>
+  </nav>
+
+  <!-- ===== 콘텐츠 영역 ===== -->
+  <div class="content-area">
+
+    <!-- ── 상단 바 ── -->
+    <div class="top-bar">
+      <div class="prompt-wrap" id="promptWrap">
+        <button id="attachBtn" title="Attach image" style="display:flex;align-items:center;justify-content:center;flex-shrink:0;opacity:.5;width:28px;height:28px;border-radius:6px;transition:opacity .15s;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+        </button>
+        <input type="text" id="promptInput" placeholder="What will you imagine?"/>
+        <button id="submitBtn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M3.478 2.405a.75.75 0 00-.926.94l2.432 7.905H13.5a.75.75 0 010 1.5H4.984l-2.432 7.905a.75.75 0 00.926.94l18.04-8.01a.75.75 0 000-1.36L3.478 2.405z"/></svg>
+        </button>
+        <button id="settingsBtn" style="opacity:.6;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/>
+            <circle cx="8" cy="6" r="2" fill="currentColor"/><circle cx="16" cy="12" r="2" fill="currentColor"/><circle cx="10" cy="18" r="2" fill="currentColor"/>
+          </svg>
+        </button>
+      </div>
+      <div class="search-wrap" id="searchWrap">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;opacity:.5;"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input type="text" id="searchInput" placeholder="Search Prompts"/>
+        <button id="searchCloseBtn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="top-actions">
+        <button data-action="search"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="opacity:.7;"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></button>
+        <button data-action="organize"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="opacity:.7;"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M2 8h20"/></svg></button>
+        <button data-action="plan" style="display:flex;align-items:center;gap:4px;padding:0 10px;font-size:13px;font-weight:600;color:#d0d0d0;">P <span style="font-size:10px;opacity:.5;">&#9660;</span></button>
+        <button data-action="fast"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="opacity:.7;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></button>
+        <button data-action="chat"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="opacity:.7;"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg></button>
+      </div>
+    </div>
+
+    <!-- ── 설정 패널 ── -->
+    <div id="settingsPanel" class="settings-panel">
+
+      <!-- Image Size -->
+      <div class="setting-card">
+        <h3>Image Size</h3>
+        <div class="ar-preview">
+          <div class="ar-preview-inner" id="arPreview" style="width:80px;height:80px;">1 : 1</div>
+        </div>
+        <div style="display:flex;justify-content:center;margin-bottom:8px;">
+          <div class="toggle-group" data-group="imageSize">
+            <button class="toggle-btn" data-val="Portrait">Portrait</button>
+            <button class="toggle-btn active" data-val="Square">Square</button>
+            <button class="toggle-btn" data-val="Landscape">Landscape</button>
+          </div>
+        </div>
+        <div style="padding:0 8px;">
+          <input type="range" id="arSlider" min="0" max="14" value="7" step="1" style="width:100%;-webkit-appearance:none;appearance:none;height:4px;border-radius:2px;background:#3f3f46;outline:none;">
+        </div>
+      </div>
+
+      <!-- Aesthetics -->
+      <div class="setting-card">
+        <h3>Aesthetics</h3>
+        <div class="setting-row">
+          <span class="setting-label">Stylization</span>
+          <div class="slider-wrap">
+            <input type="range" data-key="stylization" min="0" max="1000" value="100" step="10">
+            <span class="slider-val">100</span>
+          </div>
+        </div>
+        <div class="setting-row">
+          <span class="setting-label">Weirdness</span>
+          <div class="slider-wrap">
+            <input type="range" data-key="weirdness" min="0" max="3000" value="0" step="10">
+            <span class="slider-val">0</span>
+          </div>
+        </div>
+        <div class="setting-row">
+          <span class="setting-label">Variety</span>
+          <div class="slider-wrap">
+            <input type="range" data-key="variety" min="0" max="100" value="0" step="10">
+            <span class="slider-val">0</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Model -->
+      <div class="setting-card">
+        <h3>Model</h3>
+        <div class="setting-row">
+          <span class="setting-label">Mode</span>
+          <div class="toggle-group" data-group="mode">
+            <button class="toggle-btn active" data-val="Standard">Standard</button>
+            <button class="toggle-btn" data-val="Raw">Raw</button>
+          </div>
+        </div>
+        <div class="setting-row">
+          <span class="setting-label">Version</span>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <div class="toggle-group" data-group="versionType">
+              <button class="toggle-btn active" data-val="Standard">Standard</button>
+              <button class="toggle-btn" data-val="Draft">Draft</button>
+            </div>
+            <select class="ver-select" id="versionSelect">
+              <option value="7" selected>7</option>
+              <option value="6.1">6.1</option>
+              <option value="6">6</option>
+              <option value="5.2">5.2</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- More Options -->
+      <div class="setting-card">
+        <h3>More Options</h3>
+        <div class="setting-row">
+          <span class="setting-label">Speed</span>
+          <div class="toggle-group" data-group="speed">
+            <button class="toggle-btn" data-val="Relax">Relax</button>
+            <button class="toggle-btn active" data-val="Fast">Fast</button>
+            <button class="toggle-btn" data-val="Turbo">Turbo</button>
+          </div>
+        </div>
+        <div class="setting-row">
+          <span class="setting-label">Stealth</span>
+          <div class="toggle-group" data-group="stealth">
+            <button class="toggle-btn active" data-val="On">On</button>
+            <button class="toggle-btn" data-val="Off">Off</button>
+          </div>
+        </div>
+        <div class="setting-row">
+          <span class="setting-label">Video Resolution</span>
+          <div class="toggle-group" data-group="videoRes">
+            <button class="toggle-btn active" data-val="SD">SD</button>
+            <button class="toggle-btn" data-val="HD">HD</button>
+          </div>
+        </div>
+        <div class="setting-row">
+          <span class="setting-label">Video Batch Size</span>
+          <div class="toggle-group" data-group="videoBatch">
+            <button class="toggle-btn" data-val="1">1</button>
+            <button class="toggle-btn" data-val="2">2</button>
+            <button class="toggle-btn active" data-val="4">4</button>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ── 첨부 패널 ── -->
+    <div id="attachPanel" class="attach-panel">
+      <div class="attach-tabs">
+        <!-- Image Prompts -->
+        <button class="attach-tab active" data-attach-tab="imagePrompts">
+          <span class="attach-tab-icon" style="color:#ef4444;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+          </span>
+          <span class="attach-tab-text">
+            <span class="attach-tab-title">Image Prompts</span>
+            <span class="attach-tab-desc">Click or drag to add</span>
+          </span>
+          <span class="attach-tab-thumbs" data-tab-thumbs="imagePrompts"></span>
+        </button>
+        <!-- Style References -->
+        <button class="attach-tab" data-attach-tab="styleRef">
+          <span class="attach-tab-icon" style="color:#a1a1aa;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+          </span>
+          <span class="attach-tab-text">
+            <span class="attach-tab-title">Style References</span>
+            <span class="attach-tab-desc">Use the style of an image</span>
+          </span>
+          <span class="attach-tab-thumbs" data-tab-thumbs="styleRef"></span>
+        </button>
+        <!-- Omni Reference -->
+        <button class="attach-tab" data-attach-tab="omniRef">
+          <span class="attach-tab-icon" style="color:#a1a1aa;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M20 21a8 8 0 10-16 0"/></svg>
+          </span>
+          <span class="attach-tab-text">
+            <span class="attach-tab-title">Omni Reference</span>
+            <span class="attach-tab-desc">Use a person's likeness, or an object's form</span>
+          </span>
+          <span class="attach-tab-thumbs" data-tab-thumbs="omniRef"></span>
+        </button>
+      </div>
+      <div class="attach-body">
+        <div class="attach-upload" id="attachUpload">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          <span class="attach-upload-text">Upload a file or<br>drop it here</span>
+          <input type="file" id="attachFileInput" accept="image/*" multiple style="display:none;">
+        </div>
+        <div class="attach-images" id="attachImages"></div>
+      </div>
+    </div>
+
+    <!-- ── 갤러리 ── -->
+    <div class="gallery-wrap">
+    <main class="gallery" id="galleryContainer">
+      <!-- 동적 갤러리: JS에서 렌더링 -->
+    </main>
+    </div>
+
+  </div><!-- /content-area -->
+</div><!-- /app-root -->
+
+<!-- ===== 라이트박스 ===== -->
+<div class="lightbox" id="lightbox">
+  <div class="lightbox-toolbar">
+    <button id="lbDownload" title="Download">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+    </button>
+    <button id="lbClose" title="Close">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+  </div>
+  <div class="lightbox-content" id="lbContent"></div>
+</div>
+
+<script>
+/* ═══════════════════════════════════════
+   Streamlit Component 통신
+   ═══════════════════════════════════════ */
+function sendMessageToStreamlitClient(type, data) {
+  window.parent.postMessage(Object.assign({isStreamlitMessage:true, type:type}, data), "*");
+}
+function setComponentValue(value) {
+  sendMessageToStreamlitClient("streamlit:setComponentValue", {value:value});
+}
+function setFrameHeight(h) {
+  sendMessageToStreamlitClient("streamlit:setFrameHeight", {height:h});
+}
+function componentReady() {
+  sendMessageToStreamlitClient("streamlit:componentReady", {apiVersion:1});
+}
+
+/* ═══════════════════════════════════════
+   설정 상태
+   ═══════════════════════════════════════ */
+var settings = {
+  imageSize: "Square",
+  aspectRatio: "1:1",
+  stylization: 100,
+  weirdness: 0,
+  variety: 0,
+  mode: "Standard",
+  versionType: "Standard",
+  version: "7",
+  speed: "Fast",
+  stealth: "On",
+  videoRes: "SD",
+  videoBatch: "4"
+};
+
+var AR_LIST = [
+  {w:1, h:2, label:"1:2"},
+  {w:6, h:11,label:"6:11"},
+  {w:9, h:16,label:"9:16"},
+  {w:2, h:3, label:"2:3"},
+  {w:3, h:4, label:"3:4"},
+  {w:4, h:5, label:"4:5"},
+  {w:5, h:6, label:"5:6"},
+  {w:1, h:1, label:"1:1"},   // index 7
+  {w:6, h:5, label:"6:5"},
+  {w:5, h:4, label:"5:4"},
+  {w:4, h:3, label:"4:3"},
+  {w:3, h:2, label:"3:2"},
+  {w:16,h:9, label:"16:9"},
+  {w:2, h:1, label:"2:1"},
+  {w:21,h:9, label:"21:9"}
+];
+
+/* ═══════════════════════════════════════
+   패널 토글 (설정 / 첨부 — 상호 배타)
+   ═══════════════════════════════════════ */
+var settingsBtn = document.getElementById("settingsBtn");
+var settingsPanel = document.getElementById("settingsPanel");
+var attachBtn = document.getElementById("attachBtn");
+var attachPanel = document.getElementById("attachPanel");
+
+function closeSettingsPanel() {
+  settingsPanel.classList.remove("open");
+  settingsBtn.classList.remove("active");
+}
+function closeAttachPanel() {
+  attachPanel.classList.remove("open");
+  attachBtn.style.opacity = "";
+  attachBtn.style.background = "";
+}
+
+settingsBtn.addEventListener("click", function(e) {
+  e.stopPropagation();
+  var willOpen = !settingsPanel.classList.contains("open");
+  if (willOpen) closeAttachPanel();
+  settingsPanel.classList.toggle("open");
+  settingsBtn.classList.toggle("active");
+  updateFrameHeight();
+});
+
+attachBtn.addEventListener("click", function(e) {
+  e.stopPropagation();
+  var willOpen = !attachPanel.classList.contains("open");
+  if (willOpen) closeSettingsPanel();
+  attachPanel.classList.toggle("open");
+  if (attachPanel.classList.contains("open")) {
+    attachBtn.style.opacity = "1";
+    attachBtn.style.background = "#3f3f46";
+  } else {
+    attachBtn.style.opacity = "";
+    attachBtn.style.background = "";
+  }
+  updateFrameHeight();
+});
+
+/* 첨부 패널 탭 전환 */
+document.querySelectorAll(".attach-tab").forEach(function(tab) {
+  tab.addEventListener("click", function() {
+    document.querySelectorAll(".attach-tab").forEach(function(t){t.classList.remove("active");});
+    tab.classList.add("active");
+  });
+});
+
+/* ═══════════════════════════════════════
+   첨부 이미지 업로드 (탭별 저장)
+   ═══════════════════════════════════════ */
+var attachUpload = document.getElementById("attachUpload");
+var attachFileInput = document.getElementById("attachFileInput");
+var attachImagesContainer = document.getElementById("attachImages");
+
+// 탭별 이미지 저장소: {imagePrompts: [...], styleRef: [...], omniRef: [...]}
+var tabImages = {imagePrompts: [], styleRef: [], omniRef: []};
+
+function getActiveTabKey() {
+  var active = document.querySelector(".attach-tab.active");
+  return active ? active.getAttribute("data-attach-tab") : "imagePrompts";
+}
+
+attachUpload.addEventListener("click", function() {
+  attachFileInput.click();
+});
+
+attachUpload.addEventListener("dragover", function(e) {
+  e.preventDefault();
+  attachUpload.style.borderColor = "#ef4444";
+  attachUpload.style.background = "rgba(239,68,68,.06)";
+});
+attachUpload.addEventListener("dragleave", function() {
+  attachUpload.style.borderColor = "";
+  attachUpload.style.background = "";
+});
+attachUpload.addEventListener("drop", function(e) {
+  e.preventDefault();
+  attachUpload.style.borderColor = "";
+  attachUpload.style.background = "";
+  handleAttachFiles(e.dataTransfer.files);
+});
+
+attachFileInput.addEventListener("change", function() {
+  handleAttachFiles(this.files);
+  this.value = "";
+});
+
+function handleAttachFiles(files) {
+  var tabKey = getActiveTabKey();
+  for (var i = 0; i < files.length; i++) {
+    if (!files[i].type.startsWith("image/")) continue;
+    (function(file, key) {
+      var reader = new FileReader();
+      reader.onload = function(e) {
+        tabImages[key].push({name: file.name, dataUrl: e.target.result});
+        renderAttachBody();
+        renderTabThumbs(key);
+        updateAttachBadge();
+      };
+      reader.readAsDataURL(file);
+    })(files[i], tabKey);
+  }
+}
+
+/* 첨부 이미지 배지 카운트 */
+function updateAttachBadge() {
+  var total = tabImages.imagePrompts.length
+            + tabImages.styleRef.length
+            + tabImages.omniRef.length;
+  var badge = document.getElementById("attachBadge");
+  if (total > 0) {
+    if (!badge) {
+      badge = document.createElement("span");
+      badge.id = "attachBadge";
+      badge.className = "attach-badge";
+      document.getElementById("attachBtn").appendChild(badge);
+    }
+    badge.textContent = total;
+  } else if (badge) {
+    badge.remove();
+  }
+}
+
+/* 하단 업로드 영역 우측 썸네일 */
+function renderAttachBody() {
+  var tabKey = getActiveTabKey();
+  var imgs = tabImages[tabKey] || [];
+  attachImagesContainer.innerHTML = "";
+  if (imgs.length === 0) {
+    attachImagesContainer.innerHTML = '<div class="attach-empty">Select images from your gallery or upload new ones</div>';
+    return;
+  }
+  imgs.forEach(function(f, idx) {
+    var thumb = document.createElement("div");
+    thumb.className = "attach-thumb";
+    var img = document.createElement("img");
+    img.src = f.dataUrl;
+    img.alt = f.name;
+    thumb.appendChild(img);
+    var del = document.createElement("button");
+    del.className = "attach-thumb-del";
+    del.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+    (function(key, i) {
+      del.addEventListener("click", function(e) {
+        e.stopPropagation();
+        tabImages[key].splice(i, 1);
+        renderAttachBody();
+        renderTabThumbs(key);
+        updateAttachBadge();
+      });
+    })(tabKey, idx);
+    thumb.appendChild(del);
+    attachImagesContainer.appendChild(thumb);
+  });
+}
+
+/* 탭 헤더 내 미니 썸네일 */
+function renderTabThumbs(tabKey) {
+  var container = document.querySelector('[data-tab-thumbs="' + tabKey + '"]');
+  if (!container) return;
+  container.innerHTML = "";
+  var imgs = tabImages[tabKey] || [];
+  imgs.forEach(function(f, idx) {
+    var wrap = document.createElement("span");
+    wrap.className = "attach-tab-thumb";
+    var img = document.createElement("img");
+    img.src = f.dataUrl;
+    wrap.appendChild(img);
+    var del = document.createElement("button");
+    del.className = "attach-tab-thumb-del";
+    del.innerHTML = '<svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+    (function(key, i) {
+      del.addEventListener("click", function(e) {
+        e.stopPropagation();
+        tabImages[key].splice(i, 1);
+        renderTabThumbs(key);
+        if (getActiveTabKey() === key) renderAttachBody();
+        updateAttachBadge();
+      });
+    })(tabKey, idx);
+    wrap.appendChild(del);
+    container.appendChild(wrap);
+  });
+}
+
+/* 탭 전환 시 하단 콘텐츠 갱신 */
+document.querySelectorAll(".attach-tab").forEach(function(tab) {
+  tab.addEventListener("click", function() {
+    setTimeout(renderAttachBody, 0);
+  });
+});
+
+/* 모든 탭에 첨부된 이미지 dataUrl 목록 반환 */
+function getAttachedImages() {
+  var result = {};
+  var keys = ["imagePrompts", "styleRef", "omniRef"];
+  keys.forEach(function(k) {
+    if (tabImages[k].length > 0) {
+      result[k] = tabImages[k].map(function(f) { return f.dataUrl; });
+    }
+  });
+  return Object.keys(result).length > 0 ? result : null;
+}
+
+renderAttachBody();
+
+/* ═══════════════════════════════════════
+   토글 버튼 그룹
+   ═══════════════════════════════════════ */
+document.querySelectorAll(".toggle-group").forEach(function(group) {
+  group.addEventListener("click", function(e) {
+    var btn = e.target.closest(".toggle-btn");
+    if (!btn) return;
+    group.querySelectorAll(".toggle-btn").forEach(function(b){b.classList.remove("active");});
+    btn.classList.add("active");
+
+    var g = group.getAttribute("data-group");
+    var v = btn.getAttribute("data-val");
+    if (g === "imageSize") {
+      settings.imageSize = v;
+      // 카테고리 클릭 시 슬라이더를 대표 위치로 이동
+      if (v === "Portrait") arSlider.value = 3;       // 2:3
+      else if (v === "Square") arSlider.value = 7;    // 1:1
+      else if (v === "Landscape") arSlider.value = 12; // 16:9
+      updateAspectRatio();
+    } else {
+      settings[g] = v;
+    }
+  });
+});
+
+/* ═══════════════════════════════════════
+   비율 프리뷰 + 슬라이더
+   ═══════════════════════════════════════ */
+var arSlider = document.getElementById("arSlider");
+var arPreview = document.getElementById("arPreview");
+
+function updateAspectRatio() {
+  var idx = parseInt(arSlider.value);
+  setAR(AR_LIST[idx]);
+  // Portrait/Square/Landscape 토글 동기화
+  var cat = idx < 7 ? "Portrait" : idx === 7 ? "Square" : "Landscape";
+  if (settings.imageSize !== cat) {
+    settings.imageSize = cat;
+    var group = document.querySelector('.toggle-group[data-group="imageSize"]');
+    group.querySelectorAll(".toggle-btn").forEach(function(b) {
+      b.classList.toggle("active", b.getAttribute("data-val") === cat);
+    });
+  }
+}
+
+function setAR(ar) {
+  settings.aspectRatio = ar.label;
+  arPreview.textContent = ar.label.replace(":", " : ");
+  var maxDim = 80;
+  var ratio = ar.w / ar.h;
+  var pw, ph;
+  if (ratio >= 1) { pw = maxDim; ph = maxDim / ratio; }
+  else { ph = maxDim; pw = maxDim * ratio; }
+  arPreview.style.width = pw + "px";
+  arPreview.style.height = ph + "px";
+}
+
+arSlider.addEventListener("input", function() {
+  updateAspectRatio();
+});
+
+/* ═══════════════════════════════════════
+   슬라이더 (Aesthetics)
+   ═══════════════════════════════════════ */
+document.querySelectorAll(".slider-wrap input[type=range]").forEach(function(slider) {
+  var valSpan = slider.nextElementSibling;
+  slider.addEventListener("input", function() {
+    valSpan.textContent = this.value;
+    settings[this.getAttribute("data-key")] = parseInt(this.value);
+  });
+});
+
+/* ═══════════════════════════════════════
+   버전 셀렉트
+   ═══════════════════════════════════════ */
+document.getElementById("versionSelect").addEventListener("change", function() {
+  settings.version = this.value;
+});
+
+/* ═══════════════════════════════════════
+   프롬프트 제출
+   ═══════════════════════════════════════ */
+var promptInput = document.getElementById("promptInput");
+var submitBtn = document.getElementById("submitBtn");
+
+var _submitLock = false;
+function submitPrompt() {
+  if (_submitLock) return;
+  var v = promptInput.value.trim();
+  if (!v) return;
+  _submitLock = true;
+  var payload = {action:"submit", prompt:v, settings:Object.assign({}, settings), ts:Date.now()};
+  var imgs = getAttachedImages();
+  if (imgs) payload.attachedImages = imgs;
+  setComponentValue(payload);
+  promptInput.value = "";
+  closeSettingsPanel();
+  closeAttachPanel();
+}
+promptInput.addEventListener("keydown", function(e) {
+  if (e.key === "Enter") submitPrompt();
+});
+submitBtn.addEventListener("click", function(e) {
+  e.stopPropagation();
+  submitPrompt();
+});
+
+/* ═══════════════════════════════════════
+   검색
+   ═══════════════════════════════════════ */
+var searchWrap = document.getElementById("searchWrap");
+var searchInput = document.getElementById("searchInput");
+var searchCloseBtn = document.getElementById("searchCloseBtn");
+var promptWrap = document.getElementById("promptWrap");
+var searchBtn = document.querySelector('[data-action="search"]');
+
+var allGalleryItems = [];  // 전체 갤러리 데이터 보관
+var searchActive = false;
+
+function openSearch() {
+  searchActive = true;
+  promptWrap.style.display = "none";
+  searchWrap.classList.add("active");
+  searchBtn.style.background = "#27272a";
+  searchBtn.style.borderRadius = "8px";
+  searchBtn.querySelector("svg").style.opacity = "1";
+  searchInput.value = "";
+  searchInput.focus();
+  renderGallery(allGalleryItems);
+}
+
+function closeSearch() {
+  searchActive = false;
+  searchWrap.classList.remove("active");
+  promptWrap.style.display = "";
+  searchBtn.style.background = "";
+  searchBtn.querySelector("svg").style.opacity = "";
+  searchInput.value = "";
+  renderGallery(allGalleryItems);
+}
+
+searchBtn.addEventListener("click", function() {
+  if (searchActive) closeSearch();
+  else openSearch();
+});
+
+searchCloseBtn.addEventListener("click", function() {
+  closeSearch();
+});
+
+searchInput.addEventListener("input", function() {
+  var q = this.value.trim().toLowerCase();
+  if (!q) {
+    renderGallery(allGalleryItems);
+    return;
+  }
+  var filtered = allGalleryItems.filter(function(item) {
+    return (item.prompt || "").toLowerCase().indexOf(q) !== -1;
+  });
+  renderGallery(filtered, q);
+});
+
+searchInput.addEventListener("keydown", function(e) {
+  if (e.key === "Escape") closeSearch();
+});
+
+/* ═══════════════════════════════════════
+   라이트박스
+   ═══════════════════════════════════════ */
+var lightbox = document.getElementById("lightbox");
+var lbContent = document.getElementById("lbContent");
+var lbClose = document.getElementById("lbClose");
+var lbDownload = document.getElementById("lbDownload");
+var currentImgSrc = null;
+
+function openLightbox(imgSrc, phClass) {
+  lbContent.innerHTML = "";
+  if (imgSrc) {
+    currentImgSrc = imgSrc;
+    var img = document.createElement("img");
+    img.src = imgSrc;
+    lbContent.appendChild(img);
+    lbDownload.style.display = "";
+  } else {
+    currentImgSrc = null;
+    var ph = document.createElement("div");
+    ph.className = "lightbox-placeholder " + (phClass || "ph-1");
+    ph.textContent = "No image yet";
+    lbContent.appendChild(ph);
+    lbDownload.style.display = "none";
+  }
+  lightbox.classList.add("open");
+}
+
+function closeLightbox() {
+  lightbox.classList.remove("open");
+  currentImgSrc = null;
+}
+
+lbClose.addEventListener("click", closeLightbox);
+
+lightbox.addEventListener("click", function(e) {
+  if (e.target === lightbox) closeLightbox();
+});
+
+document.addEventListener("keydown", function(e) {
+  if (e.key === "Escape" && lightbox.classList.contains("open")) closeLightbox();
+});
+
+lbDownload.addEventListener("click", function() {
+  if (!currentImgSrc) return;
+  var a = document.createElement("a");
+  a.href = currentImgSrc;
+  a.download = currentImgSrc.split("/").pop() || "image.png";
+  a.target = "_blank";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+});
+
+/* ═══════════════════════════════════════
+   갤러리 렌더링
+   ═══════════════════════════════════════ */
+function highlightText(text, query) {
+  var escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  var re = new RegExp("(" + escaped + ")", "gi");
+  return text.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+    .replace(re, '<span class="search-highlight">$1</span>');
+}
+
+var expandSvg = '<svg width="24" height="24" fill="#fff" viewBox="0 0 24 24"><path d="M15 3l2.3 2.3-2.89 2.87 1.42 1.42L18.7 6.7 21 9V3h-6zM3 9l2.3-2.3 2.87 2.89 1.42-1.42L6.7 5.3 9 3H3v6zm6 12l-2.3-2.3 2.89-2.87-1.42-1.42L5.3 17.3 3 15v6h6zm12-6l-2.3 2.3-2.87-2.89-1.42 1.42 2.89 2.87L15 21h6v-6z"/></svg>';
+var phClasses = ["ph-1","ph-2","ph-3","ph-4","ph-5","ph-6","ph-7","ph-8","ph-9","ph-10","ph-11","ph-12"];
+
+function renderGallery(items, highlight) {
+  var container = document.getElementById("galleryContainer");
+  container.innerHTML = "";
+
+  if (!items || items.length === 0) {
+    var msg = searchActive && highlight
+      ? '검색 결과가 없습니다.'
+      : '이미지를 생성하려면 프롬프트를 입력하세요.';
+    container.innerHTML = '<div class="no-results">' + msg + '</div>';
+    updateFrameHeight();
+    return;
+  }
+
+  var currentDate = "";
+  items.forEach(function(item, idx) {
+    // 날짜 헤더
+    if (item.date && item.date !== currentDate) {
+      currentDate = item.date;
+      var dh = document.createElement("div");
+      dh.className = "date-header";
+      dh.textContent = currentDate;
+      container.appendChild(dh);
+    }
+
+    var card = document.createElement("div");
+    card.className = "gen-card" + (item.loading ? " gen-card-loading" : "");
+
+    // 이미지 그리드
+    var isLandscape = isLandscapeAR(item.aspect_ratio || "1:1");
+    var grid = document.createElement("div");
+    grid.className = "gen-grid";
+    grid.setAttribute("data-layout", isLandscape ? "landscape" : "portrait");
+
+    var imgCount = (item.images && item.images.length) || 4;
+    for (var i = 0; i < 4; i++) {
+      var imgDiv = document.createElement("div");
+      imgDiv.className = "gen-img";
+      var imgSrc = (item.images && item.images[i]) || null;
+      var phCls = phClasses[(idx * 4 + i) % phClasses.length];
+      if (imgSrc) {
+        var img = document.createElement("img");
+        img.src = imgSrc;
+        img.alt = "";
+        imgDiv.appendChild(img);
+      } else {
+        var ph = document.createElement("div");
+        ph.className = "img-placeholder " + phCls;
+        imgDiv.appendChild(ph);
+      }
+      var ov = document.createElement("div");
+      ov.className = "img-overlay";
+      ov.innerHTML = expandSvg;
+      imgDiv.appendChild(ov);
+      (function(src, cls) {
+        imgDiv.addEventListener("click", function() { openLightbox(src, cls); });
+      })(imgSrc, phCls);
+      grid.appendChild(imgDiv);
+    }
+
+    // 로딩 오버레이
+    if (item.loading) {
+      var loadOv = document.createElement("div");
+      loadOv.className = "loading-overlay";
+      loadOv.innerHTML =
+        '<div class="loading-spinner"></div>' +
+        '<span class="loading-text">Dreaming...</span>' +
+        '<span class="loading-elapsed" data-loading-start="' + (item.loading_ts || 0) + '"></span>';
+      grid.appendChild(loadOv);
+    }
+
+    // 정보
+    var info = document.createElement("div");
+    info.className = "gen-info";
+    var prompt = document.createElement("div");
+    prompt.className = "gen-prompt";
+    var promptText = item.prompt || "";
+    if (highlight && promptText) {
+      prompt.innerHTML = highlightText(promptText, highlight);
+    } else {
+      prompt.textContent = promptText;
+    }
+    info.appendChild(prompt);
+
+    // 첨부 이미지 썸네일
+    var ai = item.attached_images;
+    if (ai) {
+      var aiWrap = document.createElement("div");
+      aiWrap.className = "gen-attached";
+      var aiKeys = ["imagePrompts", "styleRef", "omniRef"];
+      aiKeys.forEach(function(k) {
+        if (ai[k]) {
+          ai[k].forEach(function(src) {
+            var w = document.createElement("div");
+            w.className = "gen-attached-img";
+            var im = document.createElement("img");
+            im.src = src;
+            w.appendChild(im);
+            aiWrap.appendChild(w);
+          });
+        }
+      });
+      if (aiWrap.children.length > 0) info.appendChild(aiWrap);
+    }
+
+    var tags = document.createElement("div");
+    tags.className = "gen-tags";
+    if (item.tags) {
+      item.tags.forEach(function(t) {
+        var tag = document.createElement("span");
+        tag.className = "gen-tag";
+        tag.textContent = t;
+        tags.appendChild(tag);
+      });
+    }
+    info.appendChild(tags);
+
+    card.appendChild(grid);
+    card.appendChild(info);
+    container.appendChild(card);
+  });
+
+  updateFrameHeight();
+}
+
+function isLandscapeAR(ar) {
+  var parts = ar.split(":");
+  if (parts.length !== 2) return false;
+  return parseInt(parts[0]) > parseInt(parts[1]);
+}
+
+/* ═══════════════════════════════════════
+   Mock 이미지 URL 생성 (picsum.photos)
+   ═══════════════════════════════════════ */
+var _mockImgCounter = 0;
+var _ASPECT_SIZES = {
+  "1:1":  [1024, 1024],
+  "16:9": [1024, 576],
+  "9:16": [576, 1024],
+  "4:3":  [1024, 768],
+  "3:4":  [768, 1024],
+  "3:2":  [1024, 683],
+  "2:3":  [683, 1024]
+};
+
+function getMockImageUrls(count, aspectRatio) {
+  var size = _ASPECT_SIZES[aspectRatio] || _ASPECT_SIZES["1:1"];
+  var urls = [];
+  for (var i = 0; i < count; i++) {
+    _mockImgCounter++;
+    urls.push("https://picsum.photos/seed/mj" + _mockImgCounter + "/" + size[0] + "/" + size[1]);
+  }
+  return urls;
+}
+
+/* ═══════════════════════════════════════
+   로딩 타이머 (mock 10초 대기)
+   ═══════════════════════════════════════ */
+var _loadingTimers = {};    // loading_ts → timeoutId
+var _elapsedInterval = null;
+
+function setupLoadingTimers(items) {
+  /* 새 로딩 아이템에 대해 10초 후 loading_complete 이벤트 전송 */
+  var activeTs = {};
+  items.forEach(function(item) {
+    if (!item.loading || !item.loading_ts) return;
+    var ts = item.loading_ts;
+    activeTs[ts] = true;
+    if (_loadingTimers[ts]) return;            // 이미 등록됨
+    var ar = item.aspect_ratio || "1:1";
+    var elapsed = Date.now() - ts;
+    var remaining = Math.max(0, 10000 - elapsed);
+    _loadingTimers[ts] = setTimeout(function() {
+      delete _loadingTimers[ts];
+      var mockImages = getMockImageUrls(4, ar);
+      setComponentValue({action:"loading_complete", loading_ts:ts, mock_images:mockImages, ts:Date.now()});
+    }, remaining);
+  });
+  // 더 이상 로딩 중이 아닌 항목의 타이머 정리
+  Object.keys(_loadingTimers).forEach(function(ts) {
+    if (!activeTs[ts]) {
+      clearTimeout(_loadingTimers[ts]);
+      delete _loadingTimers[ts];
+    }
+  });
+
+  // 경과 시간 표시 인터벌
+  if (_elapsedInterval) clearInterval(_elapsedInterval);
+  var hasLoading = Object.keys(activeTs).length > 0;
+  if (hasLoading) {
+    _elapsedInterval = setInterval(updateElapsedLabels, 1000);
+    updateElapsedLabels();
+  }
+}
+
+function updateElapsedLabels() {
+  var els = document.querySelectorAll(".loading-elapsed[data-loading-start]");
+  var now = Date.now();
+  els.forEach(function(el) {
+    var start = parseInt(el.getAttribute("data-loading-start"));
+    if (!start) return;
+    var sec = Math.floor((now - start) / 1000);
+    el.textContent = sec + "s";
+  });
+}
+
+/* ═══════════════════════════════════════
+   Streamlit 렌더 이벤트
+   ═══════════════════════════════════════ */
+var FRAME_H = 900;
+
+function updateFrameHeight() {
+  setFrameHeight(FRAME_H);
+}
+
+window.addEventListener("message", function(event) {
+  if (event.data.type !== "streamlit:render") return;
+  var args = event.data.args || {};
+
+  // Python에서 전달한 iframe 높이
+  if (args.frame_height) FRAME_H = args.frame_height;
+
+  allGalleryItems = args.gallery_items || [];
+  _submitLock = false;
+
+  // 검색 모드일 때는 필터 유지
+  if (searchActive && searchInput.value.trim()) {
+    var q = searchInput.value.trim().toLowerCase();
+    var filtered = allGalleryItems.filter(function(item) {
+      return (item.prompt || "").toLowerCase().indexOf(q) !== -1;
+    });
+    renderGallery(filtered, q);
+  } else {
+    renderGallery(allGalleryItems);
+  }
+  setupLoadingTimers(allGalleryItems);
+  setFrameHeight(FRAME_H);
+});
+
+componentReady();
+setFrameHeight(FRAME_H);
+updateAspectRatio();
+</script>
+</body>
+</html>

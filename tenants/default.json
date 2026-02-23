@@ -1,9 +1,9 @@
 {
   "tenant_id": "default",
   "layout": "운영팀",
-  "enabled_features": ["tab.legnext", "tab.kling"],
+  "enabled_features": ["tab.mj", "tab.gpt", "tab.suno", "tab.kling_web", "tab.elevenlabs", "tab.nanobanana"],
   "branding": {
-    "page_title": "운영팀!!",
+    "page_title": "운영팀용 페이지",
     "browser_tab_title": "운영 페이지",
     "logo_path": null
   }

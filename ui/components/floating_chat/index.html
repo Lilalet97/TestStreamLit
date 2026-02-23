@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body>
+<script>
+/* ═══════════════════════════════════════
+   Streamlit Component Protocol
+   ═══════════════════════════════════════ */
+function sendMessageToStreamlitClient(type, data) {
+  window.parent.postMessage(Object.assign({isStreamlitMessage:true, type:type}, data), "*");
+}
+function setComponentValue(value) {
+  sendMessageToStreamlitClient("streamlit:setComponentValue", {value:value});
+}
+function setFrameHeight(h) {
+  sendMessageToStreamlitClient("streamlit:setFrameHeight", {height:h});
+}
+function componentReady() {
+  sendMessageToStreamlitClient("streamlit:componentReady", {apiVersion:1});
+}
+
+/* ═══════════════════════════════════════
+   Constants & State
+   ═══════════════════════════════════════
+   isOpen 등 상태는 parent DOM attribute에 저장.
+   iframe이 재생성되어도 상태가 유지됨.            */
+var ROOT_ID  = "fc-root";
+var STYLE_ID = "fc-styles";
+var state = {messages:[], userId:"", userRole:"", schoolId:""};
+var myFrame = window.frameElement;
+
+/* Register this iframe on parent (cleanup watcher가 참조) */
+window.parent.__fcFrame = myFrame;
+delete window.parent.__fcCleanupPending;
+
+/* Expose send callback — always points to CURRENT iframe's setComponentValue */
+window.parent.__fcSend = function(msg){
+  setComponentValue({action:"send_message", message:msg, ts:Date.now()});
+};
+
+/* ═══════════════════════════════════════
+   Inject CSS into parent document
+   ═══════════════════════════════════════ */
+function injectStyles(){
+  var pd = window.parent.document;
+  if(pd.getElementById(STYLE_ID)) return;
+  var s = pd.createElement("style");
+  s.id = STYLE_ID;
+  s.textContent = [
+    "#fc-root{position:fixed;bottom:100px;right:24px;z-index:99999;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;}",
+
+    /* Fab button */
+    ".fc-fab{width:56px;height:56px;border-radius:50%;background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:24px;box-shadow:0 4px 16px rgba(0,0,0,0.3);transition:transform .2s,box-shadow .2s;}",
+    ".fc-fab:hover{transform:scale(1.08);box-shadow:0 6px 20px rgba(0,0,0,0.4);}",
+    ".fc-fab.hidden{display:none;}",
+
+    /* Panel */
+    ".fc-panel{display:none;flex-direction:column;width:380px;height:550px;background:#1a1a2e;border-radius:16px 16px 0 0;box-shadow:-4px -4px 24px rgba(0,0,0,0.4);overflow:hidden;position:absolute;bottom:0;right:0;}",
+    ".fc-panel.open{display:flex;}",
+
+    /* Header */
+    ".fc-header{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;flex-shrink:0;}",
+    ".fc-header-title{font-size:15px;font-weight:600;display:flex;align-items:center;gap:8px;}",
+    ".fc-close{background:none;border:none;color:#fff;font-size:20px;cursor:pointer;width:32px;height:32px;display:flex;align-items:center;justify-content:center;border-radius:50%;transition:background .2s;}",
+    ".fc-close:hover{background:rgba(255,255,255,0.2);}",
+
+    /* Messages */
+    ".fc-messages{flex:1;overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:8px;}",
+    ".fc-messages::-webkit-scrollbar{width:6px;}",
+    ".fc-messages::-webkit-scrollbar-thumb{background:#3d3d5c;border-radius:3px;}",
+
+    ".fc-msg-row{display:flex;flex-direction:column;max-width:85%;}",
+    ".fc-msg-row.mine{align-self:flex-end;align-items:flex-end;}",
+    ".fc-msg-row.other{align-self:flex-start;align-items:flex-start;}",
+
+    ".fc-msg-sender{font-size:11px;color:#888;margin-bottom:2px;padding:0 4px;}",
+    ".fc-msg-bubble{padding:8px 12px;border-radius:12px;font-size:13px;line-height:1.45;word-break:break-word;color:#f0f0f0;}",
+    ".fc-msg-row.mine .fc-msg-bubble{background:#5b4a9e;border-bottom-right-radius:4px;}",
+    ".fc-msg-row.other .fc-msg-bubble.teacher-msg{background:#1b6b3a;border-bottom-left-radius:4px;}",
+    ".fc-msg-row.other .fc-msg-bubble.student-msg{background:#2a5a8f;border-bottom-left-radius:4px;}",
+    ".fc-msg-row.mine .fc-msg-bubble.teacher-msg{background:#1b6b3a;border-bottom-right-radius:4px;}",
+
+    ".fc-msg-time{font-size:10px;color:#666;margin-top:2px;padding:0 4px;}",
+    ".fc-empty{flex:1;display:flex;align-items:center;justify-content:center;color:#555;font-size:13px;text-align:center;padding:20px;}",
+
+    /* Input area */
+    ".fc-input-area{display:flex;align-items:center;gap:8px;padding:10px 14px;background:#16162a;border-top:1px solid #2a2a4a;flex-shrink:0;}",
+    ".fc-input{flex:1;border:1px solid #3d3d5c;background:#1e1e38;color:#f0f0f0;border-radius:20px;padding:8px 14px;font-size:13px;outline:none;resize:none;max-height:80px;line-height:1.4;font-family:inherit;}",
+    ".fc-input::placeholder{color:#666;}",
+    ".fc-input:focus{border-color:#667eea;}",
+    ".fc-send{width:36px;height:36px;border-radius:50%;border:none;background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;transition:transform .15s;}",
+    ".fc-send:hover{transform:scale(1.1);}"
+  ].join("\n");
+  pd.head.appendChild(s);
+}
+
+/* ═══════════════════════════════════════
+   Create / Get Root Element in Parent
+   ═══════════════════════════════════════ */
+function getOrCreateRoot(){
+  var pd = window.parent.document;
+  var root = pd.getElementById(ROOT_ID);
+
+  if(!root){
+    injectStyles();
+    root = pd.createElement("div");
+    root.id = ROOT_ID;
+    root.setAttribute("data-open", "0");
+    root.innerHTML =
+      '<button class="fc-fab" id="fcFab">\uD83D\uDCAC</button>' +
+      '<div class="fc-panel" id="fcPanel">' +
+        '<div class="fc-header">' +
+          '<div class="fc-header-title">\uD83D\uDCAC Chat</div>' +
+          '<button class="fc-close" id="fcClose">\u2715</button>' +
+        '</div>' +
+        '<div class="fc-messages" id="fcMsgs"></div>' +
+        '<div class="fc-input-area">' +
+          '<textarea class="fc-input" id="fcInput" placeholder="\uBA54\uC2DC\uC9C0\uB97C \uC785\uB825\uD558\uC138\uC694..." rows="1"></textarea>' +
+          '<button class="fc-send" id="fcSend">\u27A4</button>' +
+        '</div>' +
+      '</div>';
+    pd.body.appendChild(root);
+  }
+
+  /* ★ 핵심: 매 render마다 이벤트 재바인딩 (이전 iframe 핸들러 교체) */
+  attachEvents(root, pd);
+  startCleanupWatcher(pd);
+  return root;
+}
+
+/* ═══════════════════════════════════════
+   Attach Event Listeners
+   ═══════════════════════════════════════
+   .onclick 할당 → 이전 핸들러를 자동 교체.
+   addEventListener와 달리 중복 누적 없음.         */
+function attachEvents(root, pd){
+  root.querySelector("#fcFab").onclick  = function(){ fcToggle(pd); };
+  root.querySelector("#fcClose").onclick = function(){ fcToggle(pd); };
+  root.querySelector("#fcSend").onclick  = function(){ fcDoSend(pd); };
+
+  var inp = root.querySelector("#fcInput");
+  inp.oninput = function(){
+    this.style.height = "auto";
+    this.style.height = Math.min(this.scrollHeight, 80) + "px";
+  };
+  inp.onkeydown = function(e){
+    if(e.key === "Enter" && !e.shiftKey){ e.preventDefault(); fcDoSend(pd); }
+  };
+
+  /* Escape → 패널 닫기 (한 번만 등록, inline 로직으로 iframe 무관) */
+  if(!window.parent.__fcEscBound){
+    window.parent.__fcEscBound = true;
+    pd.addEventListener("keydown", function(e){
+      if(e.key === "Escape"){
+        var r = pd.getElementById("fc-root");
+        if(r && r.getAttribute("data-open") === "1"){
+          r.setAttribute("data-open", "0");
+          var panel = pd.getElementById("fcPanel");
+          var fab   = pd.getElementById("fcFab");
+          if(panel) panel.classList.remove("open");
+          if(fab)   fab.classList.remove("hidden");
+        }
+      }
+    });
+  }
+}
+
+/* ═══════════════════════════════════════
+   Toggle Panel  (상태: DOM attribute)
+   ═══════════════════════════════════════ */
+function fcToggle(pd){
+  var root = pd.getElementById(ROOT_ID);
+  if(!root) return;
+  var nowOpen = root.getAttribute("data-open") !== "1";
+  root.setAttribute("data-open", nowOpen ? "1" : "0");
+
+  var panel = pd.getElementById("fcPanel");
+  var fab   = pd.getElementById("fcFab");
+  if(panel) panel.classList.toggle("open", nowOpen);
+  if(fab)   fab.classList.toggle("hidden", nowOpen);
+
+  if(nowOpen){
+    var msgs = pd.getElementById("fcMsgs");
+    if(msgs) msgs.scrollTop = msgs.scrollHeight;
+    var inp = pd.getElementById("fcInput");
+    if(inp) setTimeout(function(){ inp.focus(); }, 50);
+  }
+}
+
+/* ═══════════════════════════════════════
+   Send Message
+   ═══════════════════════════════════════ */
+function fcDoSend(pd){
+  var inp = pd.getElementById("fcInput");
+  if(!inp) return;
+  var msg = (inp.value || "").trim();
+  if(!msg) return;
+  inp.value = "";
+  inp.style.height = "auto";
+  if(window.parent.__fcSend) window.parent.__fcSend(msg);
+}
+
+/* ═══════════════════════════════════════
+   Render Messages
+   ═══════════════════════════════════════ */
+function renderMessages(){
+  var pd = window.parent.document;
+  var container = pd.getElementById("fcMsgs");
+  if(!container) return;
+
+  var msgs = state.messages || [];
+  if(msgs.length === 0){
+    container.innerHTML = '<div class="fc-empty">\uC544\uC9C1 \uBA54\uC2DC\uC9C0\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4.<br>\uC9C8\uBB38\uC744 \uC785\uB825\uD574\uBCF4\uC138\uC694!</div>';
+    return;
+  }
+
+  var html = "";
+  for(var i = 0; i < msgs.length; i++){
+    var m = msgs[i];
+    var isMine = (m.sender_id === state.userId);
+    var rowCls = isMine ? "mine" : "other";
+    var bubCls = m.sender_role === "teacher" ? "teacher-msg" : "student-msg";
+    var roleL  = m.sender_role === "teacher" ? "\uD83E\uDDD1\u200D\uD83C\uDFEB " : "";
+    var sender = isMine ? "\uB098" : (roleL + m.sender_id);
+
+    var ts = "";
+    if(m.created_at){
+      try{
+        var d = new Date(m.created_at.replace("Z","+00:00"));
+        ts = d.getHours().toString().padStart(2,"0") + ":" + d.getMinutes().toString().padStart(2,"0");
+      }catch(e){ ts = m.created_at.substring(11,16); }
+    }
+
+    html += '<div class="fc-msg-row ' + rowCls + '">';
+    html += '<div class="fc-msg-sender">' + escHtml(sender) + '</div>';
+    html += '<div class="fc-msg-bubble ' + bubCls + '">' + escHtml(m.message) + '</div>';
+    if(ts) html += '<div class="fc-msg-time">' + ts + '</div>';
+    html += '</div>';
+  }
+
+  container.innerHTML = html;
+  container.scrollTop = container.scrollHeight;
+}
+
+function escHtml(s){
+  var d = window.parent.document.createElement("div");
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+/* ═══════════════════════════════════════
+   Streamlit Render Event
+   ═══════════════════════════════════════ */
+window.addEventListener("message", function(event){
+  if(event.data.type !== "streamlit:render") return;
+  var args = event.data.args || {};
+
+  state.messages  = args.messages  || [];
+  state.userId    = args.user_id   || "";
+  state.userRole  = args.user_role || "";
+  state.schoolId  = args.school_id || "";
+
+  /* ★ iframe이 재생성될 때마다 parent 참조 갱신 */
+  window.parent.__fcFrame = window.frameElement;
+  delete window.parent.__fcCleanupPending;
+  window.parent.__fcSend = function(msg){
+    setComponentValue({action:"send_message", message:msg, ts:Date.now()});
+  };
+
+  getOrCreateRoot();
+
+  /* 변경이 있을 때만 메시지 재렌더 (parent에 키 저장 → iframe 재생성 시에도 유지) */
+  var key = state.userId + "|" + state.messages.length + "|" +
+    (state.messages.length > 0 ? state.messages[state.messages.length-1].created_at : "");
+  if(key !== (window.parent.__fcLastKey || "")){
+    window.parent.__fcLastKey = key;
+    renderMessages();
+  }
+
+  setFrameHeight(1);
+});
+
+/* ═══════════════════════════════════════
+   Cleanup Watcher (parent-side interval)
+   ═══════════════════════════════════════
+   iframe 제거 감지 후 3초 유예 기간:
+   - fragment rerun / 탭 전환 시 → 새 iframe이 즉시 연결 → cleanup 취소
+   - 로그아웃 시 → 새 iframe 없음 → 3초 후 DOM 정리               */
+function startCleanupWatcher(pd){
+  if(window.parent.__fcCleanupInterval) return;
+
+  var rootId  = ROOT_ID;
+  var styleId = STYLE_ID;
+
+  window.parent.__fcCleanupInterval = window.parent.setInterval(function(){
+    try{
+      var frame = window.parent.__fcFrame;
+      if(!frame || !frame.isConnected){
+        /* iframe 끊김 감지 → 유예 카운트 시작 */
+        if(!window.parent.__fcCleanupPending){
+          window.parent.__fcCleanupPending = Date.now();
+        } else if(Date.now() - window.parent.__fcCleanupPending > 3000){
+          /* 3초간 새 iframe 없음 → 진짜 로그아웃 → 전체 정리 */
+          window.parent.clearInterval(window.parent.__fcCleanupInterval);
+          delete window.parent.__fcCleanupInterval;
+          delete window.parent.__fcCleanupPending;
+
+          var r = pd.getElementById(rootId);
+          if(r) r.remove();
+          var s = pd.getElementById(styleId);
+          if(s) s.remove();
+          delete window.parent.__fcSend;
+          delete window.parent.__fcFrame;
+          delete window.parent.__fcLastKey;
+        }
+      } else {
+        /* iframe 연결 정상 → 유예 리셋 */
+        delete window.parent.__fcCleanupPending;
+      }
+    }catch(e){
+      try{ window.parent.clearInterval(window.parent.__fcCleanupInterval); }catch(e2){}
+    }
+  }, 500);
+}
+
+/* iframe unload: frame 참조만 해제 (DOM은 건드리지 않음 — 새 iframe이 올 수 있으므로) */
+window.addEventListener("beforeunload", function(){
+  try{
+    if(window.parent.__fcFrame === myFrame){
+      window.parent.__fcFrame = null;
+    }
+  }catch(e){}
+});
+
+/* ═══════════════════════════════════════
+   Init
+   ═══════════════════════════════════════ */
+componentReady();
+setFrameHeight(1);
+</script>
+</body>
+</html>

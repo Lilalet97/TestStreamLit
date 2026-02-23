@@ -3,8 +3,10 @@ import time
 import uuid
 import jwt
 
-from core.http import http_post_json
+from core.http import http_post_json, http_get_json
 from core.redact import json_dumps_safe
+
+KLING_BASE = "https://api.klingai.com/v1"
 
 
 def get_kling_token(access_key: str, secret_key: str) -> str:
@@ -27,6 +29,17 @@ def submit_video(access_key: str, secret_key: str, endpoint: str, payload: dict)
     token = get_kling_token(access_key, secret_key)
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     return http_post_json(endpoint, headers, payload, timeout=60)
+
+
+def get_task(access_key: str, secret_key: str, task_id: str, task_type: str = "video"):
+    """Kling 작업 상태 조회. task_type: 'video' 또는 'image'."""
+    token = get_kling_token(access_key, secret_key)
+    headers = {"Authorization": f"Bearer {token}"}
+    if task_type == "image":
+        url = f"{KLING_BASE}/images/generations/{task_id}"
+    else:
+        url = f"{KLING_BASE}/videos/text2video/{task_id}"
+    return http_get_json(url, headers, timeout=30)
 
 
 # ----------------------------

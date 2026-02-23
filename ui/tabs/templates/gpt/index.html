@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+/* ── 리셋 ── */
+*{margin:0;padding:0;box-sizing:border-box;}
+html,body{height:100%;margin:0;}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  background:#212121;
+  color:#d0d0d0;
+}
+button{cursor:pointer;border:none;background:none;font-family:inherit;color:inherit;}
+
+/* ── 전체 래퍼 ── */
+#app-root{display:flex;height:100%;width:100%;overflow:hidden;}
+
+/* ── 왼쪽 사이드바 ── */
+.gpt-sidebar{
+  width:260px;min-width:260px;
+  background:#171717;
+  border-right:1px solid #2d2d2d;
+  display:flex;flex-direction:column;
+  overflow:hidden;
+}
+.gpt-sidebar.hidden{display:none;}
+
+.sidebar-top{
+  padding:12px;flex-shrink:0;
+}
+.new-chat-btn{
+  width:100%;padding:10px 14px;
+  background:#2d2d2d;border:1px solid #404040;
+  border-radius:10px;color:#e0e0e0;
+  font-size:14px;font-weight:500;
+  display:flex;align-items:center;gap:8px;
+  transition:background .15s;
+}
+.new-chat-btn:hover{background:#3d3d3d;}
+.new-chat-btn svg{flex-shrink:0;}
+
+.conv-list{
+  flex:1;overflow-y:auto;padding:4px 8px;
+}
+.conv-list::-webkit-scrollbar{width:4px;}
+.conv-list::-webkit-scrollbar-track{background:transparent;}
+.conv-list::-webkit-scrollbar-thumb{background:#3f3f46;border-radius:2px;}
+
+.conv-item{
+  padding:10px 12px;margin:2px 0;
+  border-radius:8px;cursor:pointer;
+  display:flex;align-items:center;
+  gap:8px;font-size:13px;color:#b0b0b0;
+  position:relative;
+  transition:background .12s;
+}
+.conv-item:hover{background:#2d2d2d;}
+.conv-item.active{background:#343541;color:#e0e0e0;}
+.conv-item-title{
+  flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.conv-item-actions{
+  display:flex;gap:2px;opacity:0;
+  transition:opacity .12s;flex-shrink:0;
+}
+.conv-item:hover .conv-item-actions{opacity:1;}
+.conv-item-actions button{
+  width:24px;height:24px;border-radius:6px;
+  display:flex;align-items:center;justify-content:center;
+  color:#a0a0a0;transition:background .12s, color .12s;
+}
+.conv-item-actions button:hover{background:#404040;color:#e0e0e0;}
+.conv-item-actions .del-btn:hover{color:#ef4444;}
+
+/* ── 채팅 영역 ── */
+.chat-area{
+  flex:1;display:flex;flex-direction:column;
+  background:#212121;overflow:hidden;min-width:0;
+}
+
+/* 상단 바 */
+.chat-top-bar{
+  height:48px;flex-shrink:0;
+  display:flex;align-items:center;
+  padding:0 16px;
+  border-bottom:1px solid #2d2d2d;
+}
+.model-select{
+  background:#2d2d2d;border:1px solid #404040;
+  color:#e0e0e0;border-radius:8px;
+  padding:6px 10px;font-size:13px;font-weight:500;
+  outline:none;cursor:pointer;
+}
+.model-select:hover{border-color:#606060;}
+
+/* 메시지 영역 */
+.messages-wrap{
+  flex:1;overflow-y:auto;padding:20px 0;
+}
+.messages-wrap::-webkit-scrollbar{width:6px;}
+.messages-wrap::-webkit-scrollbar-track{background:transparent;}
+.messages-wrap::-webkit-scrollbar-thumb{background:#3f3f46;border-radius:3px;}
+
+/* 빈 상태 */
+.empty-state{
+  display:flex;flex-direction:column;align-items:center;
+  justify-content:center;height:100%;gap:12px;opacity:.6;
+}
+.empty-icon{font-size:48px;}
+.empty-title{font-size:18px;font-weight:500;color:#e0e0e0;}
+
+/* 메시지 */
+.msg{
+  max-width:768px;margin:0 auto;padding:8px 24px;
+}
+.msg-user{padding:16px 24px;}
+.msg-user .msg-bubble{
+  background:#2d2d2d;border-radius:16px;
+  padding:12px 16px;margin-left:auto;
+  max-width:85%;width:fit-content;
+  font-size:15px;line-height:1.7;color:#e0e0e0;
+  white-space:pre-wrap;word-break:break-word;
+}
+.msg-assistant{padding:8px 24px;}
+.msg-assistant .msg-content{
+  font-size:15px;line-height:1.7;color:#d0d0d0;
+  word-break:break-word;
+}
+
+/* 마크다운 렌더링 */
+.msg-content strong{color:#e0e0e0;}
+.msg-content code.inline-code{
+  background:#2d2d2d;padding:2px 6px;border-radius:4px;
+  font-size:13px;color:#e0e0e0;font-family:"Consolas","Monaco",monospace;
+}
+.msg-content pre.code-block{
+  background:#1a1a1a;border:1px solid #333;
+  border-radius:8px;padding:14px 16px;margin:8px 0;
+  overflow-x:auto;
+}
+.msg-content pre.code-block code{
+  font-size:13px;line-height:1.5;color:#d4d4d4;
+  font-family:"Consolas","Monaco",monospace;
+  white-space:pre;
+}
+.msg-content ul,.msg-content ol{margin:6px 0 6px 20px;}
+.msg-content li{margin:2px 0;}
+
+/* 스트리밍 커서 */
+.streaming-cursor{
+  display:inline-block;width:2px;height:18px;
+  background:#10a37f;margin-left:2px;
+  vertical-align:text-bottom;
+  animation:blink 1s steps(2) infinite;
+}
+@keyframes blink{0%{opacity:1;}50%{opacity:0;}}
+
+/* 에러 메시지 */
+.msg-error{
+  color:#ef4444;background:rgba(239,68,68,.08);
+  border:1px solid rgba(239,68,68,.2);
+  border-radius:8px;padding:10px 14px;margin:4px 0;
+  font-size:13px;
+}
+
+/* ── 입력 영역 ── */
+.input-area{
+  padding:12px 24px 24px;flex-shrink:0;
+}
+.input-wrap{
+  max-width:768px;margin:0 auto;
+  display:flex;align-items:flex-end;gap:8px;
+  background:#2d2d2d;border:1px solid #404040;
+  border-radius:16px;padding:10px 12px 10px 16px;
+  transition:border-color .15s;
+}
+.input-wrap:focus-within{border-color:#606060;}
+.input-wrap textarea{
+  flex:1;resize:none;border:none;outline:none;
+  background:transparent;color:#e0e0e0;
+  font-size:15px;line-height:1.5;
+  max-height:200px;min-height:24px;
+  font-family:inherit;
+}
+.input-wrap textarea::placeholder{color:#666;}
+.send-btn{
+  width:32px;height:32px;border-radius:8px;
+  background:#10a37f;color:#fff;
+  display:flex;align-items:center;justify-content:center;
+  flex-shrink:0;transition:opacity .15s;
+}
+.send-btn:hover{opacity:.85;}
+.send-btn:disabled{opacity:.3;cursor:not-allowed;}
+
+/* ── 로딩 인디케이터 ── */
+.thinking-dots{
+  display:inline-flex;gap:4px;padding:4px 0;
+}
+.thinking-dots span{
+  width:6px;height:6px;border-radius:50%;
+  background:#10a37f;
+  animation:dot-pulse 1.4s ease-in-out infinite;
+}
+.thinking-dots span:nth-child(2){animation-delay:.2s;}
+.thinking-dots span:nth-child(3){animation-delay:.4s;}
+@keyframes dot-pulse{
+  0%,80%,100%{opacity:.3;transform:scale(.8);}
+  40%{opacity:1;transform:scale(1);}
+}
+
+/* ── 반응형 (데스크톱) ── */
+@media(max-width:1100px){
+  .gpt-sidebar{width:220px;min-width:220px;}
+}
+@media(max-width:900px){
+  .gpt-sidebar{width:180px;min-width:180px;}
+  .input-area{padding:12px 16px 20px;}
+  .msg{padding:8px 16px;}
+}
+</style>
+</head>
+<body>
+
+<div id="app-root">
+  <!-- ===== 사이드바 ===== -->
+  <div class="gpt-sidebar" id="gptSidebar">
+    <div class="sidebar-top">
+      <button class="new-chat-btn" id="newChatBtn">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        New Chat
+      </button>
+    </div>
+    <div class="conv-list" id="convList"></div>
+  </div>
+
+  <!-- ===== 채팅 영역 ===== -->
+  <div class="chat-area">
+    <div class="chat-top-bar">
+      <select class="model-select" id="modelSelect">
+        <option value="gpt-4o-mini">GPT-4o mini</option>
+        <option value="gpt-4o">GPT-4o</option>
+        <option value="gpt-4.1-mini">GPT-4.1 mini</option>
+        <option value="gpt-4.1">GPT-4.1</option>
+        <option value="o4-mini">o4-mini</option>
+      </select>
+    </div>
+
+    <div class="messages-wrap" id="messagesWrap">
+      <div class="empty-state" id="emptyState">
+        <div class="empty-icon">💬</div>
+        <div class="empty-title">How can I help you today?</div>
+      </div>
+      <div id="messagesContainer"></div>
+    </div>
+
+    <div class="input-area">
+      <div class="input-wrap">
+        <textarea id="chatInput" rows="1" placeholder="Send a message..."></textarea>
+        <button class="send-btn" id="sendBtn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M3.478 2.405a.75.75 0 00-.926.94l2.432 7.905H13.5a.75.75 0 010 1.5H4.984l-2.432 7.905a.75.75 0 00.926.94l18.04-8.01a.75.75 0 000-1.36L3.478 2.405z"/></svg>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ═══════════════════════════════════════
+   Streamlit Component Protocol
+   ═══════════════════════════════════════ */
+function sendMessageToStreamlitClient(type, data) {
+  window.parent.postMessage(Object.assign({isStreamlitMessage:true, type:type}, data), "*");
+}
+function setComponentValue(value) {
+  sendMessageToStreamlitClient("streamlit:setComponentValue", {value:value});
+}
+function setFrameHeight(h) {
+  sendMessageToStreamlitClient("streamlit:setFrameHeight", {height:h});
+}
+function componentReady() {
+  sendMessageToStreamlitClient("streamlit:componentReady", {apiVersion:1});
+}
+
+/* ═══════════════════════════════════════
+   상태
+   ═══════════════════════════════════════ */
+var state = {
+  conversations: [],
+  activeId: "",
+  defaultModel: "gpt-4o-mini",
+  isGuest: false,
+  isWaiting: false,
+  waitingConvId: ""
+};
+
+var FRAME_H = 900;
+
+/* ═══════════════════════════════════════
+   사이드바 렌더링
+   ═══════════════════════════════════════ */
+function renderSidebar() {
+  var list = document.getElementById("convList");
+  list.innerHTML = "";
+
+  state.conversations.forEach(function(conv) {
+    var item = document.createElement("div");
+    item.className = "conv-item" + (conv.id === state.activeId ? " active" : "");
+
+    var titleSpan = document.createElement("span");
+    titleSpan.className = "conv-item-title";
+    titleSpan.textContent = conv.title || "New Chat";
+    item.appendChild(titleSpan);
+
+    var actions = document.createElement("div");
+    actions.className = "conv-item-actions";
+
+    var delBtn = document.createElement("button");
+    delBtn.className = "del-btn";
+    delBtn.title = "Delete";
+    delBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>';
+    (function(id) {
+      delBtn.addEventListener("click", function(e) {
+        e.stopPropagation();
+        setComponentValue({action:"delete_conversation", conv_id:id, ts:Date.now()});
+      });
+    })(conv.id);
+    actions.appendChild(delBtn);
+    item.appendChild(actions);
+
+    (function(id) {
+      item.addEventListener("click", function() {
+        if (id !== state.activeId) {
+          setComponentValue({action:"switch_conversation", conv_id:id, ts:Date.now()});
+        }
+      });
+    })(conv.id);
+
+    list.appendChild(item);
+  });
+}
+
+/* ═══════════════════════════════════════
+   마크다운 렌더링 (최소)
+   ═══════════════════════════════════════ */
+function renderMarkdown(text) {
+  if (!text) return "";
+  var html = text.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  // 코드 블록
+  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, function(m, lang, code) {
+    return '<pre class="code-block"><code>' + code + '</code></pre>';
+  });
+  // 인라인 코드
+  html = html.replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>');
+  // 볼드
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  // 줄바꿈 (코드 블록 외)
+  html = html.replace(/\n/g, '<br>');
+  // 코드 블록 내 <br> 되돌리기
+  html = html.replace(/<pre class="code-block"><code>([\s\S]*?)<\/code><\/pre>/g, function(m, code) {
+    return '<pre class="code-block"><code>' + code.replace(/<br>/g, '\n') + '</code></pre>';
+  });
+  return html;
+}
+
+/* ═══════════════════════════════════════
+   메시지 렌더링
+   ═══════════════════════════════════════ */
+function getActiveConv() {
+  return state.conversations.find(function(c) { return c.id === state.activeId; });
+}
+
+function renderMessages() {
+  var container = document.getElementById("messagesContainer");
+  var emptyState = document.getElementById("emptyState");
+  var conv = getActiveConv();
+
+  if (!conv || conv.messages.length === 0) {
+    container.innerHTML = "";
+    emptyState.style.display = "flex";
+    return;
+  }
+  emptyState.style.display = "none";
+  container.innerHTML = "";
+
+  conv.messages.forEach(function(msg, idx) {
+    var div = document.createElement("div");
+    div.className = "msg msg-" + msg.role;
+
+    if (msg.role === "user") {
+      var bubble = document.createElement("div");
+      bubble.className = "msg-bubble";
+      bubble.textContent = msg.content;
+      div.appendChild(bubble);
+    } else {
+      var content = document.createElement("div");
+      content.className = "msg-content";
+      // 에러 메시지 처리
+      if (msg.content && msg.content.startsWith("[Error") || msg.content && msg.content.startsWith("[Network Error")) {
+        content.innerHTML = '<div class="msg-error">' + escapeHtml(msg.content) + '</div>';
+      } else {
+        content.innerHTML = renderMarkdown(msg.content);
+      }
+
+      // 스트리밍 커서
+      if (state.isWaiting && idx === conv.messages.length - 1 && msg.role === "assistant") {
+        if (!msg.content) {
+          // 아직 토큰 없음 → thinking dots
+          content.innerHTML = '<div class="thinking-dots"><span></span><span></span><span></span></div>';
+        } else {
+          var cursor = document.createElement("span");
+          cursor.className = "streaming-cursor";
+          content.appendChild(cursor);
+        }
+      }
+      div.appendChild(content);
+    }
+
+    container.appendChild(div);
+  });
+}
+
+function escapeHtml(text) {
+  return text.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+
+function updateLastAssistantMessage(text) {
+  var container = document.getElementById("messagesContainer");
+  var msgs = container.querySelectorAll(".msg-assistant");
+  if (msgs.length === 0) return;
+  var lastMsg = msgs[msgs.length - 1];
+  var content = lastMsg.querySelector(".msg-content");
+  if (!content) return;
+
+  if (!text) {
+    content.innerHTML = '<div class="thinking-dots"><span></span><span></span><span></span></div>';
+  } else {
+    content.innerHTML = renderMarkdown(text);
+    var cursor = document.createElement("span");
+    cursor.className = "streaming-cursor";
+    content.appendChild(cursor);
+  }
+}
+
+function scrollToBottom() {
+  var wrap = document.getElementById("messagesWrap");
+  wrap.scrollTop = wrap.scrollHeight;
+}
+
+/* ═══════════════════════════════════════
+   모델 셀렉트
+   ═══════════════════════════════════════ */
+var modelSelect = document.getElementById("modelSelect");
+
+function updateModelSelect() {
+  var conv = getActiveConv();
+  var model = conv ? (conv.model || state.defaultModel) : state.defaultModel;
+  modelSelect.value = model;
+  // 목록에 없는 모델이면 옵션 추가
+  if (modelSelect.value !== model) {
+    var opt = document.createElement("option");
+    opt.value = model;
+    opt.textContent = model;
+    modelSelect.appendChild(opt);
+    modelSelect.value = model;
+  }
+}
+
+modelSelect.addEventListener("change", function() {
+  var conv = getActiveConv();
+  if (conv) {
+    conv.model = this.value;
+    setComponentValue({action:"change_model", conv_id:conv.id, model:this.value, ts:Date.now()});
+  }
+});
+
+/* ═══════════════════════════════════════
+   입력 & 전송
+   ═══════════════════════════════════════ */
+var chatInput = document.getElementById("chatInput");
+var sendBtn = document.getElementById("sendBtn");
+
+function autoResize(el) {
+  el.style.height = "auto";
+  el.style.height = Math.min(el.scrollHeight, 200) + "px";
+}
+
+chatInput.addEventListener("input", function() {
+  autoResize(this);
+});
+
+chatInput.addEventListener("keydown", function(e) {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+});
+
+sendBtn.addEventListener("click", function() {
+  sendMessage();
+});
+
+function updateSendButton() {
+  sendBtn.disabled = state.isWaiting;
+}
+
+/* ═══════════════════════════════════════
+   메시지 전송 (Python 경유)
+   ═══════════════════════════════════════ */
+function sendMessage() {
+  if (state.isWaiting) return;
+
+  var text = chatInput.value.trim();
+  if (!text) return;
+
+  chatInput.value = "";
+  autoResize(chatInput);
+
+  var conv = getActiveConv();
+  if (!conv) return;
+
+  // user 메시지 로컬 추가
+  conv.messages.push({role:"user", content:text, ts:new Date().toISOString()});
+  // assistant placeholder (thinking dots 표시용)
+  conv.messages.push({role:"assistant", content:"", ts:""});
+
+  state.isWaiting = true;
+  state.waitingConvId = conv.id;
+  updateSendButton();
+  renderMessages();
+  scrollToBottom();
+
+  // Python에 전송 → Python이 OpenAI 호출 후 rerun
+  setComponentValue({
+    action: "send_message",
+    conv_id: conv.id,
+    user_message: text,
+    model: conv.model || state.defaultModel,
+    ts: Date.now()
+  });
+}
+
+/* ═══════════════════════════════════════
+   New Chat 버튼
+   ═══════════════════════════════════════ */
+document.getElementById("newChatBtn").addEventListener("click", function() {
+  setComponentValue({action:"new_conversation", ts:Date.now()});
+});
+
+/* ═══════════════════════════════════════
+   Streamlit 렌더 이벤트
+   ═══════════════════════════════════════ */
+window.addEventListener("message", function(event) {
+  if (event.data.type !== "streamlit:render") return;
+  var args = event.data.args || {};
+
+  if (args.frame_height) FRAME_H = args.frame_height;
+
+  // 대기 중: 응답 도착 여부 확인
+  if (state.isWaiting) {
+    var incoming = args.conversations || [];
+    var found = null;
+    for (var i = 0; i < incoming.length; i++) {
+      if (incoming[i].id === state.waitingConvId) { found = incoming[i]; break; }
+    }
+    if (found && found.messages.length > 0) {
+      var last = found.messages[found.messages.length - 1];
+      if (last.role === "assistant" && last.content) {
+        // 응답 도착 → 대기 해제, 아래에서 정상 렌더
+        state.isWaiting = false;
+        state.waitingConvId = "";
+        updateSendButton();
+      } else {
+        // 아직 대기 중
+        setFrameHeight(FRAME_H);
+        return;
+      }
+    } else {
+      setFrameHeight(FRAME_H);
+      return;
+    }
+  }
+
+  state.conversations = args.conversations || [];
+  state.activeId = args.active_id || "";
+  state.defaultModel = args.default_model || "gpt-4o-mini";
+  state.isGuest = args.is_guest || false;
+
+  if (state.isGuest) {
+    document.getElementById("gptSidebar").classList.add("hidden");
+  } else {
+    document.getElementById("gptSidebar").classList.remove("hidden");
+  }
+
+  renderSidebar();
+  renderMessages();
+  updateModelSelect();
+  setFrameHeight(FRAME_H);
+});
+
+componentReady();
+setFrameHeight(FRAME_H);
+</script>
+</body>
+</html>

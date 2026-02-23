@@ -7,10 +7,21 @@ from core.config import AppConfig
 from core.auth import current_user, logout_user, hash_password
 from core.db import (
     list_active_jobs_all,
-    list_runs_admin,
     list_key_waiters,
     list_key_leases,
     list_users,
+    list_mj_gallery_admin,
+    get_mj_gallery_by_id,
+    list_gpt_conversations_admin,
+    get_gpt_conversation_by_id,
+    list_kling_web_admin,
+    get_kling_web_by_id,
+    list_elevenlabs_admin,
+    get_elevenlabs_by_id,
+    list_nanobanana_admin,
+    get_nanobanana_by_id,
+    list_nanobanana_sessions_admin,
+    get_nanobanana_session_by_id,
     upsert_user,
     update_user_fields,
     set_user_password,
@@ -21,6 +32,345 @@ from core.db import (
 
 def _rows_to_dicts(rows):
     return [dict(r) for r in (rows or [])]
+
+
+def _render_gpt_detail(cfg: AppConfig, conv_id: str):
+    """GPT 대화 상세 내용을 렌더링."""
+    conv = get_gpt_conversation_by_id(cfg, conv_id)
+    if not conv:
+        st.warning('대화를 찾을 수 없습니다.')
+        return
+    st.markdown(f"**{conv['title']}**  ·  `{conv['model']}`")
+    st.caption(f"user: {conv['user_id']}  |  created: {conv['created_at']}  |  updated: {conv['updated_at']}")
+    st.divider()
+    if not conv['messages']:
+        st.info('메시지가 없습니다.')
+        return
+    for msg in conv['messages']:
+        role = msg.get('role', 'user')
+        with st.chat_message(role):
+            st.markdown(msg.get('content', ''))
+
+
+def _maybe_open_gpt_dialog(cfg: AppConfig):
+    """GPT 대화 보기 다이얼로그 트리거."""
+    conv_id = st.session_state.get('_view_gpt_conv_id')
+    if not conv_id or not st.session_state.get('_open_gpt_detail'):
+        return
+    st.session_state['_open_gpt_detail'] = False
+
+    if hasattr(st, 'dialog'):
+        @st.dialog('💬 GPT 대화 내용', width='large')
+        def _dlg():
+            _render_gpt_detail(cfg, conv_id)
+        _dlg()
+    else:
+        with st.expander('💬 GPT 대화 내용', expanded=True):
+            _render_gpt_detail(cfg, conv_id)
+
+
+def _render_mj_detail(cfg: AppConfig, row_id: int):
+    """MJ 갤러리 아이템 상세 내용을 렌더링."""
+    item = get_mj_gallery_by_id(cfg, row_id)
+    if not item:
+        st.warning('항목을 찾을 수 없습니다.')
+        return
+    st.markdown(f"**{(item['prompt'] or '')[:100]}**")
+    st.caption(f"user: {item['user_id']}  |  비율: {item['aspect_ratio']}  |  created: {item['created_at']}")
+    st.divider()
+
+    # 프롬프트 전문
+    st.text_area('Prompt', item['prompt'], height=100, disabled=True)
+
+    # 태그
+    if item['tags']:
+        st.markdown('**Tags:** ' + ', '.join(f'`{t}`' for t in item['tags']))
+
+    # 설정
+    if item['settings']:
+        with st.expander('Settings'):
+            st.json(item['settings'])
+
+    # 생성 이미지
+    images = item.get('images') or []
+    if images:
+        st.subheader(f'생성 이미지 ({len(images)}장)')
+        cols = st.columns(min(len(images), 4))
+        for i, url in enumerate(images):
+            with cols[i % len(cols)]:
+                st.image(url, width='stretch')
+
+    # 첨부 이미지 (dict: {"imagePrompts": [...], "styleRef": [...], "omniRef": [...]})
+    attached = item.get('attached_images')
+    if attached and isinstance(attached, dict):
+        label_map = {"imagePrompts": "Image Prompts", "styleRef": "Style Ref", "omniRef": "Omni Ref"}
+        for key in ("imagePrompts", "styleRef", "omniRef"):
+            imgs = attached.get(key) or []
+            if not imgs:
+                continue
+            st.subheader(f'첨부: {label_map.get(key, key)} ({len(imgs)}장)')
+            cols2 = st.columns(min(len(imgs), 4))
+            for i, data_url in enumerate(imgs):
+                with cols2[i % len(cols2)]:
+                    st.image(data_url, width='stretch')
+
+
+def _maybe_open_mj_dialog(cfg: AppConfig):
+    """MJ 갤러리 보기 다이얼로그 트리거."""
+    row_id = st.session_state.get('_view_mj_row_id')
+    if not row_id or not st.session_state.get('_open_mj_detail'):
+        return
+    st.session_state['_open_mj_detail'] = False
+
+    if hasattr(st, 'dialog'):
+        @st.dialog('🎨 Midjourney 상세', width='large')
+        def _dlg():
+            _render_mj_detail(cfg, row_id)
+        _dlg()
+    else:
+        with st.expander('🎨 Midjourney 상세', expanded=True):
+            _render_mj_detail(cfg, row_id)
+
+
+def _render_kling_detail(cfg: AppConfig, row_id: int):
+    """Kling 웹 히스토리 상세 내용을 렌더링."""
+    item = get_kling_web_by_id(cfg, row_id)
+    if not item:
+        st.warning('항목을 찾을 수 없습니다.')
+        return
+    st.markdown(f"**{(item['prompt'] or '')[:100]}**  ·  `{item['model_label']}`")
+    st.caption(
+        f"user: {item['user_id']}  |  model: {item['model_id']} v{item['model_ver']}  |  "
+        f"created: {item['created_at']}"
+    )
+    st.divider()
+
+    # 프롬프트 전문
+    st.text_area('Prompt', item['prompt'], height=100, disabled=True)
+
+    # 메타 정보
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric('Frame Mode', item['frame_mode'] or 'N/A')
+    c2.metric('Sound', 'ON' if item['sound_enabled'] else 'OFF')
+    c3.metric('Start Frame', 'O' if item['has_start_frame'] else 'X')
+    c4.metric('End Frame', 'O' if item['has_end_frame'] else 'X')
+
+    # 프레임 이미지
+    start_data = item.get('start_frame_data')
+    end_data = item.get('end_frame_data')
+    if start_data or end_data:
+        st.subheader('프레임 이미지')
+        fc1, fc2 = st.columns(2)
+        with fc1:
+            if start_data:
+                st.caption('Start Frame')
+                st.image(start_data, width='stretch')
+        with fc2:
+            if end_data:
+                st.caption('End Frame')
+                st.image(end_data, width='stretch')
+
+    # 설정
+    if item['settings']:
+        with st.expander('Settings'):
+            st.json(item['settings'])
+
+    # 비디오 URL
+    urls = item.get('video_urls') or []
+    if urls:
+        st.subheader(f'생성 비디오 ({len(urls)}개)')
+        for i, url in enumerate(urls):
+            st.caption(f'Video {i + 1}')
+            st.video(url)
+    else:
+        st.info('생성된 비디오가 없습니다.')
+
+
+def _maybe_open_kling_dialog(cfg: AppConfig):
+    """Kling 웹 보기 다이얼로그 트리거."""
+    row_id = st.session_state.get('_view_kling_row_id')
+    if not row_id or not st.session_state.get('_open_kling_detail'):
+        return
+    st.session_state['_open_kling_detail'] = False
+
+    if hasattr(st, 'dialog'):
+        @st.dialog('🎬 Kling Web 상세', width='large')
+        def _dlg():
+            _render_kling_detail(cfg, row_id)
+        _dlg()
+    else:
+        with st.expander('🎬 Kling Web 상세', expanded=True):
+            _render_kling_detail(cfg, row_id)
+
+
+def _render_elevenlabs_detail(cfg: AppConfig, row_id: int):
+    """ElevenLabs TTS 히스토리 상세 내용을 렌더링."""
+    item = get_elevenlabs_by_id(cfg, row_id)
+    if not item:
+        st.warning('항목을 찾을 수 없습니다.')
+        return
+    st.markdown(f"**{(item['text'] or '')[:100]}**  ·  `{item['voice_name']}`")
+    st.caption(
+        f"user: {item['user_id']}  |  voice: {item['voice_name']}  |  "
+        f"model: {item['model_label']}  |  created: {item['created_at']}"
+    )
+    st.divider()
+
+    st.text_area('Text', item['text'], height=100, disabled=True)
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric('Voice', item['voice_name'] or 'N/A')
+    c2.metric('Model', item['model_label'] or 'N/A')
+    c3.metric('Lang Override', 'ON' if item['language_override'] else 'OFF')
+    c4.metric('Speaker Boost', 'ON' if item['speaker_boost'] else 'OFF')
+
+    if item['settings']:
+        with st.expander('Settings'):
+            st.json(item['settings'])
+
+    audio_url = item.get('audio_url') or ''
+    if audio_url and audio_url.startswith(('http://', 'https://', 'data:')):
+        st.subheader('생성 오디오')
+        st.audio(audio_url)
+    elif audio_url:
+        st.info(f'오디오 재생 불가 (값: {audio_url})')
+    else:
+        st.info('생성된 오디오가 없습니다.')
+
+
+def _maybe_open_elevenlabs_dialog(cfg: AppConfig):
+    """ElevenLabs 보기 다이얼로그 트리거."""
+    row_id = st.session_state.get('_view_elevenlabs_row_id')
+    if not row_id or not st.session_state.get('_open_elevenlabs_detail'):
+        return
+    st.session_state['_open_elevenlabs_detail'] = False
+
+    if hasattr(st, 'dialog'):
+        @st.dialog('🔊 ElevenLabs 상세', width='large')
+        def _dlg():
+            _render_elevenlabs_detail(cfg, row_id)
+        _dlg()
+    else:
+        with st.expander('🔊 ElevenLabs 상세', expanded=True):
+            _render_elevenlabs_detail(cfg, row_id)
+
+
+def _render_nanobanana_detail(cfg: AppConfig, row_id: int):
+    """NanoBanana 이미지 생성 히스토리 상세 내용을 렌더링."""
+    item = get_nanobanana_by_id(cfg, row_id)
+    if not item:
+        st.warning('항목을 찾을 수 없습니다.')
+        return
+    st.markdown(f"**{(item['prompt'] or '')[:100]}**  ·  `{item['model_label']}`")
+    st.caption(
+        f"user: {item['user_id']}  |  model: {item['model_id']}  |  "
+        f"aspect: {item['aspect_ratio']}  |  created: {item['created_at']}"
+    )
+    st.divider()
+
+    st.text_area('Prompt', item['prompt'], height=100, disabled=True)
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric('Model', item['model_label'] or 'N/A')
+    c2.metric('Aspect Ratio', item['aspect_ratio'])
+    c3.metric('Num Images', item['num_images'])
+    c4.metric('Style', item['style_preset'] or 'Auto')
+
+    if item['negative_prompt']:
+        st.text_area('Negative Prompt', item['negative_prompt'], height=60, disabled=True)
+
+    if item['settings']:
+        with st.expander('Settings'):
+            st.json(item['settings'])
+
+    images = item.get('image_urls') or []
+    if images:
+        st.subheader(f'생성 이미지 ({len(images)}장)')
+        cols = st.columns(min(len(images), 4))
+        for i, url in enumerate(images):
+            with cols[i % len(cols)]:
+                if url and url.startswith(('http://', 'https://', 'data:')):
+                    st.image(url, width='stretch')
+                else:
+                    st.info(f'이미지 표시 불가: {url}')
+    else:
+        st.info('생성된 이미지가 없습니다.')
+
+
+def _maybe_open_nanobanana_dialog(cfg: AppConfig):
+    """NanoBanana 보기 다이얼로그 트리거."""
+    row_id = st.session_state.get('_view_nanobanana_row_id')
+    if not row_id or not st.session_state.get('_open_nanobanana_detail'):
+        return
+    st.session_state['_open_nanobanana_detail'] = False
+
+    if hasattr(st, 'dialog'):
+        @st.dialog('\U0001f34c NanoBanana 상세', width='large')
+        def _dlg():
+            _render_nanobanana_detail(cfg, row_id)
+        _dlg()
+    else:
+        with st.expander('\U0001f34c NanoBanana 상세', expanded=True):
+            _render_nanobanana_detail(cfg, row_id)
+
+
+def _render_nanobanana_session_detail(cfg: AppConfig, session_id: str):
+    """NanoBanana 세션 상세 내용을 렌더링 (턴별 프롬프트 + 이미지)."""
+    session = get_nanobanana_session_by_id(cfg, session_id)
+    if not session:
+        st.warning('세션을 찾을 수 없습니다.')
+        return
+    st.markdown(f"**{session['title']}**  ·  `{session['model']}`")
+    st.caption(
+        f"user: {session['user_id']}  |  created: {session['created_at']}  |  "
+        f"updated: {session['updated_at']}"
+    )
+    st.divider()
+
+    turns = session.get('turns') or []
+    if not turns:
+        st.info('턴이 없습니다.')
+        return
+
+    for idx, turn in enumerate(turns):
+        label = "EDIT" if turn.get('is_edit') else "GEN"
+        st.markdown(f"**Turn {idx + 1}** · `{label}` · {turn.get('model_label', 'N/A')} · {turn.get('aspect_ratio', '1:1')}")
+        st.text_area(f'Prompt (Turn {idx + 1})', turn.get('prompt', ''), height=80, disabled=True, key=f'nb_sess_prompt_{session_id}_{idx}')
+
+        if turn.get('negative_prompt'):
+            st.caption(f"Negative: {turn['negative_prompt']}")
+
+        images = turn.get('image_urls') or []
+        if images:
+            cols = st.columns(min(len(images), 4))
+            for i, url in enumerate(images):
+                with cols[i % len(cols)]:
+                    if url and url.startswith(('http://', 'https://', 'data:')):
+                        st.image(url, width='stretch')
+                    else:
+                        st.info(f'이미지 표시 불가')
+        else:
+            st.info('이미지 없음')
+
+        if idx < len(turns) - 1:
+            st.divider()
+
+
+def _maybe_open_nanobanana_session_dialog(cfg: AppConfig):
+    """NanoBanana 세션 보기 다이얼로그 트리거."""
+    session_id = st.session_state.get('_view_nb_session_id')
+    if not session_id or not st.session_state.get('_open_nb_session_detail'):
+        return
+    st.session_state['_open_nb_session_detail'] = False
+
+    if hasattr(st, 'dialog'):
+        @st.dialog('\U0001f34c NanoBanana 세션 상세', width='large')
+        def _dlg():
+            _render_nanobanana_session_detail(cfg, session_id)
+        _dlg()
+    else:
+        with st.expander('\U0001f34c NanoBanana 세션 상세', expanded=True):
+            _render_nanobanana_session_detail(cfg, session_id)
 
 
 def _encode_logo(path: str) -> str:
@@ -59,6 +409,133 @@ def _live_monitor_panel(cfg: AppConfig):
         st.dataframe(jobs, width="stretch", hide_index=True)
     else:
         st.info('현재 active_jobs가 없습니다.')
+
+def render_viewer_page(cfg: AppConfig):
+    """viewer 역할용: 모니터링 + 실행 기록만 표시 (읽기 전용)."""
+    u = current_user()
+    if not u or u.role != 'viewer':
+        st.error('viewer 권한이 필요합니다.')
+        return
+
+    with st.sidebar:
+        logo_path = cfg.get_logo_path(u.school_id)
+        if logo_path:
+            avatar_html = (
+                f'<img src="data:image/png;base64,{_encode_logo(logo_path)}" '
+                f'style="width:40px;height:40px;border-radius:50%;object-fit:cover;">'
+            )
+        else:
+            avatar_html = (
+                f'<div style="'
+                f'width:40px;height:40px;border-radius:50%;'
+                f'background:linear-gradient(135deg,#e67e22,#d35400);'
+                f'display:flex;align-items:center;justify-content:center;'
+                f'font-size:18px;font-weight:700;color:#fff;'
+                f'">{u.user_id[0].upper()}</div>'
+            )
+
+        badge_html = (
+            '<span style="background:#e67e22;color:#fff;padding:2px 8px;'
+            'border-radius:10px;font-size:0.75em;font-weight:600;'
+            'letter-spacing:0.5px;">VIEWER</span>'
+        )
+
+        st.markdown(
+            f"""
+            <div style="
+                background: linear-gradient(135deg, #1e1e2f 0%, #2d2d44 100%);
+                border: 1px solid #3d3d5c;
+                border-radius: 12px;
+                padding: 16px;
+                margin-bottom: 8px;
+            ">
+                <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+                    {avatar_html}
+                    <div>
+                        <div style="font-size:1em;font-weight:600;color:#f0f0f0;">
+                            {u.user_id}
+                        </div>
+                        <div style="margin-top:2px;">
+                            {badge_html}
+                        </div>
+                    </div>
+                </div>
+                <div style="
+                    font-size:0.8em;color:#a0a0b8;
+                    display:flex;align-items:center;gap:5px;
+                ">
+                    <span>🏫</span>
+                    <span>{cfg.get_layout(u.school_id)}</span>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        if st.button('로그아웃', icon=":material/logout:", width='stretch'):
+            logout_user(cfg)
+            st.rerun()
+
+    st.title('👁️ 모니터링 페이지')
+
+    tab_monitor, tab_runs = st.tabs(['모니터링', '실행 기록'])
+
+    with tab_monitor:
+        _live_monitor_panel(cfg)
+
+    with tab_runs:
+        user_rows = list_users(cfg, include_inactive=True)
+        user_ids = ['(all)'] + [r['user_id'] for r in user_rows]
+        sel_user = st.selectbox('필터: user_id', user_ids, index=0, key='viewer_user_filter')
+        limit = st.slider('표시 개수', 50, 500, 200, 50, key='viewer_limit')
+
+        filter_uid = None if sel_user == '(all)' else sel_user
+
+        # GPT Conversations
+        st.subheader('💬 GPT Conversations')
+        gpt_items = list_gpt_conversations_admin(cfg, limit=limit, user_id=filter_uid)
+        if gpt_items:
+            import pandas as pd
+            st.dataframe(pd.DataFrame(gpt_items), width="stretch", hide_index=True)
+        else:
+            st.info('표시할 GPT 대화가 없습니다.')
+
+        # Midjourney
+        st.subheader('🎨 Midjourney')
+        mj_items = _rows_to_dicts(list_mj_gallery_admin(cfg, limit=limit, user_id=filter_uid))
+        if mj_items:
+            import pandas as pd
+            st.dataframe(pd.DataFrame(mj_items), width="stretch", hide_index=True)
+        else:
+            st.info('표시할 MJ 기록이 없습니다.')
+
+        # Kling Web
+        st.subheader('🎬 Kling Web')
+        kling_items = list_kling_web_admin(cfg, limit=limit, user_id=filter_uid)
+        if kling_items:
+            import pandas as pd
+            st.dataframe(pd.DataFrame(kling_items), width="stretch", hide_index=True)
+        else:
+            st.info('표시할 Kling Web 기록이 없습니다.')
+
+        # ElevenLabs TTS
+        st.subheader('🔊 ElevenLabs TTS')
+        el_items = list_elevenlabs_admin(cfg, limit=limit, user_id=filter_uid)
+        if el_items:
+            import pandas as pd
+            st.dataframe(pd.DataFrame(el_items), width="stretch", hide_index=True)
+        else:
+            st.info('표시할 ElevenLabs 기록이 없습니다.')
+
+        # NanoBanana Sessions
+        st.subheader('\U0001f34c NanoBanana Sessions')
+        nb_sessions = list_nanobanana_sessions_admin(cfg, limit=limit, user_id=filter_uid)
+        if nb_sessions:
+            import pandas as pd
+            st.dataframe(pd.DataFrame(nb_sessions), width="stretch", hide_index=True)
+        else:
+            st.info('표시할 NanoBanana 세션이 없습니다.')
+
+
 
 def render_admin_page(cfg: AppConfig):
     u = current_user()
@@ -121,7 +598,7 @@ def render_admin_page(cfg: AppConfig):
             """,
             unsafe_allow_html=True,
         )
-        if st.button('로그아웃', icon=":material/logout:", use_container_width=True):
+        if st.button('로그아웃', icon=":material/logout:", width='stretch'):
             logout_user(cfg)
             st.rerun()
 
@@ -135,18 +612,185 @@ def render_admin_page(cfg: AppConfig):
 
     # --- 실행 기록 ---
     with tab_runs:
-        st.subheader('Runs')
         user_rows = list_users(cfg, include_inactive=True)
         user_ids = ['(all)'] + [r['user_id'] for r in user_rows]
         sel_user = st.selectbox('필터: user_id', user_ids, index=0)
         limit = st.slider('표시 개수', 50, 500, 200, 50)
 
-        rows = list_runs_admin(cfg, limit=limit, user_id=None if sel_user == '(all)' else sel_user)
-        runs = _rows_to_dicts(rows)
-        if runs:
-            st.dataframe(runs, width="stretch", hide_index=True)
+        filter_uid = None if sel_user == '(all)' else sel_user
+
+        # ── GPT Conversations ──
+        st.subheader('💬 GPT Conversations')
+        gpt_items = list_gpt_conversations_admin(cfg, limit=limit, user_id=filter_uid)
+        if gpt_items:
+            import pandas as pd
+            df = pd.DataFrame(gpt_items)
+            df.insert(0, '보기', False)
+
+            tbl_ver = st.session_state.get('_gpt_tbl_ver', 0)
+            edited = st.data_editor(
+                df,
+                column_config={
+                    '보기': st.column_config.CheckboxColumn('👁', default=False, width='small'),
+                    'id': None,
+                },
+                disabled=[c for c in df.columns if c != '보기'],
+                hide_index=True,
+                width='stretch',
+                key=f'gpt_conv_table_{tbl_ver}',
+            )
+
+            checked = edited.index[edited['보기'] == True].tolist()
+            if checked:
+                idx = checked[0]
+                if idx < len(gpt_items):
+                    st.session_state['_view_gpt_conv_id'] = gpt_items[idx]['id']
+                    st.session_state['_open_gpt_detail'] = True
+                    st.session_state['_gpt_tbl_ver'] = tbl_ver + 1
+                    st.rerun()
         else:
-            st.info('표시할 run 기록이 없습니다.')
+            st.info('표시할 GPT 대화가 없습니다.')
+
+        _maybe_open_gpt_dialog(cfg)
+
+        # ── Midjourney ──
+        st.subheader('🎨 Midjourney')
+        mj_rows = list_mj_gallery_admin(cfg, limit=limit, user_id=filter_uid)
+        mj_items = _rows_to_dicts(mj_rows)
+        if mj_items:
+            import pandas as pd
+            mj_df = pd.DataFrame(mj_items)
+            mj_df.insert(0, '보기', False)
+
+            mj_tbl_ver = st.session_state.get('_mj_tbl_ver', 0)
+            mj_edited = st.data_editor(
+                mj_df,
+                column_config={
+                    '보기': st.column_config.CheckboxColumn('👁', default=False, width='small'),
+                    'id': None,
+                },
+                disabled=[c for c in mj_df.columns if c != '보기'],
+                hide_index=True,
+                width='stretch',
+                key=f'mj_table_{mj_tbl_ver}',
+            )
+
+            mj_checked = mj_edited.index[mj_edited['보기'] == True].tolist()
+            if mj_checked:
+                idx = mj_checked[0]
+                if idx < len(mj_items):
+                    st.session_state['_view_mj_row_id'] = mj_items[idx]['id']
+                    st.session_state['_open_mj_detail'] = True
+                    st.session_state['_mj_tbl_ver'] = mj_tbl_ver + 1
+                    st.rerun()
+        else:
+            st.info('표시할 MJ 기록이 없습니다.')
+
+        _maybe_open_mj_dialog(cfg)
+
+        # ── Kling Web ──
+        st.subheader('🎬 Kling Web')
+        kling_items = list_kling_web_admin(cfg, limit=limit, user_id=filter_uid)
+        if kling_items:
+            import pandas as pd
+            kling_df = pd.DataFrame(kling_items)
+            kling_df.insert(0, '보기', False)
+
+            kling_tbl_ver = st.session_state.get('_kling_tbl_ver', 0)
+            kling_edited = st.data_editor(
+                kling_df,
+                column_config={
+                    '보기': st.column_config.CheckboxColumn('👁', default=False, width='small'),
+                    'id': None,
+                },
+                disabled=[c for c in kling_df.columns if c != '보기'],
+                hide_index=True,
+                width='stretch',
+                key=f'kling_web_table_{kling_tbl_ver}',
+            )
+
+            kling_checked = kling_edited.index[kling_edited['보기'] == True].tolist()
+            if kling_checked:
+                idx = kling_checked[0]
+                if idx < len(kling_items):
+                    st.session_state['_view_kling_row_id'] = kling_items[idx]['id']
+                    st.session_state['_open_kling_detail'] = True
+                    st.session_state['_kling_tbl_ver'] = kling_tbl_ver + 1
+                    st.rerun()
+        else:
+            st.info('표시할 Kling Web 기록이 없습니다.')
+
+        _maybe_open_kling_dialog(cfg)
+
+        # ── ElevenLabs TTS ──
+        st.subheader('🔊 ElevenLabs TTS')
+        el_items = list_elevenlabs_admin(cfg, limit=limit, user_id=filter_uid)
+        if el_items:
+            import pandas as pd
+            el_df = pd.DataFrame(el_items)
+            el_df.insert(0, '보기', False)
+
+            el_tbl_ver = st.session_state.get('_el_tbl_ver', 0)
+            el_edited = st.data_editor(
+                el_df,
+                column_config={
+                    '보기': st.column_config.CheckboxColumn('👁', default=False, width='small'),
+                    'id': None,
+                },
+                disabled=[c for c in el_df.columns if c != '보기'],
+                hide_index=True,
+                width='stretch',
+                key=f'el_table_{el_tbl_ver}',
+            )
+
+            el_checked = el_edited.index[el_edited['보기'] == True].tolist()
+            if el_checked:
+                idx = el_checked[0]
+                if idx < len(el_items):
+                    st.session_state['_view_elevenlabs_row_id'] = el_items[idx]['id']
+                    st.session_state['_open_elevenlabs_detail'] = True
+                    st.session_state['_el_tbl_ver'] = el_tbl_ver + 1
+                    st.rerun()
+        else:
+            st.info('표시할 ElevenLabs 기록이 없습니다.')
+
+        _maybe_open_elevenlabs_dialog(cfg)
+
+        # ── NanoBanana Sessions (멀티턴) ──
+        st.subheader('\U0001f34c NanoBanana Sessions')
+        nb_sessions = list_nanobanana_sessions_admin(cfg, limit=limit, user_id=filter_uid)
+        if nb_sessions:
+            import pandas as pd
+            nb_df = pd.DataFrame(nb_sessions)
+            nb_df.insert(0, '보기', False)
+
+            nb_tbl_ver = st.session_state.get('_nb_tbl_ver', 0)
+            nb_edited = st.data_editor(
+                nb_df,
+                column_config={
+                    '보기': st.column_config.CheckboxColumn('👁', default=False, width='small'),
+                    'id': None,
+                },
+                disabled=[c for c in nb_df.columns if c != '보기'],
+                hide_index=True,
+                width='stretch',
+                key=f'nb_table_{nb_tbl_ver}',
+            )
+
+            nb_checked = nb_edited.index[nb_edited['보기'] == True].tolist()
+            if nb_checked:
+                idx = nb_checked[0]
+                if idx < len(nb_sessions):
+                    st.session_state['_view_nb_session_id'] = nb_sessions[idx]['id']
+                    st.session_state['_open_nb_session_detail'] = True
+                    st.session_state['_nb_tbl_ver'] = nb_tbl_ver + 1
+                    st.rerun()
+        else:
+            st.info('표시할 NanoBanana 세션이 없습니다.')
+
+        _maybe_open_nanobanana_session_dialog(cfg)
+
+        # ── 향후 추가: Wisk 등 ──
 
     # --- 키풀 상태 ---
     with tab_keypool:
@@ -180,7 +824,7 @@ def render_admin_page(cfg: AppConfig):
         with st.form('create_user'):
             new_user_id = st.text_input('User ID')
             new_pw = st.text_input('Password', type='password')
-            new_role = st.selectbox('Role', ['user', 'admin'], index=0)
+            new_role = st.selectbox('Role', ['student', 'teacher', 'viewer', 'admin'], index=0)
             new_school_id = st.selectbox(
                 'School ID',
                 tenant_ids,
@@ -209,7 +853,7 @@ def render_admin_page(cfg: AppConfig):
                 col1, col2 = st.columns(2)
                 with col1:
                     cur_role = target_row.get('role', 'user')
-                    role_opts = ['user', 'admin']
+                    role_opts = ['student', 'teacher', 'viewer', 'admin']
                     new_role = st.selectbox(
                         'Role',
                         role_opts,
@@ -231,7 +875,26 @@ def render_admin_page(cfg: AppConfig):
                 with col4:
                     new_pw2 = st.text_input('새 비밀번호 (변경 시에만 입력)', type='password', key='reset_pw')
 
-                submitted_edit = st.form_submit_button('변경 사항 저장', use_container_width=True)
+                # Suno 계정 배정
+                suno_accounts = cfg.get_suno_accounts()
+                suno_opts = {0: '0 - 배정 없음'}
+                for acc in suno_accounts:
+                    aid = acc.get('id', 0)
+                    if aid != 0:
+                        label = f"{aid} - {acc.get('email', '?')}"
+                        if acc.get('memo'):
+                            label += f" ({acc['memo']})"
+                        suno_opts[aid] = label
+                suno_ids = list(suno_opts.keys())
+                cur_suno = int(target_row.get('suno_account_id', 0) or 0)
+                new_suno = st.selectbox(
+                    'Suno 계정 배정',
+                    suno_ids,
+                    index=suno_ids.index(cur_suno) if cur_suno in suno_ids else 0,
+                    format_func=lambda x: suno_opts[x],
+                )
+
+                submitted_edit = st.form_submit_button('변경 사항 저장', width='stretch')
 
             if submitted_edit:
                 changes = []
@@ -256,6 +919,11 @@ def render_admin_page(cfg: AppConfig):
                     else:
                         set_user_active(cfg, target, new_active)
                         changes.append(f'활성: {"ON" if new_active else "OFF"}')
+
+                # Suno 배정 변경
+                if new_suno != cur_suno:
+                    update_user_fields(cfg, target, suno_account_id=new_suno)
+                    changes.append(f'Suno: #{cur_suno} → #{new_suno}')
 
                 # 비밀번호 변경
                 if new_pw2:
