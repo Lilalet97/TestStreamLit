@@ -39,6 +39,15 @@ def main():
         cleanup_orphan_active_jobs(cfg)
         st.session_state["_did_cleanup_active_jobs"] = True
 
+    # 자동 삭제 (세션당 1회)
+    if "_did_auto_purge" not in st.session_state:
+        try:
+            from core.db import run_auto_purge
+            run_auto_purge(cfg)
+        except Exception:
+            pass
+        st.session_state["_did_auto_purge"] = True
+
     # --- Auth Gate ---
     auth_user = render_auth_gate(cfg)
     if not auth_user:

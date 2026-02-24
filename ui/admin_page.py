@@ -1,10 +1,9 @@
 # ui/admin_page.py
-import base64
 from pathlib import Path
 import streamlit as st
 
 from core.config import AppConfig
-from core.auth import current_user, logout_user, hash_password
+from core.auth import current_user, hash_password
 from core.db import (
     list_active_jobs_all,
     list_key_waiters,
@@ -27,7 +26,17 @@ from core.db import (
     set_user_password,
     set_user_active,
     hard_delete_user,
+    PURGEABLE_TABLES,
+    get_all_admin_settings,
+    set_admin_setting,
+    get_table_row_counts,
+    count_old_rows,
+    purge_old_records,
+    run_auto_purge,
 )
+from ui.sidebar import render_profile_card
+from ui.stress_test_tab import render_stress_test_execution, render_stress_test_results
+from ui.stress_report import render_stress_report
 
 
 def _rows_to_dicts(rows):
@@ -373,11 +382,6 @@ def _maybe_open_nanobanana_session_dialog(cfg: AppConfig):
             _render_nanobanana_session_detail(cfg, session_id)
 
 
-def _encode_logo(path: str) -> str:
-    with open(path, "rb") as f:
-        return base64.b64encode(f.read()).decode()
-
-
 def _list_tenant_ids(cfg: AppConfig) -> list[str]:
     """tenants 디렉토리의 JSON 파일에서 tenant_id 목록을 반환."""
     tenant_dir = Path(cfg.tenant_config_dir) if cfg.tenant_config_dir else Path(".")
@@ -417,67 +421,11 @@ def render_viewer_page(cfg: AppConfig):
         st.error('viewer 권한이 필요합니다.')
         return
 
-    with st.sidebar:
-        logo_path = cfg.get_logo_path(u.school_id)
-        if logo_path:
-            avatar_html = (
-                f'<img src="data:image/png;base64,{_encode_logo(logo_path)}" '
-                f'style="width:40px;height:40px;border-radius:50%;object-fit:cover;">'
-            )
-        else:
-            avatar_html = (
-                f'<div style="'
-                f'width:40px;height:40px;border-radius:50%;'
-                f'background:linear-gradient(135deg,#e67e22,#d35400);'
-                f'display:flex;align-items:center;justify-content:center;'
-                f'font-size:18px;font-weight:700;color:#fff;'
-                f'">{u.user_id[0].upper()}</div>'
-            )
-
-        badge_html = (
-            '<span style="background:#e67e22;color:#fff;padding:2px 8px;'
-            'border-radius:10px;font-size:0.75em;font-weight:600;'
-            'letter-spacing:0.5px;">VIEWER</span>'
-        )
-
-        st.markdown(
-            f"""
-            <div style="
-                background: linear-gradient(135deg, #1e1e2f 0%, #2d2d44 100%);
-                border: 1px solid #3d3d5c;
-                border-radius: 12px;
-                padding: 16px;
-                margin-bottom: 8px;
-            ">
-                <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
-                    {avatar_html}
-                    <div>
-                        <div style="font-size:1em;font-weight:600;color:#f0f0f0;">
-                            {u.user_id}
-                        </div>
-                        <div style="margin-top:2px;">
-                            {badge_html}
-                        </div>
-                    </div>
-                </div>
-                <div style="
-                    font-size:0.8em;color:#a0a0b8;
-                    display:flex;align-items:center;gap:5px;
-                ">
-                    <span>🏫</span>
-                    <span>{cfg.get_layout(u.school_id)}</span>
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        if st.button('로그아웃', icon=":material/logout:", width='stretch'):
-            logout_user(cfg)
-            st.rerun()
+    render_profile_card(cfg)
 
     st.title('👁️ 모니터링 페이지')
 
-    tab_monitor, tab_runs = st.tabs(['모니터링', '실행 기록'])
+    tab_monitor, tab_runs, tab_stress = st.tabs(['모니터링', '실행 기록', '부하테스트 결과'])
 
     with tab_monitor:
         _live_monitor_panel(cfg)
@@ -535,6 +483,97 @@ def render_viewer_page(cfg: AppConfig):
         else:
             st.info('표시할 NanoBanana 세션이 없습니다.')
 
+    with tab_stress:
+        render_stress_report(cfg)
+
+
+
+def _render_db_management(cfg: AppConfig):
+    """DB 관리 탭: 테이블 현황, 수동 삭제, 자동 삭제 설정."""
+    import pandas as pd
+
+    st.subheader("테이블 현황")
+    counts = get_table_row_counts(cfg)
+    purge_settings = get_all_admin_settings(cfg, prefix="purge_days.")
+
+    overview = []
+    for tbl in PURGEABLE_TABLES:
+        cnt = counts.get(tbl["key"], 0)
+        child_cnt = counts.get(tbl["key"] + "_child")
+        days = purge_settings.get(f"purge_days.{tbl['key']}", "0")
+        display = f"{cnt:,}"
+        if child_cnt is not None:
+            display += f"  (+ samples {child_cnt:,})"
+        overview.append({
+            "테이블": tbl["label"],
+            "레코드 수": display,
+            "자동 삭제": f"{days}일" if days != "0" else "비활성",
+        })
+    st.dataframe(pd.DataFrame(overview), hide_index=True, width="stretch")
+
+    st.divider()
+
+    # ── 수동 삭제 ──
+    st.subheader("수동 삭제")
+    col1, col2 = st.columns(2)
+    with col1:
+        tbl_opts = {t["key"]: t["label"] for t in PURGEABLE_TABLES}
+        sel_table = st.selectbox("대상 테이블", list(tbl_opts.keys()),
+                                 format_func=lambda k: tbl_opts[k], key="db_purge_table")
+    with col2:
+        del_days = st.number_input("N일 이전 데이터 삭제", min_value=1, max_value=3650,
+                                   value=30, step=1, key="db_purge_days")
+
+    if sel_table and del_days > 0:
+        old_cnt = count_old_rows(cfg, sel_table, del_days)
+        st.info(f"**{tbl_opts[sel_table]}** 에서 {del_days}일 이전 레코드: **{old_cnt:,}건**")
+
+        if old_cnt > 0:
+            confirm = st.text_input(
+                f"삭제 확인: 아래에 **{sel_table}** 을 입력하세요",
+                key="db_purge_confirm",
+            )
+            if st.button("삭제 실행", type="primary", key="db_purge_btn"):
+                if confirm.strip() == sel_table:
+                    deleted = purge_old_records(cfg, sel_table, del_days)
+                    st.success(f"{deleted:,}건 삭제 완료")
+                    st.rerun()
+                else:
+                    st.error("확인 문구가 일치하지 않습니다.")
+
+    st.divider()
+
+    # ── 자동 삭제 설정 ──
+    st.subheader("자동 삭제 설정")
+    st.caption("0 = 비활성 (자동 삭제 안 함). 앱 시작 시 세션당 1회 자동 실행됩니다.")
+
+    with st.form("auto_purge_form"):
+        new_vals = {}
+        cols = st.columns(3)
+        for i, tbl in enumerate(PURGEABLE_TABLES):
+            cur_val = purge_settings.get(f"purge_days.{tbl['key']}", "0")
+            with cols[i % 3]:
+                new_vals[tbl["key"]] = st.number_input(
+                    tbl["label"], min_value=0, max_value=3650,
+                    value=int(cur_val) if cur_val.isdigit() else 0,
+                    step=1, key=f"purge_days_{tbl['key']}",
+                )
+        submitted = st.form_submit_button("설정 저장", use_container_width=True)
+
+    if submitted:
+        for tbl in PURGEABLE_TABLES:
+            set_admin_setting(cfg, f"purge_days.{tbl['key']}", str(new_vals[tbl["key"]]))
+        st.success("자동 삭제 설정이 저장되었습니다.")
+        st.rerun()
+
+    if st.button("지금 자동 삭제 실행", key="db_purge_now"):
+        results = run_auto_purge(cfg)
+        if results:
+            for key, cnt in results.items():
+                label = next((t["label"] for t in PURGEABLE_TABLES if t["key"] == key), key)
+                st.success(f"{label}: {cnt:,}건 삭제")
+        else:
+            st.info("삭제 대상이 없거나 자동 삭제가 비활성 상태입니다.")
 
 
 def render_admin_page(cfg: AppConfig):
@@ -543,68 +582,13 @@ def render_admin_page(cfg: AppConfig):
         st.error('관리자 권한이 필요합니다.')
         return
 
-    with st.sidebar:
-        # 학교 로고가 있으면 아바타 원 대신 로고 표시
-        logo_path = cfg.get_logo_path(u.school_id)
-        if logo_path:
-            avatar_html = (
-                f'<img src="data:image/png;base64,{_encode_logo(logo_path)}" '
-                f'style="width:40px;height:40px;border-radius:50%;object-fit:cover;">'
-            )
-        else:
-            avatar_html = (
-                f'<div style="'
-                f'width:40px;height:40px;border-radius:50%;'
-                f'background:linear-gradient(135deg,#e74c3c,#c0392b);'
-                f'display:flex;align-items:center;justify-content:center;'
-                f'font-size:18px;font-weight:700;color:#fff;'
-                f'">{u.user_id[0].upper()}</div>'
-            )
-
-        badge_html = (
-            '<span style="background:#e74c3c;color:#fff;padding:2px 8px;'
-            'border-radius:10px;font-size:0.75em;font-weight:600;'
-            'letter-spacing:0.5px;">ADMIN</span>'
-        )
-
-        st.markdown(
-            f"""
-            <div style="
-                background: linear-gradient(135deg, #1e1e2f 0%, #2d2d44 100%);
-                border: 1px solid #3d3d5c;
-                border-radius: 12px;
-                padding: 16px;
-                margin-bottom: 8px;
-            ">
-                <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
-                    {avatar_html}
-                    <div>
-                        <div style="font-size:1em;font-weight:600;color:#f0f0f0;">
-                            {u.user_id}
-                        </div>
-                        <div style="margin-top:2px;">
-                            {badge_html}
-                        </div>
-                    </div>
-                </div>
-                <div style="
-                    font-size:0.8em;color:#a0a0b8;
-                    display:flex;align-items:center;gap:5px;
-                ">
-                    <span>🏫</span>
-                    <span>{cfg.get_layout(u.school_id)}</span>
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        if st.button('로그아웃', icon=":material/logout:", width='stretch'):
-            logout_user(cfg)
-            st.rerun()
+    render_profile_card(cfg)
 
     st.title('🛠️ 운영 페이지')
 
-    tab_monitor, tab_runs, tab_keypool, tab_users = st.tabs(['모니터링', '실행 기록', '키풀 상태', '계정 관리'])
+    tab_monitor, tab_runs, tab_keypool, tab_users, tab_stress, tab_db = st.tabs(
+        ['모니터링', '실행 기록', '키풀 상태', '계정 관리', '부하테스트', 'DB 관리']
+    )
 
     # --- 모니터링 ---
     with tab_monitor:
@@ -894,7 +878,7 @@ def render_admin_page(cfg: AppConfig):
                     format_func=lambda x: suno_opts[x],
                 )
 
-                submitted_edit = st.form_submit_button('변경 사항 저장', width='stretch')
+                submitted_edit = st.form_submit_button('변경 사항 저장', use_container_width=True)
 
             if submitted_edit:
                 changes = []
@@ -949,3 +933,13 @@ def render_admin_page(cfg: AppConfig):
                     hard_delete_user(cfg, target)
                     st.success('삭제되었습니다.')
                     st.rerun()
+
+    # --- 부하테스트 ---
+    with tab_stress:
+        render_stress_test_execution(cfg)
+        st.divider()
+        render_stress_test_results(cfg)
+
+    # --- DB 관리 ---
+    with tab_db:
+        _render_db_management(cfg)

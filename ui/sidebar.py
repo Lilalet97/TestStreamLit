@@ -49,9 +49,10 @@ def render_profile_card(cfg: AppConfig) -> None:
         if _logo_file.exists():
             _b64 = _encode_logo(str(_logo_file))
             st.markdown(
-                f'<div style="text-align:left;margin:-140px 0px -100px;padding:0 4px;pointer-events:none;">'
+                f'<div style="padding:0 4px;margin-bottom:4px;pointer-events:none;">'
                 f'<img src="data:image/png;base64,{_b64}" '
-                f'style="width:90%;height:auto;opacity:.9;pointer-events:none;">'
+                f'style="width:90%;height:35px;object-fit:cover;object-position:50% 50%;'
+                f'opacity:.9;pointer-events:none;">'
                 f'</div>',
                 unsafe_allow_html=True,
             )
@@ -109,7 +110,7 @@ def render_profile_card(cfg: AppConfig) -> None:
             unsafe_allow_html=True,
         )
 
-        if st.button("로그아웃", icon=":material/logout:", width='stretch'):
+        if st.button("로그아웃", icon=":material/logout:", use_container_width=True):
             logout_user(cfg)
             st.rerun()
 
@@ -122,7 +123,7 @@ def render_sidebar(cfg: AppConfig) -> SidebarState:
         # ── 세션 ──
         st.markdown("#### 세션")
         sid = st.session_state.session_id
-        if st.button("새 세션 시작", icon=":material/refresh:", width='stretch'):
+        if st.button("새 세션 시작", icon=":material/refresh:", use_container_width=True):
             import uuid
             st.session_state.session_id = str(uuid.uuid4())
             st.rerun()
@@ -183,7 +184,7 @@ def render_sidebar(cfg: AppConfig) -> SidebarState:
                 label_visibility="collapsed",
             )
 
-            if st.button("상세 보기", icon=":material/open_in_new:", width='stretch'):
+            if st.button("상세 보기", icon=":material/open_in_new:", use_container_width=True):
                 st.session_state["_open_run_detail"] = bool(sel)
         else:
             st.info("실행 기록이 아직 없습니다.")
@@ -200,7 +201,7 @@ def render_sidebar(cfg: AppConfig) -> SidebarState:
             help="외부 API를 호출하지 않고 로컬에서 응답을 시뮬레이션합니다.",
         )
 
-        if st.button("내 활성 작업 강제 정리", icon=":material/delete_sweep:", width='stretch'):
+        if st.button("내 활성 작업 강제 정리", icon=":material/delete_sweep:", use_container_width=True):
             clear_my_active_jobs(cfg, session_only=False, only_stale=False)
             st.success("정리 완료!")
             st.rerun()

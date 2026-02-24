@@ -82,7 +82,7 @@ def _render_bootstrap_admin(cfg: AppConfig):
         user_id = st.text_input("관리자 ID", value="admin")
         password = st.text_input("관리자 PW", type="password")
         school_id = st.text_input("학교 ID", value="default")
-        submitted = st.form_submit_button("생성", width="stretch")
+        submitted = st.form_submit_button("생성", use_container_width=True)
 
     if submitted:
         user_id = (user_id or "").strip()
@@ -118,7 +118,7 @@ def _render_login(cfg: AppConfig):
     with st.form("login_form"):
         user_id = st.text_input("ID")
         password = st.text_input("PW", type="password")
-        submitted = st.form_submit_button("로그인", width="stretch")
+        submitted = st.form_submit_button("로그인", use_container_width=True)
 
     if submitted:
         user_id = (user_id or "").strip()

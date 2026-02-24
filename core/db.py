@@ -335,6 +335,60 @@ def init_db(cfg: AppConfig):
     except Exception:
         pass
 
+    # ── 부하 테스트 ──
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS stress_test_runs (
+            test_id TEXT PRIMARY KEY,
+            created_at TEXT NOT NULL,
+            admin_user_id TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            config_json TEXT NOT NULL,
+            started_at TEXT,
+            finished_at TEXT,
+            summary_json TEXT
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS stress_test_samples (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            test_id TEXT NOT NULL,
+            worker_id INTEGER NOT NULL,
+            request_seq INTEGER NOT NULL,
+            started_at TEXT NOT NULL,
+            finished_at TEXT NOT NULL,
+            duration_ms INTEGER NOT NULL,
+            phase TEXT NOT NULL,
+            status TEXT NOT NULL,
+            error_text TEXT,
+            provider TEXT,
+            key_name TEXT,
+            FOREIGN KEY(test_id) REFERENCES stress_test_runs(test_id)
+        )
+    """)
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_stress_samples_test
+        ON stress_test_samples(test_id, started_at)
+    """)
+
+    # ── admin_settings (key-value 설정 저장) ──
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS admin_settings (
+            key       TEXT PRIMARY KEY,
+            value     TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    """)
+
+    # ── stress_test_runs 마이그레이션: plan_id, round_label ──
+    try:
+        cur.execute("ALTER TABLE stress_test_runs ADD COLUMN plan_id TEXT")
+    except Exception:
+        pass
+    try:
+        cur.execute("ALTER TABLE stress_test_runs ADD COLUMN round_label TEXT")
+    except Exception:
+        pass
+
     conn.commit()
     conn.close()
     force_sync()  # 스키마 변경을 Turso에 즉시 반영
@@ -1793,3 +1847,148 @@ def list_chat_messages_admin(cfg: AppConfig, limit: int = 200, school_id: str | 
         return [dict(r) for r in cur.fetchall()]
     finally:
         conn.close()
+
+
+# ── DB 관리: Admin Settings + Purge ─────────────────────
+
+PURGEABLE_TABLES = [
+    {"key": "runs",               "table": "runs",               "label": "API 호출 기록",          "date_col": "created_at"},
+    {"key": "stress_test",        "table": "stress_test_runs",    "label": "부하테스트",              "date_col": "created_at",
+     "child_table": "stress_test_samples", "fk_col": "test_id", "parent_pk": "test_id"},
+    {"key": "mj_gallery",         "table": "mj_gallery",          "label": "Midjourney 갤러리",      "date_col": "created_at"},
+    {"key": "gpt_conversations",  "table": "gpt_conversations",   "label": "GPT 대화",               "date_col": "created_at"},
+    {"key": "kling_web_history",  "table": "kling_web_history",   "label": "Kling 비디오 기록",      "date_col": "created_at"},
+    {"key": "elevenlabs_history", "table": "elevenlabs_history",  "label": "ElevenLabs TTS 기록",    "date_col": "created_at"},
+    {"key": "nanobanana_history", "table": "nanobanana_history",  "label": "NanoBanana 이미지 기록", "date_col": "created_at"},
+    {"key": "nanobanana_sessions","table": "nanobanana_sessions", "label": "NanoBanana 세션",        "date_col": "created_at"},
+    {"key": "chat_messages",      "table": "chat_messages",       "label": "채팅 메시지",            "date_col": "created_at"},
+]
+
+
+def get_admin_setting(cfg: AppConfig, key: str, default: str = "") -> str:
+    conn = get_db(cfg)
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT value FROM admin_settings WHERE key = ?", (key,))
+        row = cur.fetchone()
+        return row["value"] if row else default
+    finally:
+        conn.close()
+
+
+def set_admin_setting(cfg: AppConfig, key: str, value: str):
+    conn = get_db(cfg)
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO admin_settings (key, value, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET
+                value = excluded.value,
+                updated_at = excluded.updated_at
+        """, (key, value, now_iso()))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_all_admin_settings(cfg: AppConfig, prefix: str = "") -> dict:
+    conn = get_db(cfg)
+    try:
+        cur = conn.cursor()
+        if prefix:
+            cur.execute(
+                "SELECT key, value FROM admin_settings WHERE key LIKE ?",
+                (prefix + "%",),
+            )
+        else:
+            cur.execute("SELECT key, value FROM admin_settings")
+        return {row["key"]: row["value"] for row in cur.fetchall()}
+    finally:
+        conn.close()
+
+
+def get_table_row_counts(cfg: AppConfig) -> dict:
+    conn = get_db(cfg)
+    try:
+        cur = conn.cursor()
+        counts = {}
+        for tbl in PURGEABLE_TABLES:
+            cur.execute(f"SELECT COUNT(*) AS c FROM {tbl['table']}")
+            counts[tbl["key"]] = int(cur.fetchone()["c"])
+            if "child_table" in tbl:
+                cur.execute(f"SELECT COUNT(*) AS c FROM {tbl['child_table']}")
+                counts[tbl["key"] + "_child"] = int(cur.fetchone()["c"])
+        return counts
+    finally:
+        conn.close()
+
+
+def count_old_rows(cfg: AppConfig, table_key: str, older_than_days: int) -> int:
+    tbl = next((t for t in PURGEABLE_TABLES if t["key"] == table_key), None)
+    if not tbl or older_than_days <= 0:
+        return 0
+    cutoff = (datetime.utcnow() - timedelta(days=older_than_days)).isoformat() + "Z"
+    conn = get_db(cfg)
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            f"SELECT COUNT(*) AS c FROM {tbl['table']} WHERE {tbl['date_col']} < ?",
+            (cutoff,),
+        )
+        return int(cur.fetchone()["c"])
+    finally:
+        conn.close()
+
+
+def purge_old_records(cfg: AppConfig, table_key: str, older_than_days: int) -> int:
+    tbl = next((t for t in PURGEABLE_TABLES if t["key"] == table_key), None)
+    if not tbl or older_than_days <= 0:
+        return 0
+    cutoff = (datetime.utcnow() - timedelta(days=older_than_days)).isoformat() + "Z"
+    conn = get_db(cfg)
+    try:
+        cur = conn.cursor()
+        # 삭제 대상 수 미리 조회
+        cur.execute(
+            f"SELECT COUNT(*) AS c FROM {tbl['table']} WHERE {tbl['date_col']} < ?",
+            (cutoff,),
+        )
+        total = int(cur.fetchone()["c"])
+        if total == 0:
+            return 0
+
+        # child table 연쇄 삭제
+        if "child_table" in tbl:
+            cur.execute(
+                f"SELECT {tbl['parent_pk']} FROM {tbl['table']} WHERE {tbl['date_col']} < ?",
+                (cutoff,),
+            )
+            parent_ids = [row[tbl["parent_pk"]] for row in cur.fetchall()]
+            for pid in parent_ids:
+                cur.execute(
+                    f"DELETE FROM {tbl['child_table']} WHERE {tbl['fk_col']} = ?",
+                    (pid,),
+                )
+
+        cur.execute(
+            f"DELETE FROM {tbl['table']} WHERE {tbl['date_col']} < ?",
+            (cutoff,),
+        )
+        conn.commit()
+        return total
+    finally:
+        conn.close()
+
+
+def run_auto_purge(cfg: AppConfig) -> dict:
+    settings = get_all_admin_settings(cfg, prefix="purge_days.")
+    results = {}
+    for tbl in PURGEABLE_TABLES:
+        days_str = settings.get(f"purge_days.{tbl['key']}", "0")
+        days = int(days_str) if days_str.isdigit() else 0
+        if days > 0:
+            deleted = purge_old_records(cfg, tbl["key"], days)
+            if deleted > 0:
+                results[tbl["key"]] = deleted
+    return results

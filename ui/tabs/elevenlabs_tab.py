@@ -77,7 +77,8 @@ def render_elevenlabs_tab(cfg: AppConfig, sidebar: SidebarState):
             )
         except Exception as e:
             audio_url = None
-            st.session_state["_el_error_msg"] = f"ElevenLabs API 오류: {type(e).__name__}: {e}"
+            import logging
+            logging.warning("ElevenLabs API 오류: %s: %s", type(e).__name__, e)
 
         # 로딩 아이템 업데이트
         for item in st.session_state.get("elevenlabs_history", []):
@@ -92,11 +93,7 @@ def render_elevenlabs_tab(cfg: AppConfig, sidebar: SidebarState):
                 break
         st.rerun()
 
-    # ── 에러 메시지 표시 (이전 rerun에서 저장된 것) ──
-    _err = st.session_state.pop("_el_error_msg", None)
-    if _err:
-        with st.sidebar:
-            st.warning(_err)
+    # (에러는 서버 로그에만 기록 — 사용자 UI에 노출하지 않음)
 
     st.markdown(
         """<style>

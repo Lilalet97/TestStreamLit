@@ -257,6 +257,23 @@ def seed_keys(cfg: AppConfig) -> None:
                     expires_at,
                     now, now
                 ))
+        # secrets에서 제거된 키를 비활성화
+        all_names = []
+        for provider, items in spec.items():
+            for item in items:
+                name = (item.get("name") or "").strip()
+                if name:
+                    all_names.append((provider, name))
+        if all_names:
+            cur.execute("SELECT provider, key_name FROM api_keys WHERE is_active = 1")
+            for row in cur.fetchall():
+                if (row["provider"], row["key_name"]) not in all_names:
+                    cur.execute(
+                        "UPDATE api_keys SET is_active = 0, updated_at = ? "
+                        "WHERE provider = ? AND key_name = ?",
+                        (now, row["provider"], row["key_name"]),
+                    )
+
     conn.close()
 
 
