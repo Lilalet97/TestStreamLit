@@ -2,4 +2,5 @@ streamlit
 requests
 PyJWT
 streamlit-cookies-controller
+pandas
 libsql-experimental; sys_platform != "win32"
