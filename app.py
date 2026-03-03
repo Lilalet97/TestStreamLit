@@ -1,7 +1,4 @@
 # app.py
-import json
-import os
-
 import streamlit as st
 import streamlit.components.v1 as components
 
@@ -11,7 +8,6 @@ from core.key_pool import bootstrap as key_pool_bootstrap
 from ui.auth_page import render_auth_gate
 from ui.admin_page import render_admin_page, render_viewer_page
 from ui.sidebar import render_profile_card, render_sidebar
-from ui.run_detail import maybe_open_run_detail_dialog
 from ui.registry import get_all_tabs, filter_tabs
 from ui.floating_chat import render_floating_chat
 
@@ -74,9 +70,15 @@ def main():
 
     # 역할별 라우팅
     if auth_user.role == "admin":
+        render_profile_card(cfg)
+        with st.sidebar:
+            st.markdown("### 🛠️ 운영 페이지")
         render_admin_page(cfg)
         return
     elif auth_user.role == "viewer":
+        render_profile_card(cfg)
+        with st.sidebar:
+            st.markdown("### 👁️ 모니터링 페이지")
         render_viewer_page(cfg)
         return
 
@@ -108,25 +110,10 @@ def main():
             label_visibility="collapsed",
         )
 
-    # 3) 나머지 사이드바 (세션, 동시실행, 히스토리, 테스트모드)
+    # 3) 나머지 사이드바 (동시실행, 테스트모드)
     sidebar_state = render_sidebar(cfg)
 
-    # 키 풀 상태를 사이드바 하단에 간결하게 표시
-    raw = os.getenv("KEY_POOL_JSON") or st.secrets.get("KEY_POOL_JSON", "")
-    with st.sidebar:
-        st.markdown("---")
-        if raw:
-            try:
-                kp = json.loads(raw)
-                providers = "  ".join(f"`{k}` **{len(v)}**" for k, v in kp.items())
-                st.markdown(f"🔑 키 풀 &nbsp; {providers}")
-            except Exception:
-                st.warning("키 풀 JSON 파싱 실패")
-        else:
-            st.caption("🔑 키 풀 미설정")
-
     # 메인 영역: 선택된 탭 콘텐츠만 렌더링
-    maybe_open_run_detail_dialog(cfg)
     visible_tabs[selected_idx].render(cfg, sidebar_state)
 
     # 플로팅 채팅 (teacher/student만)

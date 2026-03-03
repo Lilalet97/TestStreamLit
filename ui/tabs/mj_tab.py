@@ -2,6 +2,7 @@
 """Midjourney /imagine 페이지 — declare_component 양방향 통신."""
 import re
 import time
+import random
 from pathlib import Path
 from datetime import datetime
 
@@ -10,19 +11,25 @@ import streamlit.components.v1 as components
 
 from core.config import AppConfig
 from core.api_bridge import call_with_lease
-from core.db import insert_mj_gallery_item, load_mj_gallery, update_mj_gallery_images, backfill_mj_gallery_mock_images
+from core.db import insert_mj_gallery_item, load_mj_gallery, update_mj_gallery_images, backfill_mj_gallery_mock_images, load_school_mj_gallery, load_nanobanana_sessions
 from providers import legnext
+from providers import google_imagen
 from ui.sidebar import SidebarState
 
 _COMPONENT_DIR = Path(__file__).resolve().parent / "templates" / "mj"
 _mj_component_func = components.declare_component("mj_component", path=str(_COMPONENT_DIR))
 
 
-def _mj_component(gallery_items: list, frame_height: int = 900, key: str = "mj_main"):
+def _mj_component(gallery_items: list, frame_height: int = 900, key: str = "mj_main",
+                   enabled_features: list | None = None, school_gallery: list | None = None,
+                   source_gallery: list | None = None):
     """MJ 커스텀 컴포넌트 래퍼. 반환값: JS에서 setComponentValue로 보낸 dict 또는 None."""
     return _mj_component_func(
         gallery_items=gallery_items,
         frame_height=frame_height,
+        enabled_features=enabled_features or [],
+        school_gallery=school_gallery,
+        source_gallery=source_gallery or [],
         key=key,
         default=None,
     )
@@ -264,6 +271,109 @@ def _call_legnext_and_poll(api_key: str, full_text: str,
     raise RuntimeError(f"LegNext 작업 시간 초과 ({max_poll_sec}초)")
 
 
+# ── Gemini 기반 이미지 생성 (Google AI Studio) ──────────────────
+
+_GEMINI_AR = {"1:1": 1.0, "16:9": 16/9, "9:16": 9/16, "4:3": 4/3, "3:4": 3/4}
+_ASPECT_SIZES = {
+    "1:1": (1024, 1024), "16:9": (1024, 576), "9:16": (576, 1024),
+    "4:3": (1024, 768), "3:4": (768, 1024),
+}
+
+
+def _map_aspect_ratio(ar: str) -> str:
+    """MJ의 15개 비율 → Gemini 지원 5개 중 가장 가까운 것으로 매핑."""
+    parts = ar.split(":")
+    if len(parts) != 2:
+        return "1:1"
+    try:
+        ratio = int(parts[0]) / int(parts[1])
+    except (ValueError, ZeroDivisionError):
+        return "1:1"
+    best, best_diff = "1:1", float("inf")
+    for k, v in _GEMINI_AR.items():
+        diff = abs(ratio - v)
+        if diff < best_diff:
+            best, best_diff = k, diff
+    return best
+
+
+def _build_enhanced_prompt(prompt: str, settings: dict) -> str:
+    """MJ 세팅을 자연어 수식어로 변환하여 프롬프트에 추가."""
+    modifiers = []
+    stylization = int(settings.get("stylization", 100))
+    if stylization > 500:
+        modifiers.append("highly artistic and stylized")
+    elif stylization > 300:
+        modifiers.append("artistic")
+
+    weirdness = int(settings.get("weirdness", 0))
+    if weirdness > 500:
+        modifiers.append("creative and unusual")
+    elif weirdness > 200:
+        modifiers.append("slightly unconventional")
+
+    variety = int(settings.get("variety", 0))
+    if variety > 50:
+        modifiers.append("diverse and varied")
+
+    if settings.get("mode") == "Raw":
+        modifiers.append("raw, unprocessed, photographic look")
+
+    if not modifiers:
+        return prompt
+    return f"{prompt}, {', '.join(modifiers)}"
+
+
+def _generate_images(
+    api_key: str,
+    prompt: str, settings: dict,
+    attached_images: dict | None, aspect_ratio: str, num_images: int = 4,
+    # [VERTEX AI] sa_json: str = "", project_id: str = "", location: str = "",
+) -> list[str]:
+    """MJ 요청을 Gemini generateContent로 변환하여 호출."""
+    mapped_ar = _map_aspect_ratio(aspect_ratio)
+    enhanced = _build_enhanced_prompt(prompt, settings)
+
+    parts: list = [{"text": enhanced}]
+
+    if attached_images:
+        img_prompts = attached_images.get("imagePrompts", [])
+        style_refs = attached_images.get("styleRef", [])
+        omni_refs = attached_images.get("omniRef", [])
+
+        if img_prompts:
+            parts.append({"text": "Use these images as the base/starting point for generation:"})
+            parts.extend(img_prompts)
+        if style_refs:
+            parts.append({"text": "Match the visual style and aesthetic of these reference images:"})
+            parts.extend(style_refs)
+        if omni_refs:
+            parts.append({"text": "Maintain the likeness and identity of the person/object in these images:"})
+            parts.extend(omni_refs)
+
+    return google_imagen.gemini_generate(
+        api_key=api_key,
+        parts=parts, aspect_ratio=mapped_ar, num_images=num_images,
+        # [VERTEX AI] sa_json=sa_json, project_id=project_id, location=location,
+    )
+
+
+def _mock_image_urls(aspect_ratio: str, num_images: int) -> list[str]:
+    """picsum.photos 기반 mock 이미지 URL 생성."""
+    mapped = _map_aspect_ratio(aspect_ratio)
+    w, h = _ASPECT_SIZES.get(mapped, (1024, 1024))
+    return [
+        f"https://picsum.photos/seed/mj{random.randint(1, 99999)}/{w}/{h}"
+        for _ in range(num_images)
+    ]
+
+
+def _get_tab_features(cfg: AppConfig, prefix: str) -> list:
+    """현재 학교의 enabled_features 중 해당 탭 prefix만 필터."""
+    school_id = st.session_state.get("school_id", "default")
+    return [f for f in cfg.get_enabled_features(school_id) if f.startswith(prefix)]
+
+
 def render_mj_tab(cfg: AppConfig, sidebar: SidebarState):
     """Midjourney 탭: declare_component 양방향 통신."""
     _init_state(cfg)
@@ -276,10 +386,23 @@ def render_mj_tab(cfg: AppConfig, sidebar: SidebarState):
             image_urls = call_with_lease(
                 cfg,
                 test_mode=False,
-                provider="midjourney",
-                mock_fn=lambda: [],
-                real_fn=lambda kp: _call_legnext_and_poll(kp["api_key"], pending["full_text"]),
+                provider="google_imagen",
+                mock_fn=lambda: _mock_image_urls(pending["aspect_ratio"], 4),
+                real_fn=lambda kp: _generate_images(
+                    api_key=kp["api_key"],
+                    prompt=pending["prompt"],
+                    settings=pending["settings"],
+                    attached_images=pending.get("attached_images"),
+                    aspect_ratio=pending["aspect_ratio"],
+                    # [VERTEX AI] sa_json=kp["sa_json"], project_id=kp["project_id"], location=kp["location"],
+                ),
             )
+            # GCS 업로드 (설정 시)
+            if image_urls and cfg.gcs_bucket_name and cfg.vertex_sa_json:
+                from providers.gcs_storage import upload_media_urls
+                image_urls = upload_media_urls(
+                    cfg.vertex_sa_json, cfg.gcs_bucket_name, image_urls, prefix="mj",
+                )
         except Exception as e:
             image_urls = []
             st.session_state["_mj_error_msg"] = f"MJ API 오류: {e}"
@@ -321,8 +444,38 @@ def render_mj_tab(cfg: AppConfig, sidebar: SidebarState):
         unsafe_allow_html=True,
     )
 
+    # 학교 공유 갤러리 데이터 로드
+    school_gallery = None
+    if st.session_state.get("_mj_gallery_open"):
+        school_id = st.session_state.get("school_id", "default")
+        school_gallery = load_school_mj_gallery(cfg, school_id)
+
+    # 갤러리 피커용: NanoBanana 이미지 로드 (sessions.turns_json에서 추출)
+    nano_gallery = []
+    if _is_authenticated():
+        try:
+            nb_sessions = load_nanobanana_sessions(cfg, st.session_state["user_id"], limit=20)
+            for sess in nb_sessions:
+                for turn in (sess.get("turns") or []):
+                    prompt = (turn.get("prompt") or "")[:60]
+                    for url in (turn.get("image_urls") or []):
+                        if url:
+                            nano_gallery.append({
+                                "source": "nanobanana",
+                                "prompt": prompt,
+                                "url": url,
+                            })
+        except Exception:
+            pass
+
     # 컴포넌트 렌더링 — gallery_items를 JS에 전달하고, JS에서 보낸 값을 반환받음
-    result = _mj_component(gallery_items=st.session_state.mj_gallery, frame_height=900)
+    result = _mj_component(
+        gallery_items=st.session_state.mj_gallery,
+        frame_height=900,
+        enabled_features=_get_tab_features(cfg, "mj."),
+        school_gallery=school_gallery,
+        source_gallery=nano_gallery,
+    )
 
     if not result or not isinstance(result, dict):
         return
@@ -341,7 +494,13 @@ def render_mj_tab(cfg: AppConfig, sidebar: SidebarState):
     if len(_processed) > 100:
         st.session_state["_mj_processed_actions"] = {dedup_key}
 
-    if action == "submit":
+    if action == "open_gallery":
+        st.session_state["_mj_gallery_open"] = True
+        st.rerun()
+    elif action == "close_gallery":
+        st.session_state["_mj_gallery_open"] = False
+        st.rerun()
+    elif action == "submit":
         # 이미 대기 중인 요청이 있으면 무시 (중복 방지)
         if st.session_state.get("_mj_pending_submit"):
             return
@@ -388,9 +547,11 @@ def render_mj_tab(cfg: AppConfig, sidebar: SidebarState):
                 st.session_state.mj_gallery.insert(0, new_item)
 
                 # 다음 rerun에서 처리할 대기 요청 저장
-                full_text = _build_mj_full_text(prompt, s)
                 st.session_state["_mj_pending_submit"] = {
-                    "full_text": full_text,
+                    "prompt": prompt,
+                    "settings": s,
+                    "attached_images": result.get("attachedImages"),
+                    "aspect_ratio": ar,
                     "loading_ts": ts,
                 }
             else:

@@ -38,8 +38,16 @@ class AppConfig:
     # ElevenLabs
     elevenlabs_api_key: str = ""
 
-    # NanoBanana (Google Imagen / Gemini)
+    # NanoBanana (Google Imagen / Gemini) — 기존 API Key (fallback용 보존)
     google_api_key: str = ""
+
+    # Vertex AI (google_imagen, google_veo 공용)
+    vertex_sa_json: str = ""
+    vertex_project_id: str = ""
+    vertex_location: str = "us-central1"
+
+    # GCS (미디어 업로드 — 미설정 시 기존 base64 방식 유지)
+    gcs_bucket_name: str = ""
 
     debug_auth: bool = False
 
@@ -197,6 +205,12 @@ def load_config() -> AppConfig:
         elevenlabs_api_key=_get_secret_or_env("ELEVENLABS_API_KEY", ""),
 
         google_api_key=_get_secret_or_env("GOOGLE_API_KEY", ""),
+
+        vertex_sa_json=_get_secret_or_env("VERTEX_SA_JSON", ""),
+        vertex_project_id=_get_secret_or_env("VERTEX_PROJECT_ID", ""),
+        vertex_location=_get_secret_or_env("VERTEX_LOCATION", "us-central1"),
+
+        gcs_bucket_name=_get_secret_or_env("GCS_BUCKET_NAME", ""),
 
         debug_auth=debug_auth,
     )

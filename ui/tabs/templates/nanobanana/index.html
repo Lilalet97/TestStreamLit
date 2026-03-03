@@ -219,6 +219,89 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
   .suggestion{max-width:100%;}
   .msg-user .bubble{max-width:85%;}
 }
+
+/* ── Card Action Buttons ── */
+.card-actions{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;}
+.card-action-btn{
+  display:inline-flex;align-items:center;gap:5px;
+  padding:5px 12px;border-radius:16px;
+  background:#1a1a2a;border:1px solid #2a2a3a;
+  color:#a0a0b0;font-size:12px;transition:all .15s;white-space:nowrap;
+}
+.card-action-btn:hover{background:#222238;color:#e3e3e8;border-color:#3f3f4f;}
+.card-action-btn svg{width:14px;height:14px;flex-shrink:0;}
+.react-btns{display:flex;gap:4px;margin-left:auto;}
+.react-btn{
+  width:28px;height:28px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  background:#1a1a2a;border:1px solid #2a2a3a;
+  color:#6e6e80;font-size:13px;transition:all .15s;
+}
+.react-btn:hover{background:#222238;color:#e3e3e8;border-color:#3f3f4f;}
+.react-btn svg{width:14px;height:14px;}
+
+/* ── 잠금(locked) 공통 ── */
+[data-feature].locked{position:relative;opacity:.35;pointer-events:none;user-select:none;}
+[data-feature].locked::after{
+  content:'🔒';font-size:9px;position:absolute;top:2px;right:4px;
+  pointer-events:none;line-height:1;
+}
+
+/* ── Sidebar Gallery Button ── */
+.sb-gallery-btn{
+  display:flex;align-items:center;gap:8px;
+  padding:10px 16px;border-radius:12px;
+  background:#1a1a2e;border:1px solid #2a2a3a;
+  color:#c4c4d0;font-size:13px;font-weight:500;
+  transition:all .15s;width:calc(100% - 16px);margin:8px 8px;
+}
+.sb-gallery-btn:hover{background:#222240;border-color:#3f3f5f;color:#e3e3e8;}
+.sb-gallery-btn svg{flex-shrink:0;}
+
+/* ── School Gallery Overlay ── */
+.school-gallery-overlay{
+  position:fixed;top:0;left:0;width:100%;height:100%;
+  background:rgba(0,0,0,0.85);z-index:9999;
+  display:flex;flex-direction:column;
+  opacity:0;pointer-events:none;transition:opacity .25s;
+}
+.school-gallery-overlay.open{opacity:1;pointer-events:auto;}
+.sg-header{
+  height:56px;display:flex;align-items:center;justify-content:space-between;
+  padding:0 24px;border-bottom:1px solid #27272a;flex-shrink:0;
+  background:#18181b;
+}
+.sg-header h2{font-size:16px;font-weight:700;color:#e4e4e7;}
+.sg-close{
+  width:32px;height:32px;border-radius:8px;
+  display:flex;align-items:center;justify-content:center;
+  color:#a1a1aa;transition:all .15s;font-size:18px;
+}
+.sg-close:hover{background:#27272a;color:#fff;}
+.sg-body{flex:1;overflow-y:auto;padding:24px;}
+.sg-grid{
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));
+  gap:16px;
+}
+.sg-card{
+  background:#18181b;border:1px solid #27272a;border-radius:12px;
+  overflow:hidden;transition:border-color .15s;
+}
+.sg-card:hover{border-color:#3f3f46;}
+.sg-card img{width:100%;aspect-ratio:1;object-fit:cover;display:block;}
+.sg-card-info{padding:10px 12px;}
+.sg-card-prompt{
+  font-size:12px;color:#a1a1aa;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
+  overflow:hidden;line-height:1.4;
+}
+.sg-card-meta{
+  display:flex;justify-content:space-between;align-items:center;
+  margin-top:6px;font-size:11px;color:#52525b;
+}
+.sg-empty{
+  text-align:center;padding:60px 20px;color:#52525b;font-size:14px;
+}
 </style>
 </head>
 <body>
@@ -236,6 +319,10 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
     <div class="sb-list" id="sbList">
       <div class="sb-empty" id="sbEmpty">No sessions yet</div>
     </div>
+    <button class="sb-gallery-btn" data-feature="nanobanana.gallery" id="galleryBtn">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+      갤러리
+    </button>
     <div class="sb-footer">
       <div class="sb-footer-text">NanoBanana &middot; Google Imagen</div>
     </div>
@@ -323,6 +410,17 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
   <img id="lbImage" src="" alt="Preview">
 </div>
 
+<div class="school-gallery-overlay" id="schoolGallery">
+  <div class="sg-header">
+    <h2>갤러리</h2>
+    <button class="sg-close" id="sgClose">&times;</button>
+  </div>
+  <div class="sg-body">
+    <div class="sg-grid" id="sgGrid"></div>
+    <div class="sg-empty" id="sgEmpty" style="display:none;">아직 공유된 이미지가 없습니다</div>
+  </div>
+</div>
+
 <script>
 /* ══════════════════════════════════════
    Streamlit Component Protocol
@@ -391,6 +489,16 @@ document.getElementById("btnHamburger").addEventListener("click", function(){
 document.getElementById("btnNewChat").addEventListener("click", function(){
   setComponentValue({action:"new_session", ts:Date.now()});
 });
+
+/* Gallery Button */
+var galleryBtn = document.getElementById('galleryBtn');
+if (galleryBtn) {
+  galleryBtn.addEventListener('click', function() {
+    if (!this.classList.contains('locked')) {
+      setComponentValue({action: 'open_gallery', ts: Date.now()});
+    }
+  });
+}
 
 /* Suggestions */
 (function(){
@@ -654,6 +762,37 @@ function renderChat(){
       if(cnt > 1) metaHtml += ' &middot; ' + cnt + ' images';
       meta.innerHTML = metaHtml;
       aiDiv.appendChild(meta);
+
+      /* ── Card Action Buttons (non-functional, feature-locked) ── */
+      var cardActions = document.createElement("div");
+      cardActions.className = "card-actions";
+
+      cardActions.innerHTML =
+        '<button class="card-action-btn" data-feature="nanobanana.omni">' +
+          '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>' +
+          'Omni에서 창작 시작</button>' +
+        '<button class="card-action-btn" data-feature="nanobanana.lipsync">' +
+          '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>' +
+          '립싱크</button>' +
+        '<button class="card-action-btn" data-feature="nanobanana.frame_extract">' +
+          '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="2"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/></svg>' +
+          '프레임 추출</button>' +
+        '<button class="card-action-btn" data-feature="nanobanana.share">' +
+          '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>' +
+          '공유</button>' +
+        '<button class="card-action-btn" data-feature="nanobanana.favorite">' +
+          '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2z"/></svg>' +
+          '즐겨찾기</button>' +
+        '<span class="react-btns">' +
+          '<button class="react-btn" data-feature="nanobanana.like" title="Like">' +
+            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 9V5a3 3 0 00-3-3l-4 9v11h11.28a2 2 0 002-1.7l1.38-9a2 2 0 00-2-2.3H14z"/><path d="M7 22H4a2 2 0 01-2-2v-7a2 2 0 012-2h3"/></svg>' +
+          '</button>' +
+          '<button class="react-btn" data-feature="nanobanana.dislike" title="Dislike">' +
+            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 15V19a3 3 0 003 3l4-9V2H5.72a2 2 0 00-2 1.7l-1.38 9a2 2 0 002 2.3H10z"/><path d="M17 2h2.67A2.31 2.31 0 0122 4v7a2.31 2.31 0 01-2.33 2H17"/></svg>' +
+          '</button>' +
+        '</span>';
+
+      aiDiv.appendChild(cardActions);
     } else {
       var emptyDiv = document.createElement("div");
       emptyDiv.className = "msg-meta";
@@ -705,6 +844,19 @@ function handleGenerate(){
 }
 document.getElementById("sendBtn").addEventListener("click", handleGenerate);
 
+/* ── 잠금 판정 ── */
+function applyFeatureLocks(enabledFeatures) {
+  var featureSet = {};
+  (enabledFeatures || []).forEach(function(f){ featureSet[f] = true; });
+  document.querySelectorAll('[data-feature]').forEach(function(el){
+    if (featureSet[el.getAttribute('data-feature')]) {
+      el.classList.remove('locked');
+    } else {
+      el.classList.add('locked');
+    }
+  });
+}
+
 /* ══════════════════════════════════════
    Streamlit Render (Receive Sessions)
    ══════════════════════════════════════ */
@@ -712,6 +864,12 @@ window.addEventListener("message", function(event){
   if(event.data.type !== "streamlit:render") return;
   var args = event.data.args || {};
   setFrameHeight(document.body.scrollHeight);
+
+  var schoolGallery = args.school_gallery;
+  if (schoolGallery && Array.isArray(schoolGallery)) {
+    renderSchoolGallery(schoolGallery);
+    document.getElementById('schoolGallery').classList.add('open');
+  }
 
   var sessions = args.sessions || [];
   var activeId = args.active_id || "";
@@ -723,7 +881,11 @@ window.addEventListener("message", function(event){
     }).join(",");
   }).join(";;");
 
-  if(key === _lastStateKey) return;
+  if(key === _lastStateKey) {
+    // 잠금 판정 (even if chat unchanged, lock state may differ)
+    applyFeatureLocks(args.enabled_features || []);
+    return;
+  }
   _lastStateKey = key;
   _generateLock = false;
 
@@ -731,6 +893,8 @@ window.addEventListener("message", function(event){
   state.activeId = activeId;
 
   renderChat();
+  // 잠금 판정 (after render so dynamically created data-feature elements exist)
+  applyFeatureLocks(args.enabled_features || []);
 });
 
 /* ══════════════════════════════════════
@@ -764,6 +928,41 @@ document.getElementById("lbDownload").addEventListener("click", function(){
   a.download = "nanobanana_" + Date.now() + ".png";
   a.target = "_blank";
   a.click();
+});
+
+/* ══════════════════════════════════════
+   School Gallery
+   ══════════════════════════════════════ */
+function renderSchoolGallery(items) {
+  var grid = document.getElementById('sgGrid');
+  var empty = document.getElementById('sgEmpty');
+  grid.innerHTML = '';
+  if (!items || items.length === 0) {
+    empty.style.display = 'block';
+    grid.style.display = 'none';
+    return;
+  }
+  empty.style.display = 'none';
+  grid.style.display = '';
+  items.forEach(function(item) {
+    var urls = item.image_urls || [];
+    urls.forEach(function(imgUrl) {
+      var card = document.createElement('div');
+      card.className = 'sg-card';
+      card.innerHTML =
+        '<img src="' + imgUrl + '" loading="lazy" onerror="this.style.display=\'none\'">' +
+        '<div class="sg-card-info">' +
+          '<div class="sg-card-prompt">' + (item.prompt || '').replace(/</g,'&lt;') + '</div>' +
+          '<div class="sg-card-meta"><span>' + (item.user_id || '') + '</span><span>' + (item.model_label || '') + '</span></div>' +
+        '</div>';
+      grid.appendChild(card);
+    });
+  });
+}
+
+document.getElementById('sgClose').addEventListener('click', function() {
+  document.getElementById('schoolGallery').classList.remove('open');
+  setComponentValue({action: 'close_gallery', ts: Date.now()});
 });
 
 init();

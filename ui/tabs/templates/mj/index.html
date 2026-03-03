@@ -488,6 +488,82 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
   .gallery{padding:20px 16px 48px;}
   .gen-card{gap:16px;margin-bottom:28px;}
 }
+
+/* ── 잠금(locked) 공통 ── */
+[data-feature].locked{position:relative;opacity:.35;pointer-events:none;user-select:none;}
+[data-feature].locked::after{
+  content:'🔒';font-size:9px;position:absolute;top:2px;right:4px;
+  pointer-events:none;line-height:1;
+}
+
+/* ── School Gallery Overlay ── */
+.school-gallery-overlay{
+  position:fixed;top:0;left:0;width:100%;height:100%;
+  background:rgba(0,0,0,0.85);z-index:9999;
+  display:flex;flex-direction:column;
+  opacity:0;pointer-events:none;transition:opacity .25s;
+}
+.school-gallery-overlay.open{opacity:1;pointer-events:auto;}
+.sg-header{
+  height:56px;display:flex;align-items:center;justify-content:space-between;
+  padding:0 24px;border-bottom:1px solid #27272a;flex-shrink:0;
+  background:#18181b;
+}
+.sg-header h2{font-size:16px;font-weight:700;color:#e4e4e7;}
+.sg-close{
+  width:32px;height:32px;border-radius:8px;
+  display:flex;align-items:center;justify-content:center;
+  color:#a1a1aa;transition:all .15s;font-size:18px;
+}
+.sg-close:hover{background:#27272a;color:#fff;}
+.sg-body{flex:1;overflow-y:auto;padding:24px;}
+.sg-grid{
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));
+  gap:16px;
+}
+.sg-card{
+  background:#18181b;border:1px solid #27272a;border-radius:12px;
+  overflow:hidden;transition:border-color .15s;
+}
+.sg-card:hover{border-color:#3f3f46;}
+.sg-card img{width:100%;aspect-ratio:1;object-fit:cover;display:block;}
+.sg-card-info{padding:10px 12px;}
+.sg-card-prompt{
+  font-size:12px;color:#a1a1aa;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
+  overflow:hidden;line-height:1.4;
+}
+.sg-card-meta{
+  display:flex;justify-content:space-between;align-items:center;
+  margin-top:6px;font-size:11px;color:#52525b;
+}
+.sg-empty{
+  text-align:center;padding:60px 20px;color:#52525b;font-size:14px;
+}
+
+/* ── 갤러리 피커 모달 ── */
+.gallery-picker-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity .2s;}
+.gallery-picker-overlay.open{opacity:1;}
+.gallery-picker{background:#1a1a2e;border-radius:16px;width:92%;max-width:640px;max-height:75vh;display:flex;flex-direction:column;box-shadow:0 8px 32px rgba(0,0,0,.5);overflow:hidden;}
+.gallery-picker-header{display:flex;justify-content:space-between;align-items:center;padding:16px 20px 8px;}
+.gallery-picker-title{font-size:16px;font-weight:700;color:#e4e4e7;}
+.gallery-picker-close{font-size:22px;color:#71717a;cursor:pointer;padding:4px 8px;border-radius:6px;background:none;border:none;}
+.gallery-picker-close:hover{color:#fff;background:rgba(255,255,255,.08);}
+.gallery-picker-tabs{display:flex;gap:8px;padding:8px 20px 12px;}
+.gp-tab{padding:6px 14px;border-radius:20px;border:1px solid #333;background:transparent;color:#a1a1aa;cursor:pointer;font-size:13px;transition:all .15s;}
+.gp-tab:hover{border-color:#555;color:#d0d0d0;}
+.gp-tab.active{background:#ef4444;color:#fff;border-color:#ef4444;}
+.gallery-picker-scroll{flex:1;min-height:0;overflow-y:auto;padding:4px 20px 12px;}
+.gallery-picker-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;}
+.gp-item{position:relative;border-radius:8px;overflow:hidden;cursor:pointer;aspect-ratio:4/3;background:#111;border:2px solid transparent;transition:border-color .15s;}
+.gp-item:hover{border-color:#ef4444;}
+.gp-item img{width:100%;height:100%;object-fit:cover;display:block;}
+.gp-item-badge{position:absolute;top:4px;left:4px;font-size:10px;padding:2px 6px;border-radius:4px;background:rgba(0,0,0,.65);color:#fff;pointer-events:none;}
+.gp-item-prompt{position:absolute;bottom:0;left:0;right:0;padding:4px 6px;font-size:10px;color:#fff;background:linear-gradient(transparent,rgba(0,0,0,.7));line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;pointer-events:none;}
+.gallery-picker-empty{grid-column:1/-1;text-align:center;padding:40px 20px;color:#52525b;font-size:13px;}
+.gallery-picker-footer{padding:12px 20px;border-top:1px solid rgba(255,255,255,.08);text-align:center;}
+.gp-upload-btn{padding:10px 24px;border-radius:8px;border:1px solid #444;background:transparent;color:#d0d0d0;cursor:pointer;font-size:13px;transition:all .15s;}
+.gp-upload-btn:hover{border-color:#888;color:#fff;background:rgba(255,255,255,.05);}
 </style>
 </head>
 <body>
@@ -501,34 +577,34 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
     </div>
     <div class="sidebar-body">
       <!-- 메인 메뉴 -->
-      <button class="sb-item" data-action="explore">
+      <button class="sb-item" data-action="explore" data-feature="mj.explore">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
-        Explore
+        Gallery
       </button>
       <button class="sb-item active" data-action="create">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
         Create
       </button>
-      <button class="sb-item" data-action="edit">
+      <button class="sb-item" data-action="edit" data-feature="mj.edit">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
         Edit
       </button>
-      <button class="sb-item" data-action="organize">
+      <button class="sb-item" data-action="organize" data-feature="mj.organize">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
         Organize
       </button>
 
       <!-- AESTHETICS 섹션 -->
       <div class="sb-section">Aesthetics</div>
-      <button class="sb-item" data-action="personalize">
+      <button class="sb-item" data-action="personalize" data-feature="mj.personalize">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
         Personalize
       </button>
-      <button class="sb-item" data-action="moodboards">
+      <button class="sb-item" data-action="moodboards" data-feature="mj.moodboards">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="9" x2="9" y2="21"/></svg>
         Moodboards
       </button>
-      <button class="sb-item" data-action="style-creator">
+      <button class="sb-item" data-action="style-creator" data-feature="mj.style_creator">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>
         Style Creator
         <span class="beta-badge">Beta</span>
@@ -536,11 +612,11 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
 
       <!-- COMMUNITY 섹션 -->
       <div class="sb-section">Community</div>
-      <button class="sb-item" data-action="chat">
+      <button class="sb-item" data-action="chat" data-feature="mj.chat">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
         Chat
       </button>
-      <button class="sb-item" data-action="tasks">
+      <button class="sb-item" data-action="tasks" data-feature="mj.tasks">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 9V5a3 3 0 00-6 0v4"/><rect x="5" y="9" width="14" height="12" rx="2"/></svg>
         Tasks
       </button>
@@ -548,19 +624,19 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
       <div class="spacer"></div>
 
       <!-- 하단 메뉴 -->
-      <button class="sb-item" data-action="help">
+      <button class="sb-item" data-action="help" data-feature="mj.help">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9 9a3 3 0 015.12 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
         Help
       </button>
-      <button class="sb-item" data-action="updates">
+      <button class="sb-item" data-action="updates" data-feature="mj.updates">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
         Updates
       </button>
-      <button class="sb-item" data-action="darkmode">
+      <button class="sb-item" data-action="darkmode" data-feature="mj.darkmode">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1111.21 3a7 7 0 009.79 9.79z"/></svg>
         Dark Mode
       </button>
-      <button class="sb-item" data-action="account" style="margin-bottom:4px;">
+      <button class="sb-item" data-action="account" data-feature="mj.account" style="margin-bottom:4px;">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M20 21a8 8 0 10-16 0"/></svg>
         My Account
       </button>
@@ -595,11 +671,11 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
         </button>
       </div>
       <div class="top-actions">
-        <button data-action="search"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="opacity:.7;"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></button>
-        <button data-action="organize"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="opacity:.7;"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M2 8h20"/></svg></button>
-        <button data-action="plan" style="display:flex;align-items:center;gap:4px;padding:0 10px;font-size:13px;font-weight:600;color:#d0d0d0;">P <span style="font-size:10px;opacity:.5;">&#9660;</span></button>
-        <button data-action="fast"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="opacity:.7;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></button>
-        <button data-action="chat"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="opacity:.7;"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg></button>
+        <button data-action="search" data-feature="mj.search"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="opacity:.7;"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></button>
+        <button data-action="organize" data-feature="mj.organize_top"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="opacity:.7;"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M2 8h20"/></svg></button>
+        <button data-action="plan" data-feature="mj.plan" style="display:flex;align-items:center;gap:4px;padding:0 10px;font-size:13px;font-weight:600;color:#d0d0d0;">P <span style="font-size:10px;opacity:.5;">&#9660;</span></button>
+        <button data-action="fast" data-feature="mj.fast"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="opacity:.7;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></button>
+        <button data-action="chat" data-feature="mj.chat_top"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="opacity:.7;"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg></button>
       </div>
     </div>
 
@@ -784,6 +860,38 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
   <div class="lightbox-content" id="lbContent"></div>
 </div>
 
+<div class="school-gallery-overlay" id="schoolGallery">
+  <div class="sg-header">
+    <h2>갤러리</h2>
+    <button class="sg-close" id="sgClose">&times;</button>
+  </div>
+  <div class="sg-body">
+    <div class="sg-grid" id="sgGrid"></div>
+    <div class="sg-empty" id="sgEmpty" style="display:none;">아직 공유된 이미지가 없습니다</div>
+  </div>
+</div>
+
+<!-- 갤러리 피커 모달 -->
+<div class="gallery-picker-overlay" id="galleryPickerOverlay" style="display:none">
+  <div class="gallery-picker">
+    <div class="gallery-picker-header">
+      <span class="gallery-picker-title">이미지 선택</span>
+      <button class="gallery-picker-close">&times;</button>
+    </div>
+    <div class="gallery-picker-tabs">
+      <button class="gp-tab active" data-filter="all">전체</button>
+      <button class="gp-tab" data-filter="mj">미드저니</button>
+      <button class="gp-tab" data-filter="nanobanana">나노바나나</button>
+    </div>
+    <div class="gallery-picker-scroll">
+      <div class="gallery-picker-grid" id="galleryPickerGrid"></div>
+    </div>
+    <div class="gallery-picker-footer">
+      <button class="gp-upload-btn" id="gpUploadBtn">PC에서 업로드</button>
+    </div>
+  </div>
+</div>
+
 <script>
 /* ═══════════════════════════════════════
    Streamlit Component 통신
@@ -903,7 +1011,12 @@ function getActiveTabKey() {
 }
 
 attachUpload.addEventListener("click", function() {
-  attachFileInput.click();
+  var items = buildPickerItems();
+  if (items.length > 0) {
+    showGalleryPicker(items);
+  } else {
+    attachFileInput.click();
+  }
 });
 
 attachUpload.addEventListener("dragover", function(e) {
@@ -1493,6 +1606,62 @@ function updateFrameHeight() {
   setFrameHeight(FRAME_H);
 }
 
+/* ── 잠금 판정 ── */
+function applyFeatureLocks(enabledFeatures) {
+  var featureSet = {};
+  (enabledFeatures || []).forEach(function(f){ featureSet[f] = true; });
+  document.querySelectorAll('[data-feature]').forEach(function(el){
+    if (featureSet[el.getAttribute('data-feature')]) {
+      el.classList.remove('locked');
+    } else {
+      el.classList.add('locked');
+    }
+  });
+}
+
+/* ── 갤러리 버튼 → 갤러리 열기 ── */
+var exploreBtn = document.querySelector('[data-feature="mj.explore"]');
+if (exploreBtn) {
+  exploreBtn.addEventListener('click', function() {
+    if (!this.classList.contains('locked')) {
+      setComponentValue({action: 'open_gallery', ts: Date.now()});
+    }
+  });
+}
+
+/* ── 학교 갤러리 렌더링 ── */
+function renderSchoolGallery(items) {
+  var grid = document.getElementById('sgGrid');
+  var empty = document.getElementById('sgEmpty');
+  grid.innerHTML = '';
+  if (!items || items.length === 0) {
+    empty.style.display = 'block';
+    grid.style.display = 'none';
+    return;
+  }
+  empty.style.display = 'none';
+  grid.style.display = '';
+  items.forEach(function(item) {
+    var images = item.images || [];
+    images.forEach(function(imgUrl) {
+      var card = document.createElement('div');
+      card.className = 'sg-card';
+      card.innerHTML =
+        '<img src="' + imgUrl + '" loading="lazy" onerror="this.style.display=\'none\'">' +
+        '<div class="sg-card-info">' +
+          '<div class="sg-card-prompt">' + (item.prompt || '').replace(/</g,'&lt;') + '</div>' +
+          '<div class="sg-card-meta"><span>' + (item.user_id || '') + '</span><span>' + (item.date || '') + '</span></div>' +
+        '</div>';
+      grid.appendChild(card);
+    });
+  });
+}
+
+document.getElementById('sgClose').addEventListener('click', function() {
+  document.getElementById('schoolGallery').classList.remove('open');
+  setComponentValue({action: 'close_gallery', ts: Date.now()});
+});
+
 window.addEventListener("message", function(event) {
   if (event.data.type !== "streamlit:render") return;
   var args = event.data.args || {};
@@ -1500,7 +1669,11 @@ window.addEventListener("message", function(event) {
   // Python에서 전달한 iframe 높이
   if (args.frame_height) FRAME_H = args.frame_height;
 
+  // 잠금 판정
+  applyFeatureLocks(args.enabled_features || []);
+
   allGalleryItems = args.gallery_items || [];
+  sourceGallery = args.source_gallery || [];
   _submitLock = false;
 
   // 검색 모드일 때는 필터 유지
@@ -1514,12 +1687,137 @@ window.addEventListener("message", function(event) {
     renderGallery(allGalleryItems);
   }
   setupLoadingTimers(allGalleryItems);
+
+  // 학교 갤러리 오버레이
+  var schoolGallery = args.school_gallery;
+  if (schoolGallery && Array.isArray(schoolGallery)) {
+    renderSchoolGallery(schoolGallery);
+    document.getElementById('schoolGallery').classList.add('open');
+  }
+
   setFrameHeight(FRAME_H);
 });
+
+/* ═══════════════════════════════════════
+   갤러리 피커 (생성 이미지에서 선택)
+   ═══════════════════════════════════════ */
+var sourceGallery = [];
+var gpCurrentFilter = "all";
+
+function buildPickerItems() {
+  var items = [];
+  // MJ 이미지: allGalleryItems에서 추출
+  (allGalleryItems || []).forEach(function(g) {
+    (g.images || []).forEach(function(url) {
+      if (url) items.push({ source: "mj", prompt: (g.prompt || "").slice(0, 60), url: url });
+    });
+  });
+  // NanoBanana: sourceGallery에서
+  (sourceGallery || []).forEach(function(s) {
+    if (s.url) items.push(s);
+  });
+  return items;
+}
+
+function resolveToDataUrl(url, callback) {
+  if (!url || url.startsWith("data:")) { callback(url); return; }
+  fetch(url).then(function(r) { return r.blob(); }).then(function(blob) {
+    var reader = new FileReader();
+    reader.onload = function() { callback(reader.result); };
+    reader.readAsDataURL(blob);
+  }).catch(function() { callback(url); });
+}
+
+function showGalleryPicker(items) {
+  gpCurrentFilter = "all";
+  var overlay = document.getElementById("galleryPickerOverlay");
+  overlay.style.display = "flex";
+  requestAnimationFrame(function() { overlay.classList.add("open"); });
+  renderPickerGrid(items, "all");
+
+  // 탭 버튼 초기화
+  overlay.querySelectorAll(".gp-tab").forEach(function(btn) {
+    btn.classList.toggle("active", btn.getAttribute("data-filter") === "all");
+  });
+}
+
+function hideGalleryPicker() {
+  var overlay = document.getElementById("galleryPickerOverlay");
+  overlay.classList.remove("open");
+  setTimeout(function() { overlay.style.display = "none"; }, 200);
+}
+
+function renderPickerGrid(items, filter) {
+  var grid = document.getElementById("galleryPickerGrid");
+  var filtered = filter === "all" ? items : items.filter(function(it) { return it.source === filter; });
+
+  if (filtered.length === 0) {
+    grid.innerHTML = '<div class="gallery-picker-empty">선택 가능한 이미지가 없습니다</div>';
+    return;
+  }
+
+  grid.innerHTML = filtered.map(function(it, idx) {
+    var badge = it.source === "mj" ? "MJ" : "NB";
+    return '<div class="gp-item" data-gp-idx="' + idx + '">' +
+      '<img src="' + it.url + '" loading="lazy">' +
+      '<div class="gp-item-badge">' + badge + '</div>' +
+      (it.prompt ? '<div class="gp-item-prompt">' + it.prompt.replace(/</g, '&lt;') + '</div>' : '') +
+    '</div>';
+  }).join("");
+
+  grid.querySelectorAll(".gp-item").forEach(function(el, i) {
+    el.addEventListener("click", function() {
+      onGalleryImageSelect(filtered[i].url);
+    });
+  });
+}
+
+function onGalleryImageSelect(url) {
+  resolveToDataUrl(url, function(dataUrl) {
+    var tabKey = getActiveTabKey();
+    tabImages[tabKey].push({ name: "gallery_image", dataUrl: dataUrl });
+    renderAttachBody();
+    renderTabThumbs(tabKey);
+    updateAttachBadge();
+    hideGalleryPicker();
+  });
+}
+
+// 갤러리 피커 이벤트 바인딩
+(function() {
+  var overlay = document.getElementById("galleryPickerOverlay");
+  if (!overlay) return;
+
+  // 오버레이 클릭 → 닫기
+  overlay.addEventListener("click", function(e) {
+    if (e.target === overlay) hideGalleryPicker();
+  });
+
+  // 닫기 버튼
+  overlay.querySelector(".gallery-picker-close").addEventListener("click", hideGalleryPicker);
+
+  // 필터 탭
+  overlay.querySelectorAll(".gp-tab").forEach(function(btn) {
+    btn.addEventListener("click", function() {
+      overlay.querySelectorAll(".gp-tab").forEach(function(b) { b.classList.remove("active"); });
+      btn.classList.add("active");
+      gpCurrentFilter = btn.getAttribute("data-filter");
+      renderPickerGrid(buildPickerItems(), gpCurrentFilter);
+    });
+  });
+
+  // PC에서 업로드 버튼
+  document.getElementById("gpUploadBtn").addEventListener("click", function() {
+    hideGalleryPicker();
+    attachFileInput.click();
+  });
+})();
 
 componentReady();
 setFrameHeight(FRAME_H);
 updateAspectRatio();
 </script>
+
+
 </body>
 </html>

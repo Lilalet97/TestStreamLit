@@ -1,7 +1,13 @@
 {
   "tenant_id": "school_a",
   "layout": "프로토타입 대학",
-  "enabled_features": ["tab.gpt", "tab.mj", "tab.suno", "tab.kling_web", "tab.elevenlabs", "tab.nanobanana"],
+  "enabled_features": [
+    "tab.gpt", "tab.mj", "tab.suno", "tab.kling_veo", "tab.elevenlabs", "tab.nanobanana",
+    "mj.create", "mj.imagine", "mj.explore",
+    "kling.text2video", "kling.assets",
+    "elevenlabs.tts", "elevenlabs.gallery",
+    "nanobanana.generate", "nanobanana.gallery"
+  ],
   "branding": {
     "page_title": "프로토타입 대학 AI 교육",
     "browser_tab_title": "프로토타입 대학",

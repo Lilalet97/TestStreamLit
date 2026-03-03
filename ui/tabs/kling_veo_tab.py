@@ -1,5 +1,5 @@
-# ui/tabs/kling_tab.py
-"""Kling 비디오 생성 페이지 (Kling API) — declare_component 양방향 통신."""
+# ui/tabs/kling_veo_tab.py
+"""Kling 비디오 생성 페이지 (Google Veo) — declare_component 양방향 통신."""
 import time
 from pathlib import Path
 
@@ -9,7 +9,8 @@ import streamlit.components.v1 as components
 from core.config import AppConfig
 from core.api_bridge import call_with_lease
 from core.db import insert_kling_web_item, load_kling_web_history, update_kling_web_video_urls, load_school_kling_gallery, load_mj_gallery, load_nanobanana_sessions
-from providers import kling
+from providers import kling  # noqa: F401 — 향후 Kling 재전환용 보존
+from providers import google_veo
 from ui.sidebar import SidebarState
 
 _COMPONENT_DIR = Path(__file__).resolve().parent / "templates" / "kling"
@@ -22,25 +23,25 @@ def _is_authenticated() -> bool:
 
 def _init_state(cfg: AppConfig):
     """세션 상태 초기화: 로그인 사용자는 DB에서 로드."""
-    if "klingapi_history" in st.session_state and st.session_state.get("_klingapi_db_loaded"):
+    if "kling_web_history" in st.session_state and st.session_state.get("_kling_db_loaded"):
         return
 
     if _is_authenticated():
         items = load_kling_web_history(cfg, st.session_state["user_id"])
         if items:
-            st.session_state.klingapi_history = items
-            st.session_state["_klingapi_db_loaded"] = True
+            st.session_state.kling_web_history = items
+            st.session_state["_kling_db_loaded"] = True
             return
 
-    if "klingapi_history" not in st.session_state:
-        st.session_state.klingapi_history = []
-    st.session_state["_klingapi_db_loaded"] = True
+    if "kling_web_history" not in st.session_state:
+        st.session_state.kling_web_history = []
+    st.session_state["_kling_db_loaded"] = True
 
 
 def _kling_component(
     frame_height: int = 900,
     history: list | None = None,
-    key: str = "klingapi_main",
+    key: str = "kling_main",
     enabled_features: list | None = None,
     school_gallery: list | None = None,
     source_gallery: list | None = None,
@@ -111,28 +112,72 @@ def _call_kling_video(access_key: str, secret_key: str,
     raise RuntimeError(f"Kling 작업 시간 초과 ({max_poll_sec}초)")
 
 
+def _map_kling_to_veo(settings: dict) -> dict:
+    """UI 설정을 Veo 파라미터로 변환."""
+    ratio = settings.get("ratio", "16:9")
+    # Veo는 16:9, 9:16만 지원 → 1:1은 16:9로 fallback
+    if ratio not in ("16:9", "9:16"):
+        ratio = "16:9"
+
+    veo_settings: dict = {"aspectRatio": ratio}
+
+    # duration: UI에서 직접 Veo 값(5/6/8) 전달
+    duration = str(settings.get("duration", "8"))
+    veo_settings["durationSeconds"] = duration
+
+    # resolution
+    resolution = settings.get("resolution")
+    if resolution in ("1080p", "4k"):
+        veo_settings["resolution"] = resolution
+    elif resolution == "720p":
+        veo_settings["resolution"] = resolution
+
+    return veo_settings
+
+
+def _call_veo_video(
+    api_key: str,
+    prompt: str, settings: dict,
+    start_frame_data: str = "",
+    end_frame_data: str = "",
+    # [VERTEX AI] sa_json: str = "", project_id: str = "", location: str = "",
+) -> list:
+    """Kling settings → Veo settings 변환 후 Google Veo API 호출."""
+    veo_settings = _map_kling_to_veo(settings)
+    return google_veo.generate_video(
+        api_key=api_key,
+        prompt=prompt, settings=veo_settings,
+        start_image_data_url=start_frame_data,
+        end_image_data_url=end_frame_data,
+        # [VERTEX AI] sa_json=sa_json, project_id=project_id, location=location,
+    )
+
+
 def _get_tab_features(cfg: AppConfig, prefix: str) -> list:
     school_id = st.session_state.get("school_id", "default")
     return [f for f in cfg.get_enabled_features(school_id) if f.startswith(prefix)]
 
 
-def render_kling_tab(cfg: AppConfig, sidebar: SidebarState):
-    """Kling 비디오 생성 탭 (Kling API)."""
+def render_kling_web_tab(cfg: AppConfig, sidebar: SidebarState):
+    """Kling 비디오 생성 탭."""
     _init_state(cfg)
 
     # ── 대기 중인 생성 요청 처리 (2단계: 실제 API 호출) ──
-    pending = st.session_state.get("_klingapi_pending_generate")
+    pending = st.session_state.get("_kling_pending_generate")
     if pending:
-        del st.session_state["_klingapi_pending_generate"]
+        del st.session_state["_kling_pending_generate"]
         try:
             video_urls = call_with_lease(
                 cfg,
                 test_mode=False,
-                provider="kling",
+                provider="google_veo",
                 mock_fn=lambda: [],
-                real_fn=lambda kp: _call_kling_video(
-                    kp["access_key"], kp["secret_key"],
+                real_fn=lambda kp: _call_veo_video(
+                    kp["api_key"],
                     pending["prompt"], pending["settings"],
+                    start_frame_data=pending.get("start_frame_data", ""),
+                    end_frame_data=pending.get("end_frame_data", ""),
+                    # [VERTEX AI] kp["sa_json"], kp["project_id"], kp["location"],
                 ),
                 lease_ttl_sec=420,
             )
@@ -144,10 +189,10 @@ def render_kling_tab(cfg: AppConfig, sidebar: SidebarState):
                 )
         except Exception as e:
             video_urls = []
-            st.session_state["_klingapi_error_msg"] = f"Video API 오류: {e}"
+            st.session_state["_kling_error_msg"] = f"Video API 오류: {e}"
 
         # 로딩 아이템 업데이트
-        for item in st.session_state.get("klingapi_history", []):
+        for item in st.session_state.get("kling_web_history", []):
             if item.get("item_id") == pending["item_id"] and item.get("loading"):
                 item["video_urls"] = video_urls
                 item["loading"] = False
@@ -160,7 +205,7 @@ def render_kling_tab(cfg: AppConfig, sidebar: SidebarState):
         st.rerun()
 
     # ── 에러 메시지 표시 (이전 rerun에서 저장된 것) ──
-    _err = st.session_state.pop("_klingapi_error_msg", None)
+    _err = st.session_state.pop("_kling_error_msg", None)
     if _err:
         st.toast(_err, icon="⚠️")
 
@@ -183,7 +228,7 @@ def render_kling_tab(cfg: AppConfig, sidebar: SidebarState):
 
     # 학교 공유 갤러리 데이터 로드
     school_gallery = None
-    if st.session_state.get("_klingapi_gallery_open"):
+    if st.session_state.get("_kling_gallery_open"):
         school_id = st.session_state.get("school_id", "default")
         school_gallery = load_school_kling_gallery(cfg, school_id)
 
@@ -216,7 +261,7 @@ def render_kling_tab(cfg: AppConfig, sidebar: SidebarState):
         except Exception:
             pass
 
-    history = st.session_state.get("klingapi_history", [])
+    history = st.session_state.get("kling_web_history", [])
     result = _kling_component(frame_height=900, history=history,
                               enabled_features=_get_tab_features(cfg, "kling."),
                               school_gallery=school_gallery,
@@ -231,22 +276,22 @@ def render_kling_tab(cfg: AppConfig, sidebar: SidebarState):
     # 중복 실행 방지: 처리 완료된 action key set으로 체크
     _item_id = result.get("item_id", "")
     dedup_key = f"{action}_{ts}_{_item_id}"
-    _processed = st.session_state.setdefault("_klingapi_processed_actions", set())
+    _processed = st.session_state.setdefault("_kling_processed_actions", set())
     if dedup_key in _processed:
         return
     _processed.add(dedup_key)
     if len(_processed) > 100:
-        st.session_state["_klingapi_processed_actions"] = {dedup_key}
+        st.session_state["_kling_processed_actions"] = {dedup_key}
 
     if action == "open_gallery":
-        st.session_state["_klingapi_gallery_open"] = True
+        st.session_state["_kling_gallery_open"] = True
         st.rerun()
     elif action == "close_gallery":
-        st.session_state["_klingapi_gallery_open"] = False
+        st.session_state["_kling_gallery_open"] = False
         st.rerun()
     elif action == "generate":
         # 이미 대기 중인 요청이 있으면 무시 (중복 방지)
-        if st.session_state.get("_klingapi_pending_generate"):
+        if st.session_state.get("_kling_pending_generate"):
             return
 
         prompt_text = result.get("prompt", "")
@@ -281,13 +326,15 @@ def render_kling_tab(cfg: AppConfig, sidebar: SidebarState):
                 except Exception:
                     pass
 
-            st.session_state.setdefault("klingapi_history", []).insert(0, new_item)
+            st.session_state.setdefault("kling_web_history", []).insert(0, new_item)
 
             # 다음 rerun에서 처리할 대기 요청 저장
-            st.session_state["_klingapi_pending_generate"] = {
+            st.session_state["_kling_pending_generate"] = {
                 "item_id": item_id,
                 "prompt": prompt_text,
                 "settings": settings,
+                "start_frame_data": result.get("start_frame") or "",
+                "end_frame_data": result.get("end_frame") or "",
             }
         else:
             # Mock ON → 기존 동작 유지 (JS가 mock 완료 이벤트 전달)
@@ -317,7 +364,7 @@ def render_kling_tab(cfg: AppConfig, sidebar: SidebarState):
                 except Exception:
                     pass
 
-            st.session_state.setdefault("klingapi_history", []).insert(0, new_item)
+            st.session_state.setdefault("kling_web_history", []).insert(0, new_item)
 
         st.rerun()
 
@@ -325,7 +372,7 @@ def render_kling_tab(cfg: AppConfig, sidebar: SidebarState):
     elif action == "loading_complete":
         item_id = result.get("item_id")
         video_urls = result.get("video_urls", [])
-        for item in st.session_state.get("klingapi_history", []):
+        for item in st.session_state.get("kling_web_history", []):
             if item.get("item_id") == item_id:
                 item["loading"] = False
                 item["video_urls"] = video_urls
@@ -339,8 +386,8 @@ def render_kling_tab(cfg: AppConfig, sidebar: SidebarState):
 
 
 TAB = {
-    "tab_id": "kling",
+    "tab_id": "kling_veo",
     "title": "🎬 Kling",
-    "required_features": {"tab.kling"},
-    "render": render_kling_tab,
+    "required_features": {"tab.kling_veo"},
+    "render": render_kling_web_tab,
 }

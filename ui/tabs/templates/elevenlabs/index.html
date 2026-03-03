@@ -342,6 +342,54 @@ input[type="range"]::-webkit-slider-runnable-track{height:4px;border-radius:2px;
   .settings-panel{display:none;}
   .main-panel{padding:16px;}
 }
+
+/* ── 잠금(locked) 공통 ── */
+[data-feature].locked{position:relative;opacity:.35;pointer-events:none;user-select:none;}
+[data-feature].locked::after{
+  content:'🔒';font-size:9px;position:absolute;top:2px;right:4px;
+  pointer-events:none;line-height:1;
+}
+
+/* ── School Gallery Overlay ── */
+.school-gallery-overlay{
+  position:fixed;top:0;left:0;width:100%;height:100%;
+  background:rgba(0,0,0,0.85);z-index:9999;
+  display:flex;flex-direction:column;
+  opacity:0;pointer-events:none;transition:opacity .25s;
+}
+.school-gallery-overlay.open{opacity:1;pointer-events:auto;}
+.sg-header{
+  height:56px;display:flex;align-items:center;justify-content:space-between;
+  padding:0 24px;border-bottom:1px solid #27272a;flex-shrink:0;
+  background:#18181b;
+}
+.sg-header h2{font-size:16px;font-weight:700;color:#e4e4e7;}
+.sg-close{
+  width:32px;height:32px;border-radius:8px;
+  display:flex;align-items:center;justify-content:center;
+  color:#a1a1aa;transition:all .15s;font-size:18px;
+}
+.sg-close:hover{background:#27272a;color:#fff;}
+.sg-body{flex:1;overflow-y:auto;padding:24px;}
+.sg-list{display:flex;flex-direction:column;gap:12px;max-width:800px;margin:0 auto;}
+.sg-audio-card{
+  background:#18181b;border:1px solid #27272a;border-radius:12px;
+  padding:16px;transition:border-color .15s;
+}
+.sg-audio-card:hover{border-color:#3f3f46;}
+.sg-audio-text{
+  font-size:13px;color:#a1a1aa;line-height:1.5;
+  margin-bottom:8px;
+  display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;
+}
+.sg-audio-card audio{width:100%;height:36px;margin:8px 0;}
+.sg-audio-meta{
+  display:flex;justify-content:space-between;align-items:center;
+  font-size:11px;color:#52525b;
+}
+.sg-empty{
+  text-align:center;padding:60px 20px;color:#52525b;font-size:14px;
+}
 </style>
 </head>
 <body>
@@ -358,8 +406,9 @@ input[type="range"]::-webkit-slider-runnable-track{height:4px;border-radius:2px;
       </div>
     </div>
     <div class="top-bar-right">
-      <button class="top-btn">Feedback</button>
-      <button class="top-btn">Docs</button>
+      <button class="top-btn" data-feature="elevenlabs.gallery" id="galleryBtn">🎵 갤러리</button>
+      <button class="top-btn" data-feature="elevenlabs.feedback">Feedback</button>
+      <button class="top-btn" data-feature="elevenlabs.docs">Docs</button>
       <span class="char-count" id="charCount">0</span>
     </div>
   </div>
@@ -443,9 +492,9 @@ input[type="range"]::-webkit-slider-runnable-track{height:4px;border-radius:2px;
       <div class="history-content" id="historyContent">
         <input class="history-search" id="historySearch" type="text" placeholder="Search history...">
         <div class="history-filters">
-          <button class="history-filter">+ Voice</button>
-          <button class="history-filter">+ Model</button>
-          <button class="history-filter">+ Date</button>
+          <button class="history-filter" data-feature="elevenlabs.history_filter_voice">+ Voice</button>
+          <button class="history-filter" data-feature="elevenlabs.history_filter_model">+ Model</button>
+          <button class="history-filter" data-feature="elevenlabs.history_filter_date">+ Date</button>
         </div>
         <div id="historyList"></div>
         <div class="history-empty" id="historyEmpty">No history yet</div>
@@ -492,7 +541,7 @@ input[type="range"]::-webkit-slider-runnable-track{height:4px;border-radius:2px;
     </div>
 
     <div class="player-actions">
-      <button title="Share">
+      <button title="Share" data-feature="elevenlabs.share">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
       </button>
       <button id="playerDownload" title="Download">
@@ -506,6 +555,17 @@ input[type="range"]::-webkit-slider-runnable-track{height:4px;border-radius:2px;
 
   <!-- Hidden audio element -->
   <audio id="hiddenAudio" preload="metadata"></audio>
+</div>
+
+<div class="school-gallery-overlay" id="schoolGallery">
+  <div class="sg-header">
+    <h2>갤러리</h2>
+    <button class="sg-close" id="sgClose">&times;</button>
+  </div>
+  <div class="sg-body">
+    <div class="sg-list" id="sgList"></div>
+    <div class="sg-empty" id="sgEmpty" style="display:none;">아직 공유된 오디오가 없습니다</div>
+  </div>
 </div>
 
 <script>
@@ -1053,10 +1113,32 @@ document.getElementById("btnGenerate").addEventListener("click", function(){
    ══════════════════════════════════════ */
 var _lastHistoryKey = "";
 
+/* ── 잠금 판정 ── */
+function applyFeatureLocks(enabledFeatures) {
+  var featureSet = {};
+  (enabledFeatures || []).forEach(function(f){ featureSet[f] = true; });
+  document.querySelectorAll('[data-feature]').forEach(function(el){
+    if (featureSet[el.getAttribute('data-feature')]) {
+      el.classList.remove('locked');
+    } else {
+      el.classList.add('locked');
+    }
+  });
+}
+
 window.addEventListener("message", function(event){
   if(event.data.type !== "streamlit:render") return;
   var args = event.data.args || {};
+  // 잠금 판정
+  applyFeatureLocks(args.enabled_features || []);
   setFrameHeight(document.body.scrollHeight);
+
+  // School Gallery
+  var schoolGallery = args.school_gallery;
+  if (schoolGallery && Array.isArray(schoolGallery)) {
+    renderSchoolGallery(schoolGallery);
+    document.getElementById('schoolGallery').classList.add('open');
+  }
 
   var hist = args.history || [];
   var key = hist.map(function(h){
@@ -1095,7 +1177,50 @@ window.addEventListener("message", function(event){
   setupLoadingTimers(resultItems);
 });
 
+/* ══════════════════════════════════════
+   School Gallery
+   ══════════════════════════════════════ */
+var galleryBtn = document.getElementById('galleryBtn');
+if (galleryBtn) {
+  galleryBtn.addEventListener('click', function() {
+    if (!this.classList.contains('locked')) {
+      setComponentValue({action: 'open_gallery', ts: Date.now()});
+    }
+  });
+}
+
+function renderSchoolGallery(items) {
+  var list = document.getElementById('sgList');
+  var empty = document.getElementById('sgEmpty');
+  list.innerHTML = '';
+  if (!items || items.length === 0) {
+    empty.style.display = 'block';
+    list.style.display = 'none';
+    return;
+  }
+  empty.style.display = 'none';
+  list.style.display = '';
+  items.forEach(function(item) {
+    var card = document.createElement('div');
+    card.className = 'sg-audio-card';
+    card.innerHTML =
+      '<div class="sg-audio-text">' + (item.text || '').replace(/</g,'&lt;') + '</div>' +
+      '<audio controls preload="metadata" src="' + (item.audio_url || '') + '"></audio>' +
+      '<div class="sg-audio-meta">' +
+        '<span>' + (item.user_id || '') + '</span>' +
+        '<span>' + (item.voice_name || '') + ' · ' + (item.model_label || '') + '</span>' +
+      '</div>';
+    list.appendChild(card);
+  });
+}
+
+document.getElementById('sgClose').addEventListener('click', function() {
+  document.getElementById('schoolGallery').classList.remove('open');
+  setComponentValue({action: 'close_gallery', ts: Date.now()});
+});
+
 init();
 </script>
+
 </body>
 </html>

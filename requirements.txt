@@ -1,5 +1,6 @@
 streamlit
 requests
+google-auth
 PyJWT
 streamlit-cookies-controller
 pandas

@@ -99,15 +99,38 @@ def load_key_pool_spec(cfg: AppConfig) -> Dict[str, List[Dict[str, Any]]]:
             "is_active": True,
         }]
     if cfg.google_api_key:
+        _gk = {"api_key": cfg.google_api_key}
         spec["google_imagen"] = [{
             "name": "google-imagen-fallback",
-            "api_key": cfg.google_api_key,
+            **_gk,
             "concurrency_limit": 2,
             "rpm_limit": 30,
             "priority": 0,
             "tenant_scope": "*",
             "is_active": True,
         }]
+        spec["google_veo"] = [{
+            "name": "google-veo-fallback",
+            **_gk,
+            "concurrency_limit": 2,
+            "rpm_limit": 10,
+            "priority": 0,
+            "tenant_scope": "*",
+            "is_active": True,
+        }]
+    # [VERTEX AI] vertex_sa_json 폴백 — 결제 등록 후 복원
+    # if cfg.vertex_sa_json:
+    #     _vx = {
+    #         "sa_json": cfg.vertex_sa_json,
+    #         "project_id": cfg.vertex_project_id,
+    #         "location": cfg.vertex_location,
+    #     }
+    #     spec["google_imagen"] = [{"name": "google-imagen-fallback", **_vx,
+    #         "concurrency_limit": 2, "rpm_limit": 30, "priority": 0,
+    #         "tenant_scope": "*", "is_active": True}]
+    #     spec["google_veo"] = [{"name": "google-veo-fallback", **_vx,
+    #         "concurrency_limit": 2, "rpm_limit": 10, "priority": 0,
+    #         "tenant_scope": "*", "is_active": True}]
     return spec
 
 def ensure_tables(cfg: AppConfig) -> None:
@@ -216,11 +239,28 @@ def seed_keys(cfg: AppConfig) -> None:
                 expires_at = item.get("expires_at")
 
                 # provider별 payload 구성
-                if provider in ("openai", "midjourney", "elevenlabs", "google_imagen"):
+                if provider in ("openai", "midjourney", "elevenlabs"):
                     api_key = (item.get("api_key") or "").strip()
                     if not api_key:
                         continue
                     payload = {"api_key": api_key}
+                elif provider in ("google_imagen", "google_veo"):
+                    api_key = (item.get("api_key") or "").strip()
+                    # __GOOGLE__ 마커: cfg.google_api_key 참조
+                    if api_key == "__GOOGLE__":
+                        api_key = cfg.google_api_key
+                    if not api_key:
+                        continue
+                    payload = {"api_key": api_key}
+                    # [VERTEX AI] sa_json 기반 payload — 결제 등록 후 복원
+                    # sa_json = (item.get("sa_json") or "").strip()
+                    # project_id = (item.get("project_id") or "").strip()
+                    # location = (item.get("location") or "us-central1").strip()
+                    # if sa_json == "__VERTEX__": sa_json = cfg.vertex_sa_json
+                    # if not project_id or project_id == "__VERTEX__": project_id = cfg.vertex_project_id
+                    # if not location or location == "__VERTEX__": location = cfg.vertex_location or "us-central1"
+                    # if not sa_json: continue
+                    # payload = {"sa_json": sa_json, "project_id": project_id, "location": location}
                 elif provider == "kling":
                     ak = (item.get("access_key") or "").strip()
                     sk = (item.get("secret_key") or "").strip()

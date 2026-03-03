@@ -34,7 +34,6 @@ from core.db import (
     purge_old_records,
     run_auto_purge,
 )
-from ui.sidebar import render_profile_card
 from ui.stress_test_tab import render_stress_test_execution, render_stress_test_results
 from ui.stress_report import render_stress_report
 
@@ -421,16 +420,21 @@ def render_viewer_page(cfg: AppConfig):
         st.error('viewer 권한이 필요합니다.')
         return
 
-    render_profile_card(cfg)
+    _VIEWER_TABS = ['모니터링', '실행 기록', '부하테스트 결과']
 
-    st.title('👁️ 모니터링 페이지')
+    with st.sidebar:
+        selected = st.radio(
+            "메뉴",
+            options=range(len(_VIEWER_TABS)),
+            format_func=lambda i: _VIEWER_TABS[i],
+            key="viewer_tab",
+            label_visibility="collapsed",
+        )
 
-    tab_monitor, tab_runs, tab_stress = st.tabs(['모니터링', '실행 기록', '부하테스트 결과'])
-
-    with tab_monitor:
+    if selected == 0:
         _live_monitor_panel(cfg)
 
-    with tab_runs:
+    elif selected == 1:
         user_rows = list_users(cfg, include_inactive=True)
         user_ids = ['(all)'] + [r['user_id'] for r in user_rows]
         sel_user = st.selectbox('필터: user_id', user_ids, index=0, key='viewer_user_filter')
@@ -438,52 +442,178 @@ def render_viewer_page(cfg: AppConfig):
 
         filter_uid = None if sel_user == '(all)' else sel_user
 
-        # GPT Conversations
+        # ── GPT Conversations ──
         st.subheader('💬 GPT Conversations')
         gpt_items = list_gpt_conversations_admin(cfg, limit=limit, user_id=filter_uid)
         if gpt_items:
             import pandas as pd
-            st.dataframe(pd.DataFrame(gpt_items), width="stretch", hide_index=True)
+            df = pd.DataFrame(gpt_items)
+            df.insert(0, '보기', False)
+
+            tbl_ver = st.session_state.get('_v_gpt_tbl_ver', 0)
+            edited = st.data_editor(
+                df,
+                column_config={
+                    '보기': st.column_config.CheckboxColumn('👁', default=False, width='small'),
+                    'id': None,
+                },
+                disabled=[c for c in df.columns if c != '보기'],
+                hide_index=True,
+                width='stretch',
+                key=f'v_gpt_conv_table_{tbl_ver}',
+            )
+
+            checked = edited.index[edited['보기'] == True].tolist()
+            if checked:
+                idx = checked[0]
+                if idx < len(gpt_items):
+                    st.session_state['_view_gpt_conv_id'] = gpt_items[idx]['id']
+                    st.session_state['_open_gpt_detail'] = True
+                    st.session_state['_v_gpt_tbl_ver'] = tbl_ver + 1
+                    st.rerun()
         else:
             st.info('표시할 GPT 대화가 없습니다.')
 
-        # Midjourney
+        _maybe_open_gpt_dialog(cfg)
+
+        # ── Midjourney ──
         st.subheader('🎨 Midjourney')
-        mj_items = _rows_to_dicts(list_mj_gallery_admin(cfg, limit=limit, user_id=filter_uid))
+        mj_rows = list_mj_gallery_admin(cfg, limit=limit, user_id=filter_uid)
+        mj_items = _rows_to_dicts(mj_rows)
         if mj_items:
             import pandas as pd
-            st.dataframe(pd.DataFrame(mj_items), width="stretch", hide_index=True)
+            mj_df = pd.DataFrame(mj_items)
+            mj_df.insert(0, '보기', False)
+
+            mj_tbl_ver = st.session_state.get('_v_mj_tbl_ver', 0)
+            mj_edited = st.data_editor(
+                mj_df,
+                column_config={
+                    '보기': st.column_config.CheckboxColumn('👁', default=False, width='small'),
+                    'id': None,
+                },
+                disabled=[c for c in mj_df.columns if c != '보기'],
+                hide_index=True,
+                width='stretch',
+                key=f'v_mj_table_{mj_tbl_ver}',
+            )
+
+            mj_checked = mj_edited.index[mj_edited['보기'] == True].tolist()
+            if mj_checked:
+                idx = mj_checked[0]
+                if idx < len(mj_items):
+                    st.session_state['_view_mj_row_id'] = mj_items[idx]['id']
+                    st.session_state['_open_mj_detail'] = True
+                    st.session_state['_v_mj_tbl_ver'] = mj_tbl_ver + 1
+                    st.rerun()
         else:
             st.info('표시할 MJ 기록이 없습니다.')
 
-        # Kling Web
+        _maybe_open_mj_dialog(cfg)
+
+        # ── Kling Web ──
         st.subheader('🎬 Kling Web')
         kling_items = list_kling_web_admin(cfg, limit=limit, user_id=filter_uid)
         if kling_items:
             import pandas as pd
-            st.dataframe(pd.DataFrame(kling_items), width="stretch", hide_index=True)
+            kling_df = pd.DataFrame(kling_items)
+            kling_df.insert(0, '보기', False)
+
+            kling_tbl_ver = st.session_state.get('_v_kling_tbl_ver', 0)
+            kling_edited = st.data_editor(
+                kling_df,
+                column_config={
+                    '보기': st.column_config.CheckboxColumn('👁', default=False, width='small'),
+                    'id': None,
+                },
+                disabled=[c for c in kling_df.columns if c != '보기'],
+                hide_index=True,
+                width='stretch',
+                key=f'v_kling_web_table_{kling_tbl_ver}',
+            )
+
+            kling_checked = kling_edited.index[kling_edited['보기'] == True].tolist()
+            if kling_checked:
+                idx = kling_checked[0]
+                if idx < len(kling_items):
+                    st.session_state['_view_kling_row_id'] = kling_items[idx]['id']
+                    st.session_state['_open_kling_detail'] = True
+                    st.session_state['_v_kling_tbl_ver'] = kling_tbl_ver + 1
+                    st.rerun()
         else:
             st.info('표시할 Kling Web 기록이 없습니다.')
 
-        # ElevenLabs TTS
+        _maybe_open_kling_dialog(cfg)
+
+        # ── ElevenLabs TTS ──
         st.subheader('🔊 ElevenLabs TTS')
         el_items = list_elevenlabs_admin(cfg, limit=limit, user_id=filter_uid)
         if el_items:
             import pandas as pd
-            st.dataframe(pd.DataFrame(el_items), width="stretch", hide_index=True)
+            el_df = pd.DataFrame(el_items)
+            el_df.insert(0, '보기', False)
+
+            el_tbl_ver = st.session_state.get('_v_el_tbl_ver', 0)
+            el_edited = st.data_editor(
+                el_df,
+                column_config={
+                    '보기': st.column_config.CheckboxColumn('👁', default=False, width='small'),
+                    'id': None,
+                },
+                disabled=[c for c in el_df.columns if c != '보기'],
+                hide_index=True,
+                width='stretch',
+                key=f'v_el_table_{el_tbl_ver}',
+            )
+
+            el_checked = el_edited.index[el_edited['보기'] == True].tolist()
+            if el_checked:
+                idx = el_checked[0]
+                if idx < len(el_items):
+                    st.session_state['_view_elevenlabs_row_id'] = el_items[idx]['id']
+                    st.session_state['_open_elevenlabs_detail'] = True
+                    st.session_state['_v_el_tbl_ver'] = el_tbl_ver + 1
+                    st.rerun()
         else:
             st.info('표시할 ElevenLabs 기록이 없습니다.')
 
-        # NanoBanana Sessions
+        _maybe_open_elevenlabs_dialog(cfg)
+
+        # ── NanoBanana Sessions (멀티턴) ──
         st.subheader('\U0001f34c NanoBanana Sessions')
         nb_sessions = list_nanobanana_sessions_admin(cfg, limit=limit, user_id=filter_uid)
         if nb_sessions:
             import pandas as pd
-            st.dataframe(pd.DataFrame(nb_sessions), width="stretch", hide_index=True)
+            nb_df = pd.DataFrame(nb_sessions)
+            nb_df.insert(0, '보기', False)
+
+            nb_tbl_ver = st.session_state.get('_v_nb_tbl_ver', 0)
+            nb_edited = st.data_editor(
+                nb_df,
+                column_config={
+                    '보기': st.column_config.CheckboxColumn('👁', default=False, width='small'),
+                    'id': None,
+                },
+                disabled=[c for c in nb_df.columns if c != '보기'],
+                hide_index=True,
+                width='stretch',
+                key=f'v_nb_table_{nb_tbl_ver}',
+            )
+
+            nb_checked = nb_edited.index[nb_edited['보기'] == True].tolist()
+            if nb_checked:
+                idx = nb_checked[0]
+                if idx < len(nb_sessions):
+                    st.session_state['_view_nb_session_id'] = nb_sessions[idx]['id']
+                    st.session_state['_open_nb_session_detail'] = True
+                    st.session_state['_v_nb_tbl_ver'] = nb_tbl_ver + 1
+                    st.rerun()
         else:
             st.info('표시할 NanoBanana 세션이 없습니다.')
 
-    with tab_stress:
+        _maybe_open_nanobanana_session_dialog(cfg)
+
+    elif selected == 2:
         render_stress_report(cfg)
 
 
@@ -582,20 +712,39 @@ def render_admin_page(cfg: AppConfig):
         st.error('관리자 권한이 필요합니다.')
         return
 
-    render_profile_card(cfg)
+    _ADMIN_TABS = ['모니터링', '키풀 상태', '실행 기록', '부하테스트', '계정 관리', 'DB 관리']
 
-    st.title('🛠️ 운영 페이지')
-
-    tab_monitor, tab_runs, tab_keypool, tab_users, tab_stress, tab_db = st.tabs(
-        ['모니터링', '실행 기록', '키풀 상태', '계정 관리', '부하테스트', 'DB 관리']
-    )
+    with st.sidebar:
+        selected = st.radio(
+            "관리 메뉴",
+            options=range(len(_ADMIN_TABS)),
+            format_func=lambda i: _ADMIN_TABS[i],
+            key="admin_tab",
+            label_visibility="collapsed",
+        )
 
     # --- 모니터링 ---
-    with tab_monitor:
+    if selected == 0:
         _live_monitor_panel(cfg)
 
+    # --- 키풀 상태 ---
+    elif selected == 1:
+        st.subheader('Waiters')
+        waiters = _rows_to_dicts(list_key_waiters(cfg, limit=500))
+        if waiters:
+            st.dataframe(waiters, width="stretch", hide_index=True)
+        else:
+            st.info('대기열(waiters)이 없습니다.')
+
+        st.subheader('Leases')
+        leases = _rows_to_dicts(list_key_leases(cfg, limit=500))
+        if leases:
+            st.dataframe(leases, width="stretch", hide_index=True)
+        else:
+            st.info('임대(leases)가 없습니다.')
+
     # --- 실행 기록 ---
-    with tab_runs:
+    elif selected == 2:
         user_rows = list_users(cfg, include_inactive=True)
         user_ids = ['(all)'] + [r['user_id'] for r in user_rows]
         sel_user = st.selectbox('필터: user_id', user_ids, index=0)
@@ -776,24 +925,14 @@ def render_admin_page(cfg: AppConfig):
 
         # ── 향후 추가: Wisk 등 ──
 
-    # --- 키풀 상태 ---
-    with tab_keypool:
-        st.subheader('Waiters')
-        waiters = _rows_to_dicts(list_key_waiters(cfg, limit=500))
-        if waiters:
-            st.dataframe(waiters, width="stretch", hide_index=True)
-        else:
-            st.info('대기열(waiters)이 없습니다.')
-
-        st.subheader('Leases')
-        leases = _rows_to_dicts(list_key_leases(cfg, limit=500))
-        if leases:
-            st.dataframe(leases, width="stretch", hide_index=True)
-        else:
-            st.info('임대(leases)가 없습니다.')
+    # --- 부하테스트 ---
+    elif selected == 3:
+        render_stress_test_execution(cfg)
+        st.divider()
+        render_stress_test_results(cfg)
 
     # --- 계정 관리 ---
-    with tab_users:
+    elif selected == 4:
         st.subheader('계정 목록')
         users = _rows_to_dicts(list_users(cfg, include_inactive=True))
         if users:
@@ -934,12 +1073,6 @@ def render_admin_page(cfg: AppConfig):
                     st.success('삭제되었습니다.')
                     st.rerun()
 
-    # --- 부하테스트 ---
-    with tab_stress:
-        render_stress_test_execution(cfg)
-        st.divider()
-        render_stress_test_results(cfg)
-
     # --- DB 관리 ---
-    with tab_db:
+    elif selected == 5:
         _render_db_management(cfg)

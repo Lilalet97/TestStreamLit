@@ -86,7 +86,7 @@ input[type="file"]{display:none;}
   width:36px;height:36px;border-radius:8px;
   background:linear-gradient(135deg,#6366f1,#8b5cf6);
   display:flex;align-items:center;justify-content:center;
-  font-size:12px;font-weight:800;color:#fff;flex-shrink:0;
+  font-size:18px;font-weight:800;color:#fff;flex-shrink:0;
 }
 .model-info{flex:1;}
 .model-name{font-size:13px;font-weight:600;color:#e4e4e7;}
@@ -114,7 +114,7 @@ input[type="file"]{display:none;}
   width:32px;height:32px;border-radius:6px;
   background:linear-gradient(135deg,#6366f1,#8b5cf6);
   display:flex;align-items:center;justify-content:center;
-  font-size:10px;font-weight:800;color:#fff;flex-shrink:0;
+  font-size:16px;font-weight:800;color:#fff;flex-shrink:0;
 }
 .model-option .mo-info{flex:1;}
 .model-option .mo-name{font-size:12px;font-weight:600;color:#e4e4e7;}
@@ -409,6 +409,82 @@ input[type="file"]{display:none;}
 ::-webkit-scrollbar{width:6px;}
 ::-webkit-scrollbar-track{background:transparent;}
 ::-webkit-scrollbar-thumb{background:#333;border-radius:3px;}
+
+/* ── 잠금(locked) 공통 ── */
+[data-feature].locked{position:relative;opacity:.35;pointer-events:none;user-select:none;}
+[data-feature].locked::after{
+  content:'🔒';font-size:9px;position:absolute;top:2px;right:4px;
+  pointer-events:none;line-height:1;
+}
+
+/* ── School Gallery Overlay ── */
+.school-gallery-overlay{
+  position:fixed;top:0;left:0;width:100%;height:100%;
+  background:rgba(0,0,0,0.85);z-index:9999;
+  display:flex;flex-direction:column;
+  opacity:0;pointer-events:none;transition:opacity .25s;
+}
+.school-gallery-overlay.open{opacity:1;pointer-events:auto;}
+.sg-header{
+  height:56px;display:flex;align-items:center;justify-content:space-between;
+  padding:0 24px;border-bottom:1px solid #27272a;flex-shrink:0;
+  background:#18181b;
+}
+.sg-header h2{font-size:16px;font-weight:700;color:#e4e4e7;}
+.sg-close{
+  width:32px;height:32px;border-radius:8px;
+  display:flex;align-items:center;justify-content:center;
+  color:#a1a1aa;transition:all .15s;font-size:18px;
+}
+.sg-close:hover{background:#27272a;color:#fff;}
+.sg-body{flex:1;overflow-y:auto;padding:24px;}
+.sg-grid{
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));
+  gap:16px;
+}
+.sg-card{
+  background:#18181b;border:1px solid #27272a;border-radius:12px;
+  overflow:hidden;transition:border-color .15s;
+}
+.sg-card:hover{border-color:#3f3f46;}
+.sg-card video{width:100%;aspect-ratio:16/9;object-fit:cover;display:block;background:#000;}
+.sg-card-info{padding:10px 12px;}
+.sg-card-prompt{
+  font-size:12px;color:#a1a1aa;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
+  overflow:hidden;line-height:1.4;
+}
+.sg-card-meta{
+  display:flex;justify-content:space-between;align-items:center;
+  margin-top:6px;font-size:11px;color:#52525b;
+}
+.sg-empty{
+  text-align:center;padding:60px 20px;color:#52525b;font-size:14px;
+}
+
+/* ── 갤러리 피커 모달 ── */
+.gallery-picker-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity .2s;}
+.gallery-picker-overlay.open{opacity:1;}
+.gallery-picker{background:#1a1a2e;border-radius:16px;width:92%;max-width:640px;max-height:75vh;display:flex;flex-direction:column;box-shadow:0 8px 32px rgba(0,0,0,.5);overflow:hidden;}
+.gallery-picker-header{display:flex;justify-content:space-between;align-items:center;padding:16px 20px 8px;}
+.gallery-picker-title{font-size:16px;font-weight:700;color:#e4e4e7;}
+.gallery-picker-close{font-size:22px;color:#71717a;cursor:pointer;padding:4px 8px;border-radius:6px;background:none;border:none;}
+.gallery-picker-close:hover{color:#fff;background:rgba(255,255,255,.08);}
+.gallery-picker-tabs{display:flex;gap:8px;padding:8px 20px 12px;}
+.gp-tab{padding:6px 14px;border-radius:20px;border:1px solid #333;background:transparent;color:#a1a1aa;cursor:pointer;font-size:13px;transition:all .15s;}
+.gp-tab:hover{border-color:#555;color:#d0d0d0;}
+.gp-tab.active{background:#6366f1;color:#fff;border-color:#6366f1;}
+.gallery-picker-scroll{flex:1;min-height:0;overflow-y:auto;padding:4px 20px 12px;}
+.gallery-picker-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;}
+.gp-item{position:relative;border-radius:8px;overflow:hidden;cursor:pointer;aspect-ratio:4/3;background:#111;border:2px solid transparent;transition:border-color .15s;}
+.gp-item:hover{border-color:#6366f1;}
+.gp-item img{width:100%;height:100%;object-fit:cover;display:block;}
+.gp-item-badge{position:absolute;top:4px;left:4px;font-size:10px;padding:2px 6px;border-radius:4px;background:rgba(0,0,0,.65);color:#fff;pointer-events:none;}
+.gp-item-prompt{position:absolute;bottom:0;left:0;right:0;padding:4px 6px;font-size:10px;color:#fff;background:linear-gradient(transparent,rgba(0,0,0,.7));line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;pointer-events:none;}
+.gallery-picker-empty{grid-column:1/-1;text-align:center;padding:40px 20px;color:#52525b;font-size:13px;}
+.gallery-picker-footer{padding:12px 20px;border-top:1px solid rgba(255,255,255,.08);text-align:center;}
+.gp-upload-btn{padding:10px 24px;border-radius:8px;border:1px solid #444;background:transparent;color:#d0d0d0;cursor:pointer;font-size:13px;transition:all .15s;}
+.gp-upload-btn:hover{border-color:#888;color:#fff;background:rgba(255,255,255,.05);}
 </style>
 </head>
 <body>
@@ -423,15 +499,15 @@ input[type="file"]{display:none;}
       </svg>
     </div>
     <div class="sb-divider"></div>
-    <button class="sb-item" title="더보기">
+    <button class="sb-item" title="더보기" data-feature="kling.more_info">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
       <span>더보기</span>
     </button>
-    <button class="sb-item" title="에셋">
+    <button class="sb-item" title="Gallery" data-feature="kling.assets">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
-      <span>에셋</span>
+      <span>Gallery</span>
     </button>
-    <button class="sb-item" title="Omni">
+    <button class="sb-item" title="Omni" data-feature="kling.omni">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10A15.3 15.3 0 0112 2z"/></svg>
       <span>Omni</span>
     </button>
@@ -439,38 +515,33 @@ input[type="file"]{display:none;}
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
       <span>생성</span>
     </button>
-    <button class="sb-item" title="액티브 캔버스">
+    <button class="sb-item" title="액티브 캔버스" data-feature="kling.canvas">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 3v18"/></svg>
       <span>캔버스</span>
     </button>
-    <button class="sb-item" title="모든 툴">
+    <button class="sb-item" title="모든 툴" data-feature="kling.all_tools">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
       <span>모든 툴</span>
     </button>
     <div class="sb-spacer"></div>
-    <button class="sb-item" title="알림">
+    <button class="sb-item" title="알림" data-feature="kling.notifications">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0"/></svg>
       <span>알림</span>
     </button>
-    <button class="sb-item" title="공유">
+    <button class="sb-item" title="공유" data-feature="kling.share">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.59 13.51 6.83 3.98M15.41 6.51l-6.82 3.98"/></svg>
       <span>공유</span>
     </button>
-    <button class="sb-item" title="API">
+    <button class="sb-item" title="API" data-feature="kling.api">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16v16H4z"/><path d="M9 9h6v6H9z"/></svg>
       <span>API</span>
     </button>
     <div class="sb-divider"></div>
-    <button class="sb-item" title="프로필">
+    <button class="sb-item" title="프로필" data-feature="kling.profile">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
       <span>프로필</span>
     </button>
-    <div class="sb-credits" title="크레딧">
-      <svg viewBox="0 0 24 24" fill="none" stroke="#a78bfa" stroke-width="2" width="18" height="18"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
-      <span class="num">26</span>
-      <span>울트라</span>
-    </div>
-    <button class="sb-item" title="더보기">
+    <button class="sb-item" title="더보기" data-feature="kling.more">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>
     </button>
   </div>
@@ -478,10 +549,10 @@ input[type="file"]{display:none;}
   <!-- ── 메인 콘텐츠 ── -->
   <div class="main">
     <div class="top-nav">
-      <button class="nav-tab" data-tab="image">이미지 생성</button>
+      <button class="nav-tab" data-tab="image" data-feature="kling.image_gen">이미지 생성</button>
       <button class="nav-tab active" data-tab="video">비디오 생성</button>
-      <button class="nav-tab" data-tab="motion">모션 컨트롤</button>
-      <button class="nav-tab" data-tab="character">디지털 캐릭터</button>
+      <button class="nav-tab" data-tab="motion" data-feature="kling.motion_control">모션 컨트롤</button>
+      <button class="nav-tab" data-tab="character" data-feature="kling.digital_character">디지털 캐릭터</button>
     </div>
 
     <div class="body-wrap">
@@ -490,10 +561,10 @@ input[type="file"]{display:none;}
 
         <!-- 모델 선택 -->
         <div class="model-selector" id="modelSelector">
-          <div class="model-icon" id="modelIconLabel">2.6</div>
+          <div class="model-icon" id="modelIconLabel">✏️</div>
           <div class="model-info">
-            <div class="model-name" id="modelNameLabel">비디오 모델 2.6</div>
-            <div class="model-desc" id="modelDescLabel">사운드 영상 동기화 생성</div>
+            <div class="model-name" id="modelNameLabel">프롬프트만</div>
+            <div class="model-desc" id="modelDescLabel">텍스트로만 비디오 생성</div>
           </div>
           <svg class="model-arrow" id="modelArrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#888" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
           <div class="model-dropdown" id="modelDropdown"></div>
@@ -527,14 +598,14 @@ input[type="file"]{display:none;}
         <div class="prompt-area">
           <textarea id="promptInput" placeholder="캐릭터의 대화/노래 내용을 따옴표로 표시하고 말하는 주제 바로 뒤에 @음색을 붙여 화자와 음색을 더 잘 연결하세요."></textarea>
           <div class="prompt-toolbar">
-            <button class="prompt-tool">
+            <button class="prompt-tool" data-feature="kling.voice_tone">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
               음색
             </button>
-            <button class="prompt-tool">
+            <button class="prompt-tool" data-feature="kling.prompt_info">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
             </button>
-            <button class="prompt-tool">
+            <button class="prompt-tool" data-feature="kling.prompt_edit">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
             </button>
           </div>
@@ -569,11 +640,12 @@ input[type="file"]{display:none;}
             <div class="sp-opt active" data-val="1080p">1080p<span class="vip">VIP</span></div>
           </div>
         </div>
-        <div class="sp-group">
+        <div class="sp-group" id="spDurationGroup">
           <div class="sp-label">생성 시간</div>
           <div class="sp-options" data-setting="duration">
-            <div class="sp-opt active" data-val="5">5s</div>
-            <div class="sp-opt" data-val="10">10s</div>
+            <div class="sp-opt" data-val="5">5s</div>
+            <div class="sp-opt" data-val="6">6s</div>
+            <div class="sp-opt active" data-val="8">8s</div>
           </div>
         </div>
         <div class="sp-group" id="spRatioGroup">
@@ -584,21 +656,24 @@ input[type="file"]{display:none;}
             <div class="sp-opt" data-val="9:16"><svg width="10" height="16" viewBox="0 0 10 16" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-bottom:-2px"><rect x="1" y="1" width="8" height="14" rx="1.5"/></svg><br>9:16</div>
           </div>
         </div>
+        <!-- [KLING] 생성 수량 (Veo: 항상 1개) -->
+        <!--
         <div class="sp-group">
           <div class="sp-label">생성 수량</div>
           <div class="sp-options" data-setting="count">
             <div class="sp-opt active" data-val="1">1</div>
-            <div class="sp-opt" data-val="2">2<span class="vip">VIP</span></div>
-            <div class="sp-opt" data-val="3">3<span class="vip">VIP</span></div>
-            <div class="sp-opt" data-val="4">4<span class="vip">VIP</span></div>
+            <div class="sp-opt" data-val="2">2</div>
+            <div class="sp-opt" data-val="3">3</div>
+            <div class="sp-opt" data-val="4">4</div>
           </div>
         </div>
+        -->
       </div>
 
       <div class="settings-group">
         <button class="setting-chip" id="chipSettings">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v6M12 17v6M4.22 4.22l4.24 4.24M15.54 15.54l4.24 4.24M1 12h6M17 12h6M4.22 19.78l4.24-4.24M15.54 8.46l4.24-4.24"/></svg>
-          <span id="chipResText">1080p · 5s · 16:9 · 1</span>
+          <span id="chipResText">1080p · 8s · 16:9</span>
           <span class="chip-arrow" id="chipArrow">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m18 15-6-6-6 6"/></svg>
           </span>
@@ -620,6 +695,38 @@ input[type="file"]{display:none;}
 <input type="file" id="fileStart" accept="image/*">
 <input type="file" id="fileEnd" accept="image/*">
 
+<div class="school-gallery-overlay" id="schoolGallery">
+  <div class="sg-header">
+    <h2>갤러리</h2>
+    <button class="sg-close" id="sgClose">&times;</button>
+  </div>
+  <div class="sg-body">
+    <div class="sg-grid" id="sgGrid"></div>
+    <div class="sg-empty" id="sgEmpty" style="display:none;">아직 공유된 영상이 없습니다</div>
+  </div>
+</div>
+
+<!-- 갤러리 피커 모달 -->
+<div class="gallery-picker-overlay" id="galleryPickerOverlay" style="display:none">
+  <div class="gallery-picker">
+    <div class="gallery-picker-header">
+      <span class="gallery-picker-title">이미지 선택</span>
+      <button class="gallery-picker-close">&times;</button>
+    </div>
+    <div class="gallery-picker-tabs">
+      <button class="gp-tab active" data-filter="all">전체</button>
+      <button class="gp-tab" data-filter="mj">미드저니</button>
+      <button class="gp-tab" data-filter="nanobanana">나노바나나</button>
+    </div>
+    <div class="gallery-picker-scroll">
+      <div class="gallery-picker-grid" id="galleryPickerGrid"></div>
+    </div>
+    <div class="gallery-picker-footer">
+      <button class="gp-upload-btn" id="gpUploadBtn">PC에서 업로드</button>
+    </div>
+  </div>
+</div>
+
 <script>
 /* ── Streamlit Component 프로토콜 ── */
 function sendMsg(type, data) {
@@ -634,57 +741,89 @@ var startFrameData = null;  // base64 data URL
 var endFrameData = null;
 var soundEnabled = false;
 var settingsOpen = false;
-var settings = { resolution:"1080p", duration:"5", ratio:"16:9", count:"1" };
+var settings = { resolution:"1080p", duration:"8", ratio:"16:9", count:"1" };
 var autoRatio = null;  // 이미지 첨부 시 자동 감지된 비율
 
-/* ── 모델 데이터 ── */
-var MODELS = [
-  {id:"kling-v1",        ver:"1.0", label:"비디오 모델 1.0",        desc:"기본 텍스트→비디오 생성",         frameMode:"start_end"},
-  {id:"kling-v1-5",      ver:"1.5", label:"비디오 모델 1.5",        desc:"향상된 모션 품질",                frameMode:"start_end"},
-  {id:"kling-v1-6",      ver:"1.6", label:"비디오 모델 1.6",        desc:"높은 해상도 및 디테일",           frameMode:"start_end"},
-  {id:"kling-v2-master", ver:"2.0", label:"비디오 모델 2.0 Master", desc:"마스터 품질 비디오 생성",         frameMode:"start_end"},
-  {id:"kling-v2-1",      ver:"2.1", label:"비디오 모델 2.1",        desc:"개선된 일관성 및 프레임 지원",    frameMode:"start_end"},
-  {id:"kling-v2-5-turbo",ver:"2.5", label:"비디오 모델 2.5 Turbo",  desc:"빠른 속도의 고품질 비디오",       frameMode:"start_end"},
-  {id:"kling-v2-6",      ver:"2.6", label:"비디오 모델 2.6",        desc:"사운드 영상 동기화 생성",         frameMode:"start_only"},
-  {id:"kling-v3-omni",   ver:"3.0", label:"비디오 모델 3.0 Omni",   desc:"Omni 멀티모달, 사운드 통합",     frameMode:"start_only"},
-];
-var selectedModelIdx = 6;
+/* ── [KLING] 모델 데이터 (Kling 복원 시 사용) ── */
+// var MODELS = [
+//   {id:"kling-v1",        ver:"1.0", label:"비디오 모델 1.0",        desc:"기본 텍스트→비디오 생성",         frameMode:"start_end"},
+//   {id:"kling-v1-5",      ver:"1.5", label:"비디오 모델 1.5",        desc:"향상된 모션 품질",                frameMode:"start_end"},
+//   {id:"kling-v1-6",      ver:"1.6", label:"비디오 모델 1.6",        desc:"높은 해상도 및 디테일",           frameMode:"start_end"},
+//   {id:"kling-v2-master", ver:"2.0", label:"비디오 모델 2.0 Master", desc:"마스터 품질 비디오 생성",         frameMode:"start_end"},
+//   {id:"kling-v2-1",      ver:"2.1", label:"비디오 모델 2.1",        desc:"개선된 일관성 및 프레임 지원",    frameMode:"start_end"},
+//   {id:"kling-v2-5-turbo",ver:"2.5", label:"비디오 모델 2.5 Turbo",  desc:"빠른 속도의 고품질 비디오",       frameMode:"start_end"},
+//   {id:"kling-v2-6",      ver:"2.6", label:"비디오 모델 2.6",        desc:"사운드 영상 동기화 생성",         frameMode:"start_only"},
+//   {id:"kling-v3-omni",   ver:"3.0", label:"비디오 모델 3.0 Omni",   desc:"Omni 멀티모달, 사운드 통합",     frameMode:"start_only"},
+// ];
+// var selectedModelIdx = 6;
 
-/* ── 모델 드롭다운 ── */
+/* ── 프레임 모드 데이터 (Veo) ── */
+var FRAME_MODES = [
+  {id:"prompt_only", label:"프롬프트만",           desc:"텍스트로만 비디오 생성",              icon:"✏️"},
+  {id:"start_only",  label:"스타트 프레임",         desc:"시작 이미지 + 텍스트로 비디오 생성",   icon:"🖼️"},
+  {id:"start_end",   label:"스타트 + 엔드 프레임",  desc:"시작/종료 이미지 사이 보간 (8초 고정)", icon:"🎞️"},
+];
+var selectedFrameMode = 0;
+
+/* ── [KLING] 모델 드롭다운 (Kling 복원 시 사용) ── */
+// function renderModelDropdown() { ... }
+// function applyModelSelection() { ... }
+
+/* ── 프레임 모드 드롭다운 (Veo) ── */
 var dropdownOpen = false;
-function renderModelDropdown() {
+function renderFrameModeDropdown() {
   var dd = document.getElementById("modelDropdown");
   dd.innerHTML = "";
-  MODELS.forEach(function(m, i) {
+  FRAME_MODES.forEach(function(fm, i) {
     var opt = document.createElement("div");
-    opt.className = "model-option" + (i === selectedModelIdx ? " selected" : "");
+    opt.className = "model-option" + (i === selectedFrameMode ? " selected" : "");
     opt.innerHTML =
-      '<div class="mo-icon">' + m.ver + '</div>' +
-      '<div class="mo-info"><div class="mo-name">' + m.label + '</div><div class="mo-desc">' + m.desc + '</div></div>' +
+      '<div class="mo-icon">' + fm.icon + '</div>' +
+      '<div class="mo-info"><div class="mo-name">' + fm.label + '</div><div class="mo-desc">' + fm.desc + '</div></div>' +
       '<div class="mo-check"></div>';
     opt.addEventListener("click", function(e) {
       e.stopPropagation();
-      selectedModelIdx = i;
-      applyModelSelection();
+      selectedFrameMode = i;
+      applyFrameModeSelection();
       closeDropdown();
     });
     dd.appendChild(opt);
   });
 }
-function applyModelSelection() {
-  var m = MODELS[selectedModelIdx];
-  document.getElementById("modelIconLabel").textContent = m.ver;
-  document.getElementById("modelNameLabel").textContent = m.label;
-  document.getElementById("modelDescLabel").textContent = m.desc;
-  // 모델 변경 시 프레임 데이터 초기화
+function applyFrameModeSelection() {
+  var fm = FRAME_MODES[selectedFrameMode];
+  document.getElementById("modelIconLabel").textContent = fm.icon;
+  document.getElementById("modelNameLabel").textContent = fm.label;
+  document.getElementById("modelDescLabel").textContent = fm.desc;
+  // 모드 변경 시 프레임 데이터 초기화
   startFrameData = null; endFrameData = null; autoRatio = null;
-  renderModelDropdown();
+  renderFrameModeDropdown();
   renderFrameSection();
+  updateDurationLock();
   updateRatioGroup();
   updateSoundSection();
   updateBottomBar();
   updateChipText();
   updateCreditCost();
+}
+
+function updateDurationLock() {
+  var fm = FRAME_MODES[selectedFrameMode];
+  var dg = document.getElementById("spDurationGroup");
+  if (!dg) return;
+  if (fm.id === "start_end") {
+    // interpolation: 8초 고정
+    settings.duration = "8";
+    dg.style.opacity = "0.4";
+    dg.style.pointerEvents = "none";
+    // active 표시를 8s로 강제
+    dg.querySelectorAll(".sp-opt").forEach(function(el) {
+      el.classList.toggle("active", el.getAttribute("data-val") === "8");
+    });
+  } else {
+    dg.style.opacity = "";
+    dg.style.pointerEvents = "";
+  }
 }
 function openDropdown() {
   dropdownOpen = true;
@@ -706,10 +845,12 @@ document.addEventListener("click", function(e) {
 
 /* ── 프레임 섹션 ── */
 function renderFrameSection() {
-  var m = MODELS[selectedModelIdx];
+  var fm = FRAME_MODES[selectedFrameMode];
   var fs = document.getElementById("frameSection");
 
-  if (m.frameMode === "start_end") {
+  if (fm.id === "prompt_only") {
+    fs.innerHTML = '';
+  } else if (fm.id === "start_end") {
     fs.innerHTML =
       '<div class="frame-section-label">프레임 이미지</div>' +
       '<div class="frame-row">' +
@@ -717,6 +858,7 @@ function renderFrameSection() {
         buildFrameBox("end", "엔드 프레임", "종료 장면 이미지", endFrameData) +
       '</div>';
   } else {
+    // start_only
     fs.innerHTML =
       '<div class="frame-section-label">프레임 이미지</div>' +
       '<div class="frame-row">' +
@@ -746,12 +888,16 @@ function bindFrameEvents() {
   document.querySelectorAll(".frame-upload").forEach(function(el) {
     var type = el.getAttribute("data-frame");
 
-    // 클릭 → 파일 선택
+    // 클릭 → 갤러리 피커 또는 파일 선택
     el.addEventListener("click", function(e) {
       if (e.target.closest(".frame-remove")) return;
-      var input = document.getElementById(type === "start" ? "fileStart" : "fileEnd");
-      input.value = "";
-      input.click();
+      if (sourceGallery && sourceGallery.length > 0) {
+        showGalleryPicker(type);
+      } else {
+        var input = document.getElementById(type === "start" ? "fileStart" : "fileEnd");
+        input.value = "";
+        input.click();
+      }
     });
 
     // 드래그&드롭
@@ -823,9 +969,11 @@ document.getElementById("fileEnd").addEventListener("change", function() {
 
 /* ── 사운드 섹션 ── */
 function updateSoundSection() {
-  var m = MODELS[selectedModelIdx];
+  // [KLING] var m = MODELS[selectedModelIdx];
+  // [KLING] ss.style.display = (m.frameMode === "start_end") ? "flex" : "none";
+  // Veo에서는 사운드 옵션 미지원 → 항상 숨김
   var ss = document.getElementById("soundSection");
-  ss.style.display = (m.frameMode === "start_end") ? "flex" : "none";
+  ss.style.display = "none";
 }
 
 document.getElementById("soundToggle").addEventListener("click", function() {
@@ -867,34 +1015,22 @@ document.querySelectorAll(".sp-options").forEach(function(group) {
 function updateChipText() {
   var ratio = autoRatio || settings.ratio;
   document.getElementById("chipResText").textContent =
-    settings.resolution + " · " + settings.duration + "s · " + ratio + " · " + settings.count;
+    settings.resolution + " · " + settings.duration + "s · " + ratio;
 }
 
 /* ── 하단바 ── */
 function updateBottomBar() {
-  var m = MODELS[selectedModelIdx];
+  // [KLING] var m = MODELS[selectedModelIdx];
   var chipSoundEl = document.getElementById("chipSound");
-  var chipSoundText = document.getElementById("chipSoundText");
-
-  if (m.frameMode === "start_only") {
-    chipSoundText.textContent = "🔊 사운드 영상 동기화";
-    chipSoundEl.style.display = "flex";
-  } else {
-    if (soundEnabled) {
-      chipSoundText.textContent = "🔊 사운드 효과";
-      chipSoundEl.style.display = "flex";
-    } else {
-      chipSoundEl.style.display = "none";
-    }
-  }
+  // Veo: 사운드 칩 항상 숨김
+  chipSoundEl.style.display = "none";
 }
 
 /* ── 크레딧 계산 ── */
 function updateCreditCost() {
   var base = settings.resolution === "1080p" ? 5 : 2;
-  var dur = parseInt(settings.duration) === 10 ? 2 : 1;
-  var cnt = parseInt(settings.count) || 1;
-  var cost = base * dur * cnt;
+  var dur = parseInt(settings.duration) >= 8 ? 2 : 1;
+  var cost = base * dur;
   document.getElementById("creditCost").textContent = cost;
 }
 
@@ -942,8 +1078,8 @@ function buildResultCard(item) {
       (isDataUrl2 ? '<img src="' + item.endFrame + '">' : '🖼') +
       ' 엔드 이미지</span>';
   }
-  // 모델명 + 해상도 (큰 화면에서만 표시)
-  badges += '<span class="card-badge detail">' + escHtml(item.modelLabel) + '</span>';
+  // 해상도 (큰 화면에서만 표시)
+  // [KLING] badges += '<span class="card-badge detail">' + escHtml(item.modelLabel) + '</span>';
   badges += '<span class="card-badge detail">' + escHtml(item.resolution) + '</span>';
 
   // 비디오 영역 (count만큼 슬롯 생성)
@@ -1152,7 +1288,7 @@ document.getElementById("btnGenerate").addEventListener("click", function() {
   var prompt = document.getElementById("promptInput").value.trim();
   if (!prompt) return;
   _generateLock = true;
-  var m = MODELS[selectedModelIdx];
+  var fm = FRAME_MODES[selectedFrameMode];
   var itemId = "gen_" + Date.now();
   var ratio = autoRatio || settings.ratio;
   var ts = Date.now();
@@ -1167,13 +1303,13 @@ document.getElementById("btnGenerate").addEventListener("click", function() {
     action: "generate",
     item_id: itemId,
     prompt: prompt,
-    model_id: m.id,
-    model_ver: m.ver,
-    model_label: m.label,
-    frame_mode: m.frameMode,
+    model_id: "veo-3.1",
+    model_ver: "3.1",
+    model_label: "Veo 3.1",
+    frame_mode: fm.id,
     start_frame: startFrameData || null,
     end_frame: endFrameData || null,
-    sound_enabled: m.frameMode === "start_only" ? true : soundEnabled,
+    sound_enabled: false,
     settings: {
       resolution: settings.resolution,
       duration: settings.duration,
@@ -1184,9 +1320,20 @@ document.getElementById("btnGenerate").addEventListener("click", function() {
   });
 });
 
+/* ── 갤러리 버튼 ── */
+var assetsBtn = document.querySelector('[data-feature="kling.assets"]');
+if (assetsBtn) {
+  assetsBtn.addEventListener('click', function() {
+    if (!this.classList.contains('locked')) {
+      setComponentValue({action: 'open_gallery', ts: Date.now()});
+    }
+  });
+}
+
 /* ── 초기화 ── */
-renderModelDropdown();
+renderFrameModeDropdown();
 renderFrameSection();
+updateDurationLock();
 updateSoundSection();
 updateBottomBar();
 updateCreditCost();
@@ -1194,10 +1341,33 @@ renderResults();
 
 var _lastHistoryKey = "";
 
+/* ── 잠금 판정 ── */
+function applyFeatureLocks(enabledFeatures) {
+  var featureSet = {};
+  (enabledFeatures || []).forEach(function(f){ featureSet[f] = true; });
+  document.querySelectorAll('[data-feature]').forEach(function(el){
+    if (featureSet[el.getAttribute('data-feature')]) {
+      el.classList.remove('locked');
+    } else {
+      el.classList.add('locked');
+    }
+  });
+}
+
 window.addEventListener("message", function(event) {
   if (event.data.type !== "streamlit:render") return;
   var args = event.data.args || {};
+  sourceGallery = args.source_gallery || [];
+  // 잠금 판정
+  applyFeatureLocks(args.enabled_features || []);
   setFrameHeight(document.body.scrollHeight);
+
+  // 학교 갤러리 데이터 처리
+  var schoolGallery = args.school_gallery;
+  if (schoolGallery && Array.isArray(schoolGallery)) {
+    renderSchoolGallery(schoolGallery);
+    document.getElementById('schoolGallery').classList.add('open');
+  }
 
   // history 변경 감지용 키 생성 (id + loading + video_urls)
   var hist = args.history || [];
@@ -1222,8 +1392,8 @@ window.addEventListener("message", function(event) {
       duration: parseInt((h.settings && h.settings.duration) || "5"),
       ratio: (h.settings && h.settings.ratio) || "16:9",
       count: parseInt((h.settings && h.settings.count) || "1"),
-      startFrame: h.has_start_frame ? ((_frameCache[h.item_id] && _frameCache[h.item_id].start) || "thumb") : null,
-      endFrame: h.has_end_frame ? ((_frameCache[h.item_id] && _frameCache[h.item_id].end) || "thumb") : null,
+      startFrame: h.has_start_frame ? ((_frameCache[h.item_id] && _frameCache[h.item_id].start) || h.start_frame_data || "thumb") : null,
+      endFrame: h.has_end_frame ? ((_frameCache[h.item_id] && _frameCache[h.item_id].end) || h.end_frame_data || "thumb") : null,
       soundEnabled: h.sound_enabled || false,
       videoUrls: h.video_urls || [],
       loading: !!h.loading,
@@ -1256,6 +1426,151 @@ function setupLoadingTimers(items) {
     }
   });
 }
+
+/* ── 학교 갤러리 렌더링 ── */
+function renderSchoolGallery(items) {
+  var grid = document.getElementById('sgGrid');
+  var empty = document.getElementById('sgEmpty');
+  grid.innerHTML = '';
+  if (!items || items.length === 0) {
+    empty.style.display = 'block';
+    grid.style.display = 'none';
+    return;
+  }
+  empty.style.display = 'none';
+  grid.style.display = '';
+  items.forEach(function(item) {
+    var urls = item.video_urls || [];
+    urls.forEach(function(videoUrl) {
+      var card = document.createElement('div');
+      card.className = 'sg-card';
+      card.innerHTML =
+        '<video src="' + videoUrl + '" controls preload="metadata"></video>' +
+        '<div class="sg-card-info">' +
+          '<div class="sg-card-prompt">' + (item.prompt || '').replace(/</g,'&lt;') + '</div>' +
+          '<div class="sg-card-meta"><span>' + (item.user_id || '') + '</span><span>' + (item.model_label || '') + '</span></div>' +
+        '</div>';
+      grid.appendChild(card);
+    });
+  });
+}
+
+document.getElementById('sgClose').addEventListener('click', function() {
+  document.getElementById('schoolGallery').classList.remove('open');
+  setComponentValue({action: 'close_gallery', ts: Date.now()});
+});
+
+/* ═══════════════════════════════════════
+   갤러리 피커 (생성 이미지에서 선택)
+   ═══════════════════════════════════════ */
+var sourceGallery = [];
+var gpCurrentFilter = "all";
+var currentPickerFrameType = "start";
+
+function resolveToDataUrl(url, callback) {
+  if (!url || url.startsWith("data:")) { callback(url); return; }
+  fetch(url).then(function(r) { return r.blob(); }).then(function(blob) {
+    var reader = new FileReader();
+    reader.onload = function() { callback(reader.result); };
+    reader.readAsDataURL(blob);
+  }).catch(function() { callback(url); });
+}
+
+function showGalleryPicker(frameType) {
+  currentPickerFrameType = frameType;
+  gpCurrentFilter = "all";
+  var overlay = document.getElementById("galleryPickerOverlay");
+  overlay.style.display = "flex";
+  requestAnimationFrame(function() { overlay.classList.add("open"); });
+  renderPickerGrid(sourceGallery, "all");
+
+  overlay.querySelectorAll(".gp-tab").forEach(function(btn) {
+    btn.classList.toggle("active", btn.getAttribute("data-filter") === "all");
+  });
+}
+
+function hideGalleryPicker() {
+  var overlay = document.getElementById("galleryPickerOverlay");
+  overlay.classList.remove("open");
+  setTimeout(function() { overlay.style.display = "none"; }, 200);
+}
+
+function renderPickerGrid(items, filter) {
+  var grid = document.getElementById("galleryPickerGrid");
+  var filtered = filter === "all" ? items : items.filter(function(it) { return it.source === filter; });
+
+  if (filtered.length === 0) {
+    grid.innerHTML = '<div class="gallery-picker-empty">선택 가능한 이미지가 없습니다</div>';
+    return;
+  }
+
+  grid.innerHTML = filtered.map(function(it, idx) {
+    var badge = it.source === "mj" ? "MJ" : "NB";
+    return '<div class="gp-item" data-gp-idx="' + idx + '">' +
+      '<img src="' + it.url + '" loading="lazy">' +
+      '<div class="gp-item-badge">' + badge + '</div>' +
+      (it.prompt ? '<div class="gp-item-prompt">' + it.prompt.replace(/</g, '&lt;') + '</div>' : '') +
+    '</div>';
+  }).join("");
+
+  grid.querySelectorAll(".gp-item").forEach(function(el, i) {
+    el.addEventListener("click", function() {
+      onGalleryImageSelect(filtered[i].url);
+    });
+  });
+}
+
+function onGalleryImageSelect(url) {
+  resolveToDataUrl(url, function(dataUrl) {
+    var type = currentPickerFrameType;
+    if (type === "start") {
+      startFrameData = dataUrl;
+      var img = new Image();
+      img.onload = function() {
+        var r = img.width / img.height;
+        if (r > 1.4) autoRatio = "16:9";
+        else if (r < 0.75) autoRatio = "9:16";
+        else autoRatio = "1:1";
+        updateRatioGroup();
+        updateChipText();
+      };
+      img.src = dataUrl;
+    } else {
+      endFrameData = dataUrl;
+    }
+    renderFrameSection();
+    hideGalleryPicker();
+  });
+}
+
+// 갤러리 피커 이벤트 바인딩
+(function() {
+  var overlay = document.getElementById("galleryPickerOverlay");
+  if (!overlay) return;
+
+  overlay.addEventListener("click", function(e) {
+    if (e.target === overlay) hideGalleryPicker();
+  });
+
+  overlay.querySelector(".gallery-picker-close").addEventListener("click", hideGalleryPicker);
+
+  overlay.querySelectorAll(".gp-tab").forEach(function(btn) {
+    btn.addEventListener("click", function() {
+      overlay.querySelectorAll(".gp-tab").forEach(function(b) { b.classList.remove("active"); });
+      btn.classList.add("active");
+      gpCurrentFilter = btn.getAttribute("data-filter");
+      renderPickerGrid(sourceGallery, gpCurrentFilter);
+    });
+  });
+
+  document.getElementById("gpUploadBtn").addEventListener("click", function() {
+    hideGalleryPicker();
+    var type = currentPickerFrameType;
+    var input = document.getElementById(type === "start" ? "fileStart" : "fileEnd");
+    input.value = "";
+    input.click();
+  });
+})();
 
 init();
 </script>

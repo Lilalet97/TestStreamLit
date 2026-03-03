@@ -7,7 +7,7 @@ import streamlit.components.v1 as components
 
 from core.config import AppConfig
 from core.api_bridge import call_with_lease
-from core.db import insert_elevenlabs_item, load_elevenlabs_history, update_elevenlabs_audio_url
+from core.db import insert_elevenlabs_item, load_elevenlabs_history, update_elevenlabs_audio_url, load_school_elevenlabs_gallery
 from providers import elevenlabs
 from ui.sidebar import SidebarState
 
@@ -40,14 +40,23 @@ def _elevenlabs_component(
     frame_height: int = 900,
     history: list | None = None,
     key: str = "elevenlabs_main",
+    enabled_features: list | None = None,
+    school_gallery: list | None = None,
 ):
     """ElevenLabs 커스텀 컴포넌트 래퍼."""
     return _elevenlabs_component_func(
         frame_height=frame_height,
         history=history or [],
+        enabled_features=enabled_features or [],
+        school_gallery=school_gallery,
         key=key,
         default=None,
     )
+
+
+def _get_tab_features(cfg: AppConfig, prefix: str) -> list:
+    school_id = st.session_state.get("school_id", "default")
+    return [f for f in cfg.get_enabled_features(school_id) if f.startswith(prefix)]
 
 
 def render_elevenlabs_tab(cfg: AppConfig, sidebar: SidebarState):
@@ -75,10 +84,15 @@ def render_elevenlabs_tab(cfg: AppConfig, sidebar: SidebarState):
                     use_speaker_boost=pending["speaker_boost"],
                 ),
             )
+            # GCS 업로드 (설정 시)
+            if audio_url and cfg.gcs_bucket_name and cfg.vertex_sa_json:
+                from providers.gcs_storage import upload_single_media_url
+                audio_url = upload_single_media_url(
+                    cfg.vertex_sa_json, cfg.gcs_bucket_name, audio_url, prefix="elevenlabs",
+                )
         except Exception as e:
             audio_url = None
-            import logging
-            logging.warning("ElevenLabs API 오류: %s: %s", type(e).__name__, e)
+            st.session_state["_el_error_msg"] = f"ElevenLabs API 오류: {e}"
 
         # 로딩 아이템 업데이트
         for item in st.session_state.get("elevenlabs_history", []):
@@ -93,7 +107,10 @@ def render_elevenlabs_tab(cfg: AppConfig, sidebar: SidebarState):
                 break
         st.rerun()
 
-    # (에러는 서버 로그에만 기록 — 사용자 UI에 노출하지 않음)
+    # ── 에러 메시지 표시 (이전 rerun에서 저장된 것) ──
+    _err = st.session_state.pop("_el_error_msg", None)
+    if _err:
+        st.toast(_err, icon="⚠️")
 
     st.markdown(
         """<style>
@@ -112,8 +129,16 @@ def render_elevenlabs_tab(cfg: AppConfig, sidebar: SidebarState):
         unsafe_allow_html=True,
     )
 
+    # 학교 공유 갤러리 데이터 로드
+    school_gallery = None
+    if st.session_state.get("_el_gallery_open"):
+        school_id = st.session_state.get("school_id", "default")
+        school_gallery = load_school_elevenlabs_gallery(cfg, school_id)
+
     history = st.session_state.get("elevenlabs_history", [])
-    result = _elevenlabs_component(frame_height=900, history=history)
+    result = _elevenlabs_component(frame_height=900, history=history,
+                                   enabled_features=_get_tab_features(cfg, "elevenlabs."),
+                                   school_gallery=school_gallery)
 
     if not result or not isinstance(result, dict):
         return
@@ -131,7 +156,13 @@ def render_elevenlabs_tab(cfg: AppConfig, sidebar: SidebarState):
     if len(_processed) > 100:
         st.session_state["_el_processed_actions"] = {dedup_key}
 
-    if action == "generate":
+    if action == "open_gallery":
+        st.session_state["_el_gallery_open"] = True
+        st.rerun()
+    elif action == "close_gallery":
+        st.session_state["_el_gallery_open"] = False
+        st.rerun()
+    elif action == "generate":
         # 이미 대기 중인 요청이 있으면 무시 (중복 방지)
         if st.session_state.get("_el_pending_generate"):
             return

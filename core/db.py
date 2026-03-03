@@ -516,28 +516,6 @@ def guard_concurrency_or_raise(cfg: AppConfig):
         raise RuntimeError(f"전체 동시 실행 제한({cfg.global_max_concurrency})을 초과했습니다.")
 
 
-def list_runs(cfg: AppConfig, user_id: str, session_only: bool, limit: int = 30):
-    conn = get_db(cfg)
-    cur = conn.cursor()
-    if session_only:
-        cur.execute("""
-            SELECT * FROM runs
-            WHERE user_id=? AND session_id=?
-            ORDER BY created_at DESC
-            LIMIT ?
-        """, (user_id, st.session_state.session_id, limit))
-    else:
-        cur.execute("""
-            SELECT * FROM runs
-            WHERE user_id=?
-            ORDER BY created_at DESC
-            LIMIT ?
-        """, (user_id, limit))
-    rows = cur.fetchall()
-    conn.close()
-    return rows
-
-
 def get_run(cfg: AppConfig, run_id: str):
     conn = get_db(cfg)
     cur = conn.cursor()
@@ -574,36 +552,6 @@ def cleanup_orphan_active_jobs(cfg: AppConfig):
                 conn.close()
         except Exception:
             pass
-
-
-def clear_my_active_jobs(cfg: AppConfig, session_only: bool = False, only_stale: bool = False):
-    """
-    내 active_jobs 중 running/submitted만 삭제.
-    - session_only=True: 현재 세션만
-    - only_stale=True: TTL 기준 지난 것만
-    """
-    conn = get_db(cfg)
-    cur = conn.cursor()
-
-    params = []
-    where = ["user_id = ?", "state IN ('running','submitted')"]
-    params.append(st.session_state.user_id)
-
-    if session_only:
-        where.append("session_id = ?")
-        params.append(st.session_state.session_id)
-
-    if only_stale:
-        cutoff_ts = datetime.utcnow().timestamp() - cfg.active_job_ttl_sec
-        cutoff_str = datetime.utcfromtimestamp(cutoff_ts).isoformat() + "Z"
-        where.append("(updated_at IS NULL OR updated_at = '' OR updated_at < ?)")
-        params.append(cutoff_str)
-
-    sql = f"DELETE FROM active_jobs WHERE {' AND '.join(where)}"
-    cur.execute(sql, tuple(params))
-
-    conn.commit()
-    conn.close()
 
 
 # ----------------------------
@@ -1222,7 +1170,9 @@ def load_kling_web_history(cfg: AppConfig, user_id: str, limit: int = 200) -> li
         cur.execute("""
             SELECT id, item_id, prompt, model_id, model_ver, model_label,
                    frame_mode, sound_enabled, settings_json,
-                   has_start_frame, has_end_frame, video_urls_json
+                   has_start_frame, has_end_frame,
+                   start_frame_data, end_frame_data,
+                   video_urls_json
             FROM kling_web_history
             WHERE user_id = ?
             ORDER BY created_at DESC
@@ -1243,6 +1193,8 @@ def load_kling_web_history(cfg: AppConfig, user_id: str, limit: int = 200) -> li
                 "settings": json.loads(r["settings_json"]) if r["settings_json"] else {},
                 "has_start_frame": bool(r["has_start_frame"]),
                 "has_end_frame": bool(r["has_end_frame"]),
+                "start_frame_data": r["start_frame_data"],
+                "end_frame_data": r["end_frame_data"],
                 "video_urls": json.loads(r["video_urls_json"]) if r["video_urls_json"] else [],
                 "loading": False,
             })
@@ -1992,3 +1944,146 @@ def run_auto_purge(cfg: AppConfig) -> dict:
             if deleted > 0:
                 results[tbl["key"]] = deleted
     return results
+
+
+# ── School Gallery (학교 공유 갤러리) ─────────────────────
+
+def load_school_mj_gallery(cfg: AppConfig, school_id: str, limit: int = 200) -> list:
+    """같은 학교 학생들의 MJ 갤러리 (최신순)."""
+    conn = get_db(cfg)
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT mg.user_id, mg.display_date, mg.prompt,
+                   mg.aspect_ratio, mg.images_json, mg.created_at
+            FROM mj_gallery mg
+            JOIN users u ON mg.user_id = u.user_id
+            WHERE u.school_id = ? AND mg.images_json IS NOT NULL
+                  AND mg.images_json != '[]'
+            ORDER BY mg.created_at DESC
+            LIMIT ?
+        """, (school_id, limit))
+        rows = cur.fetchall()
+        items = []
+        for r in rows:
+            images = json.loads(r["images_json"]) if r["images_json"] else []
+            if not images:
+                continue
+            items.append({
+                "user_id": r["user_id"],
+                "prompt": r["prompt"],
+                "aspect_ratio": r["aspect_ratio"] or "1:1",
+                "images": images,
+                "date": r["display_date"],
+                "created_at": r["created_at"],
+            })
+        return items
+    finally:
+        conn.close()
+
+
+def load_school_kling_gallery(cfg: AppConfig, school_id: str, limit: int = 200) -> list:
+    """같은 학교 학생들의 Kling 비디오 (최신순)."""
+    conn = get_db(cfg)
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT kh.user_id, kh.prompt, kh.model_label,
+                   kh.video_urls_json, kh.created_at
+            FROM kling_web_history kh
+            JOIN users u ON kh.user_id = u.user_id
+            WHERE u.school_id = ? AND kh.video_urls_json IS NOT NULL
+                  AND kh.video_urls_json != '[]'
+            ORDER BY kh.created_at DESC
+            LIMIT ?
+        """, (school_id, limit))
+        rows = cur.fetchall()
+        items = []
+        for r in rows:
+            urls = json.loads(r["video_urls_json"]) if r["video_urls_json"] else []
+            if not urls:
+                continue
+            items.append({
+                "user_id": r["user_id"],
+                "prompt": r["prompt"],
+                "model_label": r["model_label"],
+                "video_urls": urls,
+                "created_at": r["created_at"],
+            })
+        return items
+    finally:
+        conn.close()
+
+
+def load_school_elevenlabs_gallery(cfg: AppConfig, school_id: str, limit: int = 200) -> list:
+    """같은 학교 학생들의 ElevenLabs 오디오 (최신순)."""
+    conn = get_db(cfg)
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT eh.user_id, eh.text, eh.voice_name,
+                   eh.model_label, eh.audio_url, eh.created_at
+            FROM elevenlabs_history eh
+            JOIN users u ON eh.user_id = u.user_id
+            WHERE u.school_id = ? AND eh.audio_url IS NOT NULL
+                  AND eh.audio_url != ''
+            ORDER BY eh.created_at DESC
+            LIMIT ?
+        """, (school_id, limit))
+        rows = cur.fetchall()
+        items = []
+        for r in rows:
+            if not r["audio_url"]:
+                continue
+            items.append({
+                "user_id": r["user_id"],
+                "text": r["text"],
+                "voice_name": r["voice_name"],
+                "model_label": r["model_label"],
+                "audio_url": r["audio_url"],
+                "created_at": r["created_at"],
+            })
+        return items
+    finally:
+        conn.close()
+
+
+def load_school_nanobanana_gallery(cfg: AppConfig, school_id: str, limit: int = 200) -> list:
+    """같은 학교 학생들의 NanoBanana 이미지 (최신순).
+
+    실제 이미지는 nanobanana_sessions.turns_json에 저장되어 있으므로
+    sessions 테이블에서 turns를 파싱하여 이미지를 추출한다.
+    """
+    conn = get_db(cfg)
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT ns.user_id, ns.model, ns.turns_json, ns.updated_at
+            FROM nanobanana_sessions ns
+            JOIN users u ON ns.user_id = u.user_id
+            WHERE u.school_id = ? AND ns.turns_json IS NOT NULL
+                  AND ns.turns_json != '[]'
+            ORDER BY ns.updated_at DESC
+            LIMIT ?
+        """, (school_id, limit))
+        rows = cur.fetchall()
+        items = []
+        for r in rows:
+            turns = json.loads(r["turns_json"]) if r["turns_json"] else []
+            for turn in turns:
+                urls = turn.get("image_urls") or []
+                if not urls:
+                    continue
+                items.append({
+                    "user_id": r["user_id"],
+                    "prompt": turn.get("prompt", ""),
+                    "model_label": turn.get("model_label", r["model"] or ""),
+                    "aspect_ratio": turn.get("aspect_ratio", "1:1"),
+                    "image_urls": urls,
+                    "created_at": r["updated_at"],
+                })
+        # 최신순 정렬 후 limit 적용
+        items.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+        return items[:limit]
+    finally:
+        conn.close()

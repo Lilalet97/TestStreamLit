@@ -1,7 +1,13 @@
 {
   "tenant_id": "default",
   "layout": "운영팀",
-  "enabled_features": ["tab.mj", "tab.gpt", "tab.suno", "tab.kling_web", "tab.elevenlabs", "tab.nanobanana"],
+  "enabled_features": [
+    "tab.mj", "tab.gpt", "tab.suno", "tab.kling", "tab.kling_veo", "tab.elevenlabs", "tab.nanobanana",
+    "mj.create", "mj.imagine", "mj.explore",
+    "kling.text2video", "kling.assets",
+    "elevenlabs.tts", "elevenlabs.gallery",
+    "nanobanana.generate", "nanobanana.gallery"
+  ],
   "branding": {
     "page_title": "운영팀용 페이지",
     "browser_tab_title": "운영 페이지",

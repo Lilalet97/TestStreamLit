@@ -13,6 +13,7 @@ from core.db import (
     upsert_nanobanana_session,
     load_nanobanana_sessions,
     delete_nanobanana_session,
+    load_school_nanobanana_gallery,
 )
 from providers import google_imagen
 from ui.sidebar import SidebarState
@@ -36,6 +37,28 @@ def _mock_image_urls(aspect_ratio: str, num_images: int) -> list[str]:
         f"https://picsum.photos/seed/nb{random.randint(1, 99999)}/{w}/{h}"
         for _ in range(num_images)
     ]
+
+
+def _edit_each_image(
+    api_key: str,
+    prompt: str, source_images: list[str], aspect_ratio: str,
+    # [VERTEX AI] sa_json: str = "", project_id: str = "", location: str = "",
+) -> list[str]:
+    """각 소스 이미지를 개별적으로 Gemini 호출하여 1:1 편집."""
+    from providers.gcs_storage import resolve_to_data_url
+
+    results: list[str] = []
+    for img_url in source_images:
+        resolved = resolve_to_data_url(img_url)  # GCS URL → data URL 변환
+        edited = google_imagen.gemini_generate(
+            api_key=api_key,
+            parts=[{"text": prompt}, resolved],
+            aspect_ratio=aspect_ratio,
+            num_images=1,
+            # [VERTEX AI] sa_json=sa_json, project_id=project_id, location=location,
+        )
+        results.extend(edited)
+    return results
 
 
 def _is_authenticated() -> bool:
@@ -69,12 +92,16 @@ def _nanobanana_component(
     active_id: str,
     frame_height: int = 900,
     key: str = "nanobanana_main",
+    enabled_features: list | None = None,
+    school_gallery: list | None = None,
 ):
     """NanoBanana 커스텀 컴포넌트 래퍼."""
     return _nanobanana_component_func(
         sessions=sessions,
         active_id=active_id,
         frame_height=frame_height,
+        enabled_features=enabled_features or [],
+        school_gallery=school_gallery,
         key=key,
         default=None,
     )
@@ -120,6 +147,11 @@ def _add_turn_to_session(session: dict, new_turn: dict):
     ]
 
 
+def _get_tab_features(cfg: AppConfig, prefix: str) -> list:
+    school_id = st.session_state.get("school_id", "default")
+    return [f for f in cfg.get_enabled_features(school_id) if f.startswith(prefix)]
+
+
 def render_nanobanana_tab(cfg: AppConfig, sidebar: SidebarState):
     """NanoBanana 이미지 생성 탭 (멀티턴 세션)."""
     _init_state(cfg)
@@ -128,37 +160,41 @@ def render_nanobanana_tab(cfg: AppConfig, sidebar: SidebarState):
     pending = st.session_state.get("_nb_pending_generate")
     if pending:
         del st.session_state["_nb_pending_generate"]
-        source_image = pending.get("source_image")
+        source_images = pending.get("source_images", [])
         try:
-            if source_image:
-                # 편집 모드: Gemini generateContent API
+            if source_images:
+                # 편집 모드: 각 이미지별 개별 Gemini 호출 → 1:1 편집
                 image_urls = call_with_lease(
                     cfg,
                     test_mode=False,
                     provider="google_imagen",
-                    mock_fn=lambda: _mock_image_urls(pending["ar"], 1),
-                    real_fn=lambda kp: google_imagen.edit_image(
-                        api_key=kp["api_key"],
-                        prompt=pending["prompt"],
-                        source_image_data_url=source_image,
-                        aspect_ratio=pending["ar"],
+                    mock_fn=lambda: _mock_image_urls(pending["ar"], len(source_images)),
+                    real_fn=lambda kp: _edit_each_image(
+                        kp["api_key"],
+                        pending["prompt"], source_images, pending["ar"],
+                        # [VERTEX AI] kp["sa_json"], kp["project_id"], kp["location"],
                     ),
                 )
             else:
-                # 생성 모드: Imagen 4 predict API
+                # 생성 모드: Gemini로 텍스트만 생성
                 image_urls = call_with_lease(
                     cfg,
                     test_mode=False,
                     provider="google_imagen",
                     mock_fn=lambda: _mock_image_urls(pending["ar"], pending["num"]),
-                    real_fn=lambda kp: google_imagen.generate_images(
+                    real_fn=lambda kp: google_imagen.gemini_generate(
                         api_key=kp["api_key"],
-                        prompt=pending["prompt"],
-                        model=pending["model_id"],
+                        parts=[{"text": pending["prompt"]}],
                         aspect_ratio=pending["ar"],
                         num_images=pending["num"],
-                        negative_prompt=pending.get("negative_prompt", ""),
+                        # [VERTEX AI] sa_json=kp["sa_json"], project_id=kp["project_id"], location=kp["location"],
                     ),
+                )
+            # GCS 업로드 (설정 시)
+            if image_urls and cfg.gcs_bucket_name and cfg.vertex_sa_json:
+                from providers.gcs_storage import upload_media_urls
+                image_urls = upload_media_urls(
+                    cfg.vertex_sa_json, cfg.gcs_bucket_name, image_urls, prefix="nanobanana",
                 )
         except Exception as e:
             image_urls = []
@@ -204,9 +240,17 @@ def render_nanobanana_tab(cfg: AppConfig, sidebar: SidebarState):
         unsafe_allow_html=True,
     )
 
+    # 학교 공유 갤러리 데이터 로드
+    school_gallery = None
+    if st.session_state.get("_nb_gallery_open"):
+        school_id = st.session_state.get("school_id", "default")
+        school_gallery = load_school_nanobanana_gallery(cfg, school_id)
+
     sessions = st.session_state.get("nb_sessions", [])
     active_id = st.session_state.get("nb_active_id", "")
-    result = _nanobanana_component(sessions=sessions, active_id=active_id)
+    result = _nanobanana_component(sessions=sessions, active_id=active_id,
+                                   enabled_features=_get_tab_features(cfg, "nanobanana."),
+                                   school_gallery=school_gallery)
 
     if not result or not isinstance(result, dict):
         return
@@ -224,8 +268,15 @@ def render_nanobanana_tab(cfg: AppConfig, sidebar: SidebarState):
     if len(_processed) > 100:
         st.session_state["_nb_processed_actions"] = {dedup_key}
 
+    if action == "open_gallery":
+        st.session_state["_nb_gallery_open"] = True
+        st.rerun()
+    elif action == "close_gallery":
+        st.session_state["_nb_gallery_open"] = False
+        st.rerun()
+
     # ── generate: 활성 세션에 턴 추가 (세션 없으면 자동 생성) ──
-    if action == "generate":
+    elif action == "generate":
         # 이미 대기 중인 요청이 있으면 무시 (중복 방지)
         if st.session_state.get("_nb_pending_generate"):
             return
@@ -238,13 +289,12 @@ def render_nanobanana_tab(cfg: AppConfig, sidebar: SidebarState):
 
         session = _find_session_or_create(model_id)
 
-        # 이전 턴에서 마지막 이미지 가져오기 (편집 모드용)
-        source_image = None
+        # 직전 턴의 모든 이미지 가져오기 (편집 모드용)
+        source_images = []
         if session["turns"]:
-            for prev_turn in reversed(session["turns"]):
-                if prev_turn.get("image_urls"):
-                    source_image = prev_turn["image_urls"][0]
-                    break
+            last_turn = session["turns"][-1]
+            if last_turn.get("image_urls"):
+                source_images = list(last_turn["image_urls"])
 
         if not sidebar.test_mode:
             # Real API → 로딩 턴 먼저 표시, 다음 rerun에서 API 호출
@@ -271,11 +321,9 @@ def render_nanobanana_tab(cfg: AppConfig, sidebar: SidebarState):
                 "ar": ar,
                 "num": num,
                 "prompt": prompt_text,
-                "model_id": model_id,
-                "negative_prompt": negative_prompt,
             }
-            if source_image:
-                pending_data["source_image"] = source_image
+            if source_images:
+                pending_data["source_images"] = source_images
             st.session_state["_nb_pending_generate"] = pending_data
         else:
             # Mock → 즉시 결과
