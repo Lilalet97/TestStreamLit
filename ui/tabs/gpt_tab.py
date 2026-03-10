@@ -128,12 +128,23 @@ def render_gpt_tab(cfg: AppConfig, sidebar: SidebarState):
                         test_mode=pending["test_mode"],
                         provider="openai",
                         mock_fn=lambda: _mock_gpt_response(user_message),
-                        real_fn=lambda kp: _call_openai_chat(kp["api_key"], model, api_msgs),
+                        real_fn=lambda kp: _call_openai_chat(
+                            kp["api_key"], cfg.openai_model, api_msgs,
+                        ),
                     )
                     conv["messages"].append({
                         "role": "assistant", "content": reply,
                         "ts": datetime.now(timezone.utc).isoformat(),
                     })
+                    # ── 크레딧 차감 (Phase 2) ──
+                    from core.credits import deduct_after_success, get_feature_cost
+                    try:
+                        _cost = get_feature_cost(cfg, "gpt")
+                        new_bal = deduct_after_success(cfg, _cost, tab_id="gpt")
+                        if new_bal >= 0:
+                            st.session_state["_gpt_credit_toast"] = new_bal
+                    except Exception:
+                        pass
                 except Exception as e:
                     conv["messages"].append({
                         "role": "assistant", "content": f"[Error] {e}",
@@ -151,6 +162,15 @@ def render_gpt_tab(cfg: AppConfig, sidebar: SidebarState):
                         pass
                 break
         st.rerun()
+
+    # ── 에러 메시지 표시 (이전 rerun에서 저장된 것) ──
+    _err = st.session_state.pop("_gpt_error_msg", None)
+    if _err:
+        st.toast(_err, icon="⚠️")
+
+    _cred = st.session_state.pop("_gpt_credit_toast", None)
+    if _cred is not None:
+        st.toast(f"크레딧 차감 완료 (잔여: {_cred})", icon="💰")
 
     st.markdown(
         """<style>
@@ -199,6 +219,15 @@ def render_gpt_tab(cfg: AppConfig, sidebar: SidebarState):
     if action == "send_message":
         # 이미 대기 중인 요청이 있으면 무시 (중복 방지)
         if st.session_state.get("_gpt_pending_send"):
+            return
+
+        # ── 크레딧 확인 (Phase 1) ──
+        from core.credits import check_credits, get_feature_cost
+        _cost = get_feature_cost(cfg, "gpt")
+        ok, msg = check_credits(cfg, _cost)
+        if not ok:
+            st.session_state["_gpt_error_msg"] = msg
+            st.rerun()
             return
 
         conv_id = result.get("conv_id")

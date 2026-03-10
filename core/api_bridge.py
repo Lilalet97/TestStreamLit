@@ -36,6 +36,7 @@ def call_with_lease(
     school_id: Optional[str] = None,
     max_wait_sec: int = 60,
     lease_ttl_sec: Optional[int] = 120,
+    model: Optional[str] = None,
 ) -> Any:
     """
     test_mode=True  → mock_fn() 호출 (키 풀 사용하지 않음)
@@ -66,8 +67,14 @@ def call_with_lease(
             wait=True,
             max_wait_sec=max_wait_sec,
             lease_ttl_sec=lease_ttl_sec,
+            model=model,
         )
     except TimeoutError as e:
+        msg = str(e)
+        if "RPD" in msg or "일일" in msg:
+            raise NoKeyError(
+                f"[{provider}] 오늘의 일일 요청 한도에 도달했습니다. 내일 다시 시도해 주세요."
+            ) from e
         raise NoKeyError(
             f"[{provider}] 사용 가능한 API 키가 없습니다. 잠시 후 다시 시도해 주세요."
         ) from e

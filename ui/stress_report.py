@@ -158,12 +158,6 @@ _PROVIDER_META = {
         "grade_a_ms": 15000,
         "grade_b_ms": 30000,
     },
-    "midjourney": {
-        "label": "Midjourney",
-        "output": "이미지",
-        "grade_a_ms": 15000,
-        "grade_b_ms": 30000,
-    },
     "kling": {
         "label": "Kling Video",
         "output": "동영상",

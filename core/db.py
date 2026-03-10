@@ -1,7 +1,5 @@
 # core/db.py
 from datetime import datetime, timedelta
-import streamlit as st
-from typing import Optional
 import uuid
 
 import json
@@ -23,27 +21,8 @@ def init_db(cfg: AppConfig):
         return
     conn = get_db(cfg)
     cur = conn.cursor()
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS runs (
-            run_id TEXT PRIMARY KEY,
-            created_at TEXT,
-            user_id TEXT,
-            session_id TEXT,
-            provider TEXT,
-            operation TEXT,
-            endpoint TEXT,
-            request_json TEXT,
-            http_status INTEGER,
-            response_text TEXT,
-            response_json TEXT,
-            state TEXT,
-            job_id TEXT,
-            output_json TEXT,
-            gpt_analysis TEXT,
-            error_text TEXT,
-            duration_ms INTEGER
-        )
-    """)
+    # runs: 레거시 — LEGACY_TABLES에서 관리, init_db에서 더 이상 생성하지 않음
+
     cur.execute("""
         CREATE TABLE IF NOT EXISTS active_jobs (
             run_id TEXT PRIMARY KEY,
@@ -269,27 +248,7 @@ def init_db(cfg: AppConfig):
         ON elevenlabs_history(user_id, created_at DESC)
     """)
 
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS nanobanana_history (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          user_id TEXT NOT NULL,
-          item_id TEXT NOT NULL,
-          created_at TEXT NOT NULL,
-          prompt TEXT NOT NULL DEFAULT '',
-          model_id TEXT,
-          model_label TEXT,
-          aspect_ratio TEXT DEFAULT '1:1',
-          num_images INTEGER DEFAULT 1,
-          style_preset TEXT,
-          negative_prompt TEXT DEFAULT '',
-          settings_json TEXT,
-          image_urls_json TEXT
-        )
-    """)
-    cur.execute("""
-        CREATE INDEX IF NOT EXISTS idx_nanobanana_history_user
-        ON nanobanana_history(user_id, created_at DESC)
-    """)
+    # nanobanana_history: 레거시 — LEGACY_TABLES에서 관리, init_db에서 더 이상 생성하지 않음
 
     cur.execute("""
         CREATE TABLE IF NOT EXISTS nanobanana_sessions (
@@ -298,6 +257,7 @@ def init_db(cfg: AppConfig):
           title      TEXT NOT NULL DEFAULT '',
           model      TEXT NOT NULL DEFAULT 'imagen-4.0-generate-001',
           turns_json TEXT NOT NULL DEFAULT '[]',
+          tab_id     TEXT NOT NULL DEFAULT 'nanobanana',
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL
         )
@@ -306,6 +266,11 @@ def init_db(cfg: AppConfig):
         CREATE INDEX IF NOT EXISTS idx_nanobanana_sessions_user
         ON nanobanana_sessions(user_id, updated_at DESC)
     """)
+    # tab_id 컬럼 마이그레이션 (기존 DB 호환)
+    try:
+        cur.execute("ALTER TABLE nanobanana_sessions ADD COLUMN tab_id TEXT NOT NULL DEFAULT 'nanobanana'")
+    except Exception:
+        pass  # 이미 존재
 
     # ── chat_messages 테이블 ──
     cur.execute("""
@@ -379,6 +344,33 @@ def init_db(cfg: AppConfig):
         )
     """)
 
+    # user_credits: 레거시 — LEGACY_TABLES에서 관리, init_db에서 더 이상 생성하지 않음
+
+    # ── user_balance (통합 크레딧 잔액) ──
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS user_balance (
+            user_id    TEXT PRIMARY KEY,
+            balance    INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL
+        )
+    """)
+
+    # ── credit_usage_log (크레딧 차감 내역) ──
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS credit_usage_log (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id     TEXT NOT NULL,
+            school_id   TEXT NOT NULL,
+            tab_id      TEXT NOT NULL,
+            amount      INTEGER NOT NULL,
+            created_at  TEXT NOT NULL
+        )
+    """)
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_credit_usage_school_date
+        ON credit_usage_log(school_id, created_at)
+    """)
+
     # ── stress_test_runs 마이그레이션: plan_id, round_label ──
     try:
         cur.execute("ALTER TABLE stress_test_runs ADD COLUMN plan_id TEXT")
@@ -389,140 +381,113 @@ def init_db(cfg: AppConfig):
     except Exception:
         pass
 
+    # ── kling 크레딧 통합: kling_veo / kling_grok → kling ──
+    cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='user_credits'")
+    _has_user_credits = cur.fetchone() is not None
+    if _has_user_credits:
+        cur.execute("DELETE FROM user_credits WHERE tab_id IN ('kling_veo', 'kling_grok')")
+    cur.execute("""
+        DELETE FROM admin_settings
+        WHERE key LIKE 'credit_cost.kling_veo' OR key LIKE 'credit_cost.kling_grok'
+           OR key LIKE 'credit_default.kling_veo' OR key LIKE 'credit_default.kling_grok'
+    """)
+
+    # ── user_credits → user_balance 마이그레이션 ──
+    cur.execute("SELECT COUNT(*) AS cnt FROM user_balance")
+    if cur.fetchone()["cnt"] == 0 and _has_user_credits:
+        cur.execute("""
+            INSERT OR IGNORE INTO user_balance (user_id, balance, updated_at)
+            SELECT user_id, SUM(balance), MAX(updated_at)
+            FROM user_credits GROUP BY user_id
+        """)
+
+    # ── class_schedules (수업 시간표) ──
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS class_schedules (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          school_id TEXT NOT NULL,
+          day_of_week INTEGER NOT NULL,
+          start_hour INTEGER NOT NULL,
+          start_minute INTEGER NOT NULL DEFAULT 0,
+          end_hour INTEGER NOT NULL,
+          end_minute INTEGER NOT NULL DEFAULT 0,
+          label TEXT NOT NULL DEFAULT '',
+          color TEXT NOT NULL DEFAULT '#6366f1',
+          created_at TEXT,
+          updated_at TEXT
+        )
+    """)
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_class_schedules_school_day
+        ON class_schedules(school_id, day_of_week)
+    """)
+
+    # ── 알림 (notices) ──
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS notices (
+          notice_id INTEGER PRIMARY KEY AUTOINCREMENT,
+          message TEXT NOT NULL,
+          target_school TEXT,
+          is_active INTEGER NOT NULL DEFAULT 1,
+          created_at TEXT,
+          expires_at TEXT
+        )
+    """)
+
+    # ── 서버 점검 (maintenance) ──
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS maintenance_schedule (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          scheduled_at TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'scheduled',
+          message TEXT NOT NULL DEFAULT '서버 점검이 예정되어 있습니다.',
+          created_at TEXT
+        )
+    """)
+
     conn.commit()
     conn.close()
     force_sync()  # 스키마 변경을 Turso에 즉시 반영
     _DB_INITIALIZED = True
 
 
-def insert_run(cfg: AppConfig, row: dict):
-    conn = get_db(cfg)
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO runs (
-            run_id, created_at, user_id, session_id, provider, operation, endpoint,
-            request_json, http_status, response_text, response_json, state, job_id,
-            output_json, gpt_analysis, error_text, duration_ms
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        row["run_id"], row["created_at"], row["user_id"], row["session_id"], row["provider"], row["operation"], row["endpoint"],
-        row.get("request_json"), row.get("http_status"), row.get("response_text"), row.get("response_json"),
-        row.get("state"), row.get("job_id"), row.get("output_json"), row.get("gpt_analysis"), row.get("error_text"),
-        row.get("duration_ms"),
-    ))
-    conn.commit()
-    conn.close()
+_NOTICE_TABLES_ENSURED = False
 
+def ensure_notice_tables(cfg: AppConfig):
+    """notices / maintenance_schedule 테이블이 없으면 생성.
 
-def insert_run_and_activate(cfg: AppConfig, row: dict, provider: str, operation: str):
-    """insert_run + add_active_job → 단일 커밋."""
-    conn = get_db(cfg)
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO runs (
-            run_id, created_at, user_id, session_id, provider, operation, endpoint,
-            request_json, http_status, response_text, response_json, state, job_id,
-            output_json, gpt_analysis, error_text, duration_ms
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        row["run_id"], row["created_at"], row["user_id"], row["session_id"], row["provider"], row["operation"], row["endpoint"],
-        row.get("request_json"), row.get("http_status"), row.get("response_text"), row.get("response_json"),
-        row.get("state"), row.get("job_id"), row.get("output_json"), row.get("gpt_analysis"), row.get("error_text"),
-        row.get("duration_ms"),
-    ))
-    ts = now_iso()
-    cur.execute("""
-        INSERT OR REPLACE INTO active_jobs (
-            run_id, created_at, updated_at, user_id, session_id, provider, operation, state
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        row["run_id"], ts, ts, st.session_state.user_id, st.session_state.session_id,
-        provider, operation, "running",
-    ))
-    conn.commit()
-    conn.close()
-
-
-def update_run(cfg: AppConfig, run_id: str, **fields):
-    if not fields:
+    init_db()가 이미 실행된 프로세스에서 코드가 업데이트된 경우를 대비한
+    경량 마이그레이션 헬퍼. 세션당 1회만 실행.
+    """
+    global _NOTICE_TABLES_ENSURED
+    if _NOTICE_TABLES_ENSURED:
         return
     conn = get_db(cfg)
-    cur = conn.cursor()
-    cols = ", ".join([f"{k}=?" for k in fields.keys()])
-    vals = list(fields.values())
-    vals.append(run_id)
-    cur.execute(f"UPDATE runs SET {cols} WHERE run_id=?", vals)
-    conn.commit()
-    conn.close()
-
-
-def update_run_and_touch(cfg: AppConfig, run_id: str, active_state: Optional[str] = None, **fields):
-    """update_run + touch_active_job → 단일 커밋 (폴링 루프용)."""
-    conn = get_db(cfg)
-    cur = conn.cursor()
-    if fields:
-        cols = ", ".join([f"{k}=?" for k in fields.keys()])
-        vals = list(fields.values())
-        vals.append(run_id)
-        cur.execute(f"UPDATE runs SET {cols} WHERE run_id=?", vals)
-    ts = now_iso()
-    if active_state is None:
-        cur.execute("UPDATE active_jobs SET updated_at=? WHERE run_id=?", (ts, run_id))
-    else:
-        cur.execute("UPDATE active_jobs SET updated_at=?, state=? WHERE run_id=?", (ts, active_state, run_id))
-    conn.commit()
-    conn.close()
-
-
-def finish_run(cfg: AppConfig, run_id: str, *, remove_active: bool = True, **fields):
-    """update_run + remove_active_job → 단일 커밋 (종료 시)."""
-    conn = get_db(cfg)
-    cur = conn.cursor()
-    if fields:
-        cols = ", ".join([f"{k}=?" for k in fields.keys()])
-        vals = list(fields.values())
-        vals.append(run_id)
-        cur.execute(f"UPDATE runs SET {cols} WHERE run_id=?", vals)
-    if remove_active:
-        cur.execute("DELETE FROM active_jobs WHERE run_id=?", (run_id,))
-    conn.commit()
-    conn.close()
-
-
-def remove_active_job(cfg: AppConfig, run_id: str):
-    conn = get_db(cfg)
-    cur = conn.cursor()
-    cur.execute("DELETE FROM active_jobs WHERE run_id=?", (run_id,))
-    conn.commit()
-    conn.close()
-
-
-def count_active_jobs(cfg: AppConfig, user_id: Optional[str] = None) -> int:
-    conn = get_db(cfg)
-    cur = conn.cursor()
-    if user_id:
-        cur.execute("SELECT COUNT(*) AS c FROM active_jobs WHERE user_id=? AND state IN ('running','submitted')", (user_id,))
-    else:
-        cur.execute("SELECT COUNT(*) AS c FROM active_jobs WHERE state IN ('running','submitted')")
-    c = int(cur.fetchone()["c"])
-    conn.close()
-    return c
-
-
-def guard_concurrency_or_raise(cfg: AppConfig):
-    if count_active_jobs(cfg, st.session_state.user_id) >= cfg.user_max_concurrency:
-        raise RuntimeError(f"사용자 동시 실행 제한({cfg.user_max_concurrency})을 초과했습니다.")
-    if count_active_jobs(cfg, None) >= cfg.global_max_concurrency:
-        raise RuntimeError(f"전체 동시 실행 제한({cfg.global_max_concurrency})을 초과했습니다.")
-
-
-def get_run(cfg: AppConfig, run_id: str):
-    conn = get_db(cfg)
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM runs WHERE run_id=?", (run_id,))
-    row = cur.fetchone()
-    conn.close()
-    return row
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS notices (
+              notice_id INTEGER PRIMARY KEY AUTOINCREMENT,
+              message TEXT NOT NULL,
+              target_school TEXT,
+              is_active INTEGER NOT NULL DEFAULT 1,
+              created_at TEXT,
+              expires_at TEXT
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS maintenance_schedule (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              scheduled_at TEXT NOT NULL,
+              status TEXT NOT NULL DEFAULT 'scheduled',
+              message TEXT NOT NULL DEFAULT '서버 점검이 예정되어 있습니다.',
+              created_at TEXT
+            )
+        """)
+        conn.commit()
+    finally:
+        conn.close()
+    _NOTICE_TABLES_ENSURED = True
 
 
 def cleanup_orphan_active_jobs(cfg: AppConfig):
@@ -660,6 +625,7 @@ def hard_delete_user(cfg: AppConfig, user_id: str):
     try:
         cur = conn.cursor()
         cur.execute("DELETE FROM users WHERE user_id=?", (user_id,))
+        cur.execute("DELETE FROM user_credits WHERE user_id=?", (user_id,))
         conn.commit()
     finally:
         conn.close()
@@ -746,25 +712,6 @@ def list_active_jobs_all(cfg: AppConfig, limit: int = 200, user_id: str | None =
         else:
             cur.execute(
                 """SELECT * FROM active_jobs ORDER BY updated_at DESC LIMIT ?""",
-                (limit,),
-            )
-        return cur.fetchall()
-    finally:
-        conn.close()
-
-
-def list_runs_admin(cfg: AppConfig, limit: int = 200, user_id: str | None = None):
-    conn = get_db(cfg)
-    try:
-        cur = conn.cursor()
-        if user_id:
-            cur.execute(
-                """SELECT * FROM runs WHERE user_id=? ORDER BY created_at DESC LIMIT ?""",
-                (user_id, limit),
-            )
-        else:
-            cur.execute(
-                """SELECT * FROM runs ORDER BY created_at DESC LIMIT ?""",
                 (limit,),
             )
         return cur.fetchall()
@@ -913,17 +860,6 @@ def backfill_mj_gallery_mock_images(cfg: AppConfig):
         conn.close()
 
 
-def delete_mj_gallery_item(cfg: AppConfig, user_id: str, item_id: int):
-    """MJ 갤러리 아이템 삭제 (본인 소유만)."""
-    conn = get_db(cfg)
-    try:
-        cur = conn.cursor()
-        cur.execute("DELETE FROM mj_gallery WHERE id = ? AND user_id = ?", (item_id, user_id))
-        conn.commit()
-    finally:
-        conn.close()
-
-
 def list_mj_gallery_admin(cfg: AppConfig, limit: int = 200, user_id: str | None = None):
     """관리자용: MJ 갤러리 아이템 전체/유저별 조회. 첨부이미지는 유무만 표시."""
     conn = get_db(cfg)
@@ -999,7 +935,7 @@ def upsert_gpt_conversation(cfg: AppConfig, user_id: str, conv: dict):
             conv["id"],
             user_id,
             conv.get("title", ""),
-            conv.get("model", "gpt-4o-mini"),
+            conv.get("model", cfg.openai_model),
             json.dumps(conv.get("messages", []), ensure_ascii=False),
             ts, ts,
         ))
@@ -1456,162 +1392,44 @@ def get_elevenlabs_by_id(cfg: AppConfig, row_id: int) -> dict | None:
 # NanoBanana (Google Imagen)
 # ══════════════════════════════════════
 
-def insert_nanobanana_item(cfg: AppConfig, user_id: str, item: dict) -> int:
-    """NanoBanana 이미지 생성 히스토리 아이템 저장."""
-    conn = get_db(cfg)
-    try:
-        cur = conn.cursor()
-        cur.execute("""
-            INSERT INTO nanobanana_history (
-                user_id, item_id, created_at, prompt, model_id, model_label,
-                aspect_ratio, num_images, style_preset, negative_prompt,
-                settings_json, image_urls_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            user_id,
-            item.get("item_id", ""),
-            now_iso(),
-            item.get("prompt", ""),
-            item.get("model_id"),
-            item.get("model_label"),
-            item.get("aspect_ratio", "1:1"),
-            item.get("num_images", 1),
-            item.get("style_preset"),
-            item.get("negative_prompt", ""),
-            json.dumps(item.get("settings", {}), ensure_ascii=False),
-            json.dumps(item.get("image_urls", []), ensure_ascii=False),
-        ))
-        row_id = cur.lastrowid
-        conn.commit()
-        return row_id
-    finally:
-        conn.close()
-
 
 def load_nanobanana_history(cfg: AppConfig, user_id: str, limit: int = 200) -> list:
-    """사용자별 NanoBanana 히스토리를 최신순으로 로드."""
+    """사용자별 NanoBanana 이미지를 세션에서 추출하여 최신순 반환 (갤러리용)."""
     conn = get_db(cfg)
     try:
         cur = conn.cursor()
         cur.execute("""
-            SELECT id, item_id, prompt, model_id, model_label,
-                   aspect_ratio, num_images, style_preset, negative_prompt,
-                   settings_json, image_urls_json
-            FROM nanobanana_history
-            WHERE user_id = ?
-            ORDER BY created_at DESC
+            SELECT id, model, turns_json, updated_at
+            FROM nanobanana_sessions
+            WHERE user_id = ? AND turns_json IS NOT NULL AND turns_json != '[]'
+            ORDER BY updated_at DESC
             LIMIT ?
         """, (user_id, limit))
         rows = cur.fetchall()
         items = []
         for r in rows:
-            items.append({
-                "db_id": r["id"],
-                "item_id": r["item_id"],
-                "prompt": r["prompt"],
-                "model_id": r["model_id"],
-                "model_label": r["model_label"],
-                "aspect_ratio": r["aspect_ratio"] or "1:1",
-                "num_images": r["num_images"] or 1,
-                "style_preset": r["style_preset"],
-                "negative_prompt": r["negative_prompt"] or "",
-                "settings": json.loads(r["settings_json"]) if r["settings_json"] else {},
-                "image_urls": json.loads(r["image_urls_json"]) if r["image_urls_json"] else [],
-                "loading": False,
-            })
-        return items
+            turns = json.loads(r["turns_json"]) if r["turns_json"] else []
+            for turn in turns:
+                urls = turn.get("image_urls") or []
+                if not urls:
+                    continue
+                items.append({
+                    "prompt": turn.get("prompt", ""),
+                    "model_label": turn.get("model_label", r["model"] or ""),
+                    "aspect_ratio": turn.get("aspect_ratio", "1:1"),
+                    "image_urls": urls,
+                })
+        return items[:limit]
     finally:
         conn.close()
 
 
-def update_nanobanana_image_urls(cfg: AppConfig, item_id: str, image_urls: list):
-    """NanoBanana 히스토리 아이템의 image_urls 업데이트."""
-    conn = get_db(cfg)
-    try:
-        cur = conn.cursor()
-        cur.execute(
-            "UPDATE nanobanana_history SET image_urls_json = ? WHERE item_id = ?",
-            (json.dumps(image_urls, ensure_ascii=False), item_id),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def list_nanobanana_admin(cfg: AppConfig, limit: int = 200, user_id: str | None = None) -> list[dict]:
-    """관리자용: NanoBanana 히스토리 목록 조회."""
-    conn = get_db(cfg)
-    try:
-        cur = conn.cursor()
-        base = """
-            SELECT id, user_id, item_id, created_at, prompt,
-                   model_label, aspect_ratio, num_images,
-                   style_preset, image_urls_json
-            FROM nanobanana_history
-        """
-        if user_id:
-            base += " WHERE user_id = ? ORDER BY id ASC LIMIT ?"
-            cur.execute(base, (user_id, limit))
-        else:
-            base += " ORDER BY id ASC LIMIT ?"
-            cur.execute(base, (limit,))
-        rows = cur.fetchall()
-        items = []
-        for r in rows:
-            urls = json.loads(r["image_urls_json"]) if r["image_urls_json"] else []
-            items.append({
-                "id": r["id"],
-                "user_id": r["user_id"],
-                "created_at": r["created_at"],
-                "prompt": (r["prompt"] or "")[:80],
-                "model": r["model_label"] or "",
-                "aspect_ratio": r["aspect_ratio"] or "1:1",
-                "images": len(urls),
-                "style": r["style_preset"] or "",
-            })
-        return items
-    finally:
-        conn.close()
-
-
-def get_nanobanana_by_id(cfg: AppConfig, row_id: int) -> dict | None:
-    """NanoBanana 히스토리 아이템 상세 조회 (admin 팝업용)."""
-    conn = get_db(cfg)
-    try:
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT id, user_id, item_id, created_at, prompt,
-                   model_id, model_label, aspect_ratio, num_images,
-                   style_preset, negative_prompt,
-                   settings_json, image_urls_json
-            FROM nanobanana_history WHERE id = ?
-        """, (row_id,))
-        r = cur.fetchone()
-        if not r:
-            return None
-        return {
-            "id": r["id"],
-            "user_id": r["user_id"],
-            "item_id": r["item_id"],
-            "created_at": r["created_at"],
-            "prompt": r["prompt"],
-            "model_id": r["model_id"],
-            "model_label": r["model_label"],
-            "aspect_ratio": r["aspect_ratio"] or "1:1",
-            "num_images": r["num_images"] or 1,
-            "style_preset": r["style_preset"],
-            "negative_prompt": r["negative_prompt"] or "",
-            "settings": json.loads(r["settings_json"]) if r["settings_json"] else {},
-            "image_urls": json.loads(r["image_urls_json"]) if r["image_urls_json"] else [],
-        }
-    finally:
-        conn.close()
 
 
 # ── NanoBanana Sessions (멀티턴 편집) ──────────────────────
 
 
-def upsert_nanobanana_session(cfg: AppConfig, user_id: str, session: dict):
+def upsert_nanobanana_session(cfg: AppConfig, user_id: str, session: dict, tab_id: str = "nanobanana"):
     """NanoBanana 세션 저장/갱신 (INSERT ON CONFLICT UPDATE)."""
     conn = get_db(cfg)
     try:
@@ -1619,8 +1437,8 @@ def upsert_nanobanana_session(cfg: AppConfig, user_id: str, session: dict):
         ts = now_iso()
         cur.execute("""
             INSERT INTO nanobanana_sessions
-                (id, user_id, title, model, turns_json, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+                (id, user_id, title, model, turns_json, tab_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 title=excluded.title,
                 model=excluded.model,
@@ -1632,6 +1450,7 @@ def upsert_nanobanana_session(cfg: AppConfig, user_id: str, session: dict):
             session.get("title", ""),
             session.get("model", "imagen-4.0-generate-001"),
             json.dumps(session.get("turns", []), ensure_ascii=False),
+            tab_id,
             ts, ts,
         ))
         conn.commit()
@@ -1639,7 +1458,7 @@ def upsert_nanobanana_session(cfg: AppConfig, user_id: str, session: dict):
         conn.close()
 
 
-def load_nanobanana_sessions(cfg: AppConfig, user_id: str, limit: int = 100) -> list:
+def load_nanobanana_sessions(cfg: AppConfig, user_id: str, limit: int = 100, tab_id: str = "nanobanana") -> list:
     """사용자별 NanoBanana 세션 최신순 로드."""
     conn = get_db(cfg)
     try:
@@ -1647,10 +1466,10 @@ def load_nanobanana_sessions(cfg: AppConfig, user_id: str, limit: int = 100) -> 
         cur.execute("""
             SELECT id, title, model, turns_json, created_at, updated_at
             FROM nanobanana_sessions
-            WHERE user_id = ?
+            WHERE user_id = ? AND tab_id = ?
             ORDER BY updated_at DESC
             LIMIT ?
-        """, (user_id, limit))
+        """, (user_id, tab_id, limit))
         rows = cur.fetchall()
         result = []
         for r in rows:
@@ -1777,43 +1596,17 @@ def load_chat_messages(cfg: AppConfig, school_id: str, limit: int = 100) -> list
         conn.close()
 
 
-def list_chat_messages_admin(cfg: AppConfig, limit: int = 200, school_id: str | None = None) -> list[dict]:
-    conn = get_db(cfg)
-    try:
-        cur = conn.cursor()
-        if school_id:
-            cur.execute("""
-                SELECT id, school_id, sender_id, sender_role, message, created_at
-                FROM chat_messages
-                WHERE school_id = ?
-                ORDER BY created_at DESC
-                LIMIT ?
-            """, (school_id, limit))
-        else:
-            cur.execute("""
-                SELECT id, school_id, sender_id, sender_role, message, created_at
-                FROM chat_messages
-                ORDER BY created_at DESC
-                LIMIT ?
-            """, (limit,))
-        return [dict(r) for r in cur.fetchall()]
-    finally:
-        conn.close()
-
-
 # ── DB 관리: Admin Settings + Purge ─────────────────────
 
 PURGEABLE_TABLES = [
-    {"key": "runs",               "table": "runs",               "label": "API 호출 기록",          "date_col": "created_at"},
-    {"key": "stress_test",        "table": "stress_test_runs",    "label": "부하테스트",              "date_col": "created_at",
+    {"key": "stress_test",        "table": "stress_test_runs",    "label": "API — 부하테스트",       "date_col": "created_at",
      "child_table": "stress_test_samples", "fk_col": "test_id", "parent_pk": "test_id"},
-    {"key": "mj_gallery",         "table": "mj_gallery",          "label": "Midjourney 갤러리",      "date_col": "created_at"},
-    {"key": "gpt_conversations",  "table": "gpt_conversations",   "label": "GPT 대화",               "date_col": "created_at"},
-    {"key": "kling_web_history",  "table": "kling_web_history",   "label": "Kling 비디오 기록",      "date_col": "created_at"},
-    {"key": "elevenlabs_history", "table": "elevenlabs_history",  "label": "ElevenLabs TTS 기록",    "date_col": "created_at"},
-    {"key": "nanobanana_history", "table": "nanobanana_history",  "label": "NanoBanana 이미지 기록", "date_col": "created_at"},
-    {"key": "nanobanana_sessions","table": "nanobanana_sessions", "label": "NanoBanana 세션",        "date_col": "created_at"},
-    {"key": "chat_messages",      "table": "chat_messages",       "label": "채팅 메시지",            "date_col": "created_at"},
+    {"key": "mj_gallery",         "table": "mj_gallery",          "label": "Midjourney — 이미지",    "date_col": "created_at"},
+    {"key": "gpt_conversations",  "table": "gpt_conversations",   "label": "GPT — 대화 기록",       "date_col": "created_at"},
+    {"key": "kling_web_history",  "table": "kling_web_history",   "label": "Kling — 비디오 기록",   "date_col": "created_at"},
+    {"key": "elevenlabs_history", "table": "elevenlabs_history",  "label": "ElevenLabs — TTS 기록", "date_col": "created_at"},
+    {"key": "nanobanana_sessions","table": "nanobanana_sessions", "label": "NanoBanana — 이미지 세션","date_col": "created_at"},
+    {"key": "chat_messages",      "table": "chat_messages",       "label": "채팅 — 메시지 기록",    "date_col": "created_at"},
 ]
 
 
@@ -1944,6 +1737,91 @@ def run_auto_purge(cfg: AppConfig) -> dict:
             if deleted > 0:
                 results[tbl["key"]] = deleted
     return results
+
+
+# ── 레거시(미사용) 테이블 ─────────────────────
+
+LEGACY_TABLES = [
+    {"table": "runs",               "label": "API — 호출 기록 (레거시)",          "reason": "사용되지 않는 API 로깅 테이블"},
+    {"table": "nanobanana_history", "label": "NanoBanana — 이미지 기록 (레거시)", "reason": "이미지 데이터가 nanobanana_sessions.turns_json에 통합됨"},
+    {"table": "user_credits",      "label": "크레딧 — 탭별 잔액 (레거시)",       "reason": "user_balance 테이블로 마이그레이션 완료"},
+]
+
+
+def list_legacy_tables(cfg: AppConfig) -> list:
+    """DB에 실제 존재하는 레거시 테이블 목록 반환."""
+    conn = get_db(cfg)
+    try:
+        cur = conn.cursor()
+        found = []
+        for lt in LEGACY_TABLES:
+            cur.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                (lt["table"],),
+            )
+            if cur.fetchone():
+                cur.execute(f"SELECT COUNT(*) AS c FROM {lt['table']}")
+                cnt = int(cur.fetchone()["c"])
+                found.append({**lt, "row_count": cnt})
+        return found
+    finally:
+        conn.close()
+
+
+def drop_legacy_tables(cfg: AppConfig) -> list:
+    """레거시 테이블을 모두 DROP하고 삭제된 테이블명 목록 반환."""
+    conn = get_db(cfg)
+    try:
+        cur = conn.cursor()
+        dropped = []
+        for lt in LEGACY_TABLES:
+            cur.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                (lt["table"],),
+            )
+            if cur.fetchone():
+                cur.execute(f"DROP TABLE {lt['table']}")
+                dropped.append(lt["table"])
+        conn.commit()
+        return dropped
+    finally:
+        conn.close()
+        if dropped:
+            force_sync()
+
+
+def reset_all_data(cfg: AppConfig) -> dict:
+    """모든 데이터 테이블의 레코드를 삭제 (스키마 유지). 시스템 테이블 제외."""
+    # 데이터 테이블만 삭제 (users, admin_settings 등 시스템 테이블 제외)
+    DATA_TABLES = [
+        "active_jobs",
+        "stress_test_samples", "stress_test_runs",
+        "mj_gallery", "gpt_conversations",
+        "kling_web_history", "elevenlabs_history",
+        "nanobanana_sessions",
+        "chat_messages",
+        "credit_usage_log",
+        "notices", "maintenance_schedule",
+    ]
+    conn = get_db(cfg)
+    try:
+        cur = conn.cursor()
+        result = {}
+        for table in DATA_TABLES:
+            cur.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                (table,),
+            )
+            if cur.fetchone():
+                cur.execute(f"SELECT COUNT(*) AS c FROM {table}")
+                cnt = int(cur.fetchone()["c"])
+                cur.execute(f"DELETE FROM {table}")
+                result[table] = cnt
+        conn.commit()
+        return result
+    finally:
+        conn.close()
+        force_sync()
 
 
 # ── School Gallery (학교 공유 갤러리) ─────────────────────
@@ -2087,3 +1965,547 @@ def load_school_nanobanana_gallery(cfg: AppConfig, school_id: str, limit: int = 
         return items[:limit]
     finally:
         conn.close()
+
+
+# ── 크레딧 관리 (통합 잔액) ─────────────────────────────
+
+
+def get_user_balance(cfg: AppConfig, user_id: str) -> int:
+    """통합 크레딧 잔액. 미등록이면 0."""
+    conn = get_db(cfg)
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT balance FROM user_balance WHERE user_id = ?", (user_id,))
+        row = cur.fetchone()
+        return int(row["balance"]) if row else 0
+    finally:
+        conn.close()
+
+
+def set_user_balance(cfg: AppConfig, user_id: str, balance: int):
+    """UPSERT: 통합 잔액 설정."""
+    conn = get_db(cfg)
+    try:
+        conn.execute("""
+            INSERT INTO user_balance (user_id, balance, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                balance = excluded.balance,
+                updated_at = excluded.updated_at
+        """, (user_id, int(balance), now_iso()))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def deduct_user_balance(cfg: AppConfig, user_id: str, cost: int,
+                        tab_id: str = "", school_id: str = "") -> bool:
+    """통합 잔액에서 cost 차감. 성공 True, 잔액 부족 False. usage_log에 tab_id 기록."""
+    conn = get_db(cfg)
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT balance FROM user_balance WHERE user_id = ?", (user_id,))
+        row = cur.fetchone()
+        current = int(row["balance"]) if row else 0
+        if current < cost:
+            return False
+        ts = now_iso()
+        conn.execute(
+            "UPDATE user_balance SET balance = ?, updated_at = ? WHERE user_id = ?",
+            (current - cost, ts, user_id),
+        )
+        if school_id and tab_id:
+            conn.execute(
+                "INSERT INTO credit_usage_log (user_id, school_id, tab_id, amount, created_at) VALUES (?, ?, ?, ?, ?)",
+                (user_id, school_id, tab_id, cost, ts),
+            )
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+def init_user_balance_from_default(cfg: AppConfig, user_id: str):
+    """credit_default 설정값으로 초기 잔액 INSERT OR IGNORE."""
+    conn = get_db(cfg)
+    try:
+        default_val = get_admin_setting(cfg, "credit_default", "0")
+        balance = int(default_val) if default_val.isdigit() else 0
+        conn.execute("""
+            INSERT OR IGNORE INTO user_balance (user_id, balance, updated_at)
+            VALUES (?, ?, ?)
+        """, (user_id, balance, now_iso()))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def add_balance_bulk(
+    cfg: AppConfig,
+    role_filter: str,
+    school_filter: str,
+    amount: int,
+) -> int:
+    """대상 사용자들의 통합 잔액에 amount 가산. 영향받은 사용자 수 반환."""
+    if amount <= 0:
+        return 0
+
+    conn = get_db(cfg)
+    try:
+        cur = conn.cursor()
+
+        roles = [r.strip() for r in role_filter.split(",")]
+        placeholders = ",".join("?" * len(roles))
+        if school_filter and school_filter != "all":
+            cur.execute(
+                f"SELECT user_id FROM users WHERE role IN ({placeholders}) AND school_id = ? AND is_active = 1",
+                (*roles, school_filter),
+            )
+        else:
+            cur.execute(
+                f"SELECT user_id FROM users WHERE role IN ({placeholders}) AND is_active = 1",
+                roles,
+            )
+        user_ids = [row["user_id"] for row in cur.fetchall()]
+        if not user_ids:
+            return 0
+
+        ts = now_iso()
+        for uid in user_ids:
+            conn.execute("""
+                INSERT INTO user_balance (user_id, balance, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    balance = balance + ?,
+                    updated_at = ?
+            """, (uid, amount, ts, amount, ts))
+        conn.commit()
+        return len(user_ids)
+    finally:
+        conn.close()
+
+
+def run_auto_credit_refill(cfg: AppConfig):
+    """자동 크레딧 충전. 매월 지정일에 도달하면 1회 실행.
+
+    admin_settings:
+      credit_refill_day    — "0"이면 비활성, "1"~"28"이면 매월 해당 일
+      credit_refill_last   — 마지막 실행 "YYYY-MM" (같은 월 중복 방지)
+      credit_refill_amount — 충전량
+    """
+    from datetime import datetime, timezone
+
+    day_str = get_admin_setting(cfg, "credit_refill_day", "0")
+    try:
+        refill_day = int(day_str)
+    except (ValueError, TypeError):
+        return
+    if refill_day <= 0:
+        return
+
+    now = datetime.now(timezone.utc)
+    if now.day < refill_day:
+        return
+
+    current_ym = now.strftime("%Y-%m")
+    last_refill = get_admin_setting(cfg, "credit_refill_last", "")
+    if last_refill == current_ym:
+        return
+
+    val = get_admin_setting(cfg, "credit_refill_amount", "0")
+    try:
+        amount = max(0, int(val))
+    except (ValueError, TypeError):
+        amount = 0
+
+    affected = add_balance_bulk(cfg, "student,teacher", "all", amount)
+    if affected >= 0:
+        set_admin_setting(cfg, "credit_refill_last", current_ym)
+
+
+def get_school_credit_report(cfg: AppConfig, days: int = 30) -> list[dict]:
+    """학교별 크레딧 사용량 + 통합 잔액 요약.
+
+    Returns: [{school_id, remaining, used_by_tab: {tab_id: amount}, user_count}, ...]
+    """
+    conn = get_db(cfg)
+    try:
+        cur = conn.cursor()
+        since = _dt_minus_days(days)
+
+        # 1) 사용량: credit_usage_log에서 학교·탭별 합산
+        cur.execute("""
+            SELECT school_id, tab_id, SUM(amount) AS used, COUNT(DISTINCT user_id) AS user_count
+            FROM credit_usage_log
+            WHERE created_at >= ?
+            GROUP BY school_id, tab_id
+        """, (since,))
+        usage_rows = cur.fetchall()
+
+        # 2) 잔액: user_balance JOIN users로 학교별 합산
+        cur.execute("""
+            SELECT u.school_id, SUM(ub.balance) AS remaining, COUNT(DISTINCT ub.user_id) AS user_count
+            FROM user_balance ub
+            JOIN users u ON u.user_id = ub.user_id
+            WHERE u.is_active = 1
+            GROUP BY u.school_id
+        """)
+        balance_rows = cur.fetchall()
+
+        data: dict[str, dict] = {}
+        for r in balance_rows:
+            sid = r["school_id"]
+            data[sid] = {
+                "school_id": sid,
+                "remaining": int(r["remaining"]),
+                "user_count": int(r["user_count"]),
+                "used_by_tab": {},
+            }
+        for r in usage_rows:
+            sid = r["school_id"]
+            if sid not in data:
+                data[sid] = {
+                    "school_id": sid,
+                    "remaining": 0,
+                    "user_count": int(r["user_count"]),
+                    "used_by_tab": {},
+                }
+            data[sid]["used_by_tab"][r["tab_id"]] = int(r["used"])
+
+        return sorted(data.values(), key=lambda x: x["school_id"])
+    finally:
+        conn.close()
+
+
+def get_student_credit_report(
+    cfg: AppConfig, school_id: str | None = None, days: int = 30
+) -> list[dict]:
+    """학생별 크레딧 사용량 + 잔액 요약.
+
+    Returns: [{user_id, school_id, role, remaining, used_by_tab: {tab_id: amount}}, ...]
+    """
+    conn = get_db(cfg)
+    try:
+        cur = conn.cursor()
+        since = _dt_minus_days(days)
+
+        # 1) 사용량: credit_usage_log에서 유저·탭별 합산
+        if school_id:
+            cur.execute("""
+                SELECT user_id, tab_id, SUM(amount) AS used
+                FROM credit_usage_log
+                WHERE created_at >= ? AND school_id = ?
+                GROUP BY user_id, tab_id
+            """, (since, school_id))
+        else:
+            cur.execute("""
+                SELECT user_id, tab_id, SUM(amount) AS used
+                FROM credit_usage_log
+                WHERE created_at >= ?
+                GROUP BY user_id, tab_id
+            """, (since,))
+        usage_rows = cur.fetchall()
+
+        # 2) 잔액 + 유저 정보
+        if school_id:
+            cur.execute("""
+                SELECT u.user_id, u.school_id, u.role,
+                       COALESCE(ub.balance, 0) AS remaining
+                FROM users u
+                LEFT JOIN user_balance ub ON u.user_id = ub.user_id
+                WHERE u.is_active = 1 AND u.school_id = ?
+                ORDER BY u.school_id, u.user_id
+            """, (school_id,))
+        else:
+            cur.execute("""
+                SELECT u.user_id, u.school_id, u.role,
+                       COALESCE(ub.balance, 0) AS remaining
+                FROM users u
+                LEFT JOIN user_balance ub ON u.user_id = ub.user_id
+                WHERE u.is_active = 1
+                ORDER BY u.school_id, u.user_id
+            """)
+        user_rows = cur.fetchall()
+
+        data: dict[str, dict] = {}
+        for r in user_rows:
+            uid = r["user_id"]
+            data[uid] = {
+                "user_id": uid,
+                "school_id": r["school_id"],
+                "role": r["role"],
+                "remaining": int(r["remaining"]),
+                "used_by_tab": {},
+            }
+        for r in usage_rows:
+            uid = r["user_id"]
+            if uid not in data:
+                continue
+            data[uid]["used_by_tab"][r["tab_id"]] = int(r["used"])
+
+        return sorted(data.values(), key=lambda x: (x["school_id"], x["user_id"]))
+    finally:
+        conn.close()
+
+
+def _dt_minus_days(days: int) -> str:
+    """현재 시각에서 days일 전 ISO 문자열."""
+    from datetime import datetime, timedelta, timezone
+    return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+
+# ── class_schedules CRUD ──────────────────────────────────────
+
+def list_class_schedules(cfg: AppConfig, school_id: str | None = None) -> list[dict]:
+    """수업 시간표 목록 조회. school_id가 None이면 전체."""
+    conn = get_db(cfg)
+    try:
+        cur = conn.cursor()
+        if school_id:
+            cur.execute(
+                "SELECT * FROM class_schedules WHERE school_id = ? ORDER BY day_of_week, start_hour, start_minute",
+                (school_id,),
+            )
+        else:
+            cur.execute("SELECT * FROM class_schedules ORDER BY school_id, day_of_week, start_hour, start_minute")
+        return [dict(r) for r in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def insert_class_schedule(cfg: AppConfig, schedule: dict) -> int:
+    """수업 시간표 추가. 반환: row id."""
+    conn = get_db(cfg)
+    try:
+        cur = conn.cursor()
+        n = now_iso()
+        cur.execute("""
+            INSERT INTO class_schedules
+                (school_id, day_of_week, start_hour, start_minute, end_hour, end_minute, label, color, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            schedule["school_id"],
+            schedule["day_of_week"],
+            schedule["start_hour"],
+            schedule.get("start_minute", 0),
+            schedule["end_hour"],
+            schedule.get("end_minute", 0),
+            schedule.get("label", ""),
+            schedule.get("color", "#6366f1"),
+            n, n,
+        ))
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
+
+
+def update_class_schedule(cfg: AppConfig, schedule_id: int, schedule: dict):
+    """수업 시간표 수정."""
+    conn = get_db(cfg)
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE class_schedules SET
+                school_id=?, day_of_week=?, start_hour=?, start_minute=?,
+                end_hour=?, end_minute=?, label=?, color=?, updated_at=?
+            WHERE id=?
+        """, (
+            schedule["school_id"],
+            schedule["day_of_week"],
+            schedule["start_hour"],
+            schedule.get("start_minute", 0),
+            schedule["end_hour"],
+            schedule.get("end_minute", 0),
+            schedule.get("label", ""),
+            schedule.get("color", "#6366f1"),
+            now_iso(),
+            schedule_id,
+        ))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def delete_class_schedule(cfg: AppConfig, schedule_id: int):
+    """수업 시간표 삭제."""
+    conn = get_db(cfg)
+    try:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM class_schedules WHERE id = ?", (schedule_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_active_class_now(cfg: AppConfig) -> dict | None:
+    """현재 시각에 진행 중인 수업이 있으면 해당 스케줄 반환, 없으면 None.
+    서버 시간대는 KST(UTC+9) 기준."""
+    import pytz
+    kst = pytz.timezone("Asia/Seoul")
+    now = datetime.now(kst)
+    dow = now.weekday()  # 0=Mon
+    cur_minutes = now.hour * 60 + now.minute
+
+    conn = get_db(cfg)
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT * FROM class_schedules WHERE day_of_week = ?",
+            (dow,),
+        )
+        for r in cur.fetchall():
+            start_m = r["start_hour"] * 60 + r["start_minute"]
+            end_m = r["end_hour"] * 60 + r["end_minute"]
+            if start_m <= cur_minutes < end_m:
+                return dict(r)
+        return None
+    finally:
+        conn.close()
+
+
+# ────────────────────────────────────────────
+# 알림 (notices) CRUD
+# ────────────────────────────────────────────
+
+def create_notice(cfg: AppConfig, message: str, target_school: str = None,
+                  expires_at: str = None) -> int:
+    conn = get_db(cfg)
+    try:
+        cur = conn.cursor()
+        # 기존 활성 알림 모두 비활성화 (알림은 항상 1개만 유지)
+        cur.execute("UPDATE notices SET is_active=0 WHERE is_active=1")
+        cur.execute("""
+            INSERT INTO notices (message, target_school, is_active, created_at, expires_at)
+            VALUES (?, ?, 1, ?, ?)
+        """, (message, target_school, now_iso(), expires_at))
+        conn.commit()
+        nid = cur.lastrowid
+        force_sync()
+        return nid
+    finally:
+        conn.close()
+
+
+def list_notices(cfg: AppConfig, active_only: bool = True) -> list:
+    conn = get_db(cfg)
+    try:
+        cur = conn.cursor()
+        if active_only:
+            cur.execute("""
+                SELECT * FROM notices
+                WHERE is_active = 1
+                  AND (expires_at IS NULL OR expires_at > ?)
+                ORDER BY created_at DESC
+            """, (now_iso(),))
+        else:
+            cur.execute("SELECT * FROM notices ORDER BY created_at DESC")
+        return [dict(r) for r in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def deactivate_notice(cfg: AppConfig, notice_id: int):
+    conn = get_db(cfg)
+    try:
+        conn.execute("UPDATE notices SET is_active=0 WHERE notice_id=?", (notice_id,))
+        conn.commit()
+        force_sync()
+    finally:
+        conn.close()
+
+
+def get_active_notices_for_user(cfg: AppConfig, school_id: str) -> list:
+    """특정 학교 학생에게 보여줄 활성 알림 목록."""
+    conn = get_db(cfg)
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT * FROM notices
+            WHERE is_active = 1
+              AND (expires_at IS NULL OR expires_at > ?)
+              AND (target_school IS NULL OR target_school = '' OR target_school = '*' OR target_school = ?)
+            ORDER BY created_at DESC
+        """, (now_iso(), school_id))
+        return [dict(r) for r in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+# ────────────────────────────────────────────
+# 서버 점검 (maintenance) CRUD
+# ────────────────────────────────────────────
+
+def schedule_maintenance(cfg: AppConfig, scheduled_at: str, message: str = None) -> int:
+    """점검 예약. scheduled_at은 ISO 형식 (e.g. '2026-03-10T18:00:00Z')."""
+    conn = get_db(cfg)
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO maintenance_schedule (scheduled_at, status, message, created_at)
+            VALUES (?, 'scheduled', ?, ?)
+        """, (scheduled_at, message or "서버 점검이 예정되어 있습니다.", now_iso()))
+        conn.commit()
+        mid = cur.lastrowid
+        force_sync()
+        return mid
+    finally:
+        conn.close()
+
+
+def get_upcoming_maintenance(cfg: AppConfig):
+    """가장 가까운 예정/진행 중 점검 조회. None이면 예정 없음."""
+    conn = get_db(cfg)
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT * FROM maintenance_schedule
+            WHERE status IN ('scheduled', 'active')
+            ORDER BY scheduled_at ASC
+            LIMIT 1
+        """)
+        r = cur.fetchone()
+        return dict(r) if r else None
+    finally:
+        conn.close()
+
+
+def update_maintenance_status(cfg: AppConfig, mid: int, status: str):
+    conn = get_db(cfg)
+    try:
+        conn.execute("UPDATE maintenance_schedule SET status=? WHERE id=?", (status, mid))
+        conn.commit()
+        force_sync()
+    finally:
+        conn.close()
+
+
+def cancel_maintenance(cfg: AppConfig, mid: int):
+    update_maintenance_status(cfg, mid, "cancelled")
+
+
+def deactivate_all_non_admin_users(cfg: AppConfig):
+    """admin을 제외한 모든 사용자를 비활성화."""
+    conn = get_db(cfg)
+    try:
+        conn.execute("""
+            UPDATE users SET is_active = 0
+            WHERE role != 'admin'
+        """)
+        conn.commit()
+        force_sync()
+    finally:
+        conn.close()
+
+
+def reactivate_all_users(cfg: AppConfig):
+    """모든 사용자 재활성화."""
+    conn = get_db(cfg)
+    try:
+        conn.execute("UPDATE users SET is_active = 1")
+        conn.commit()
+        force_sync()
+    finally:
+        conn.close()
+
+

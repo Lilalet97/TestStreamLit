@@ -18,6 +18,10 @@ def get_all_tabs() -> List[TabSpec]:
     from ui.tabs.kling_veo_tab import TAB as KLING_VEO_TAB
     from ui.tabs.elevenlabs_tab import TAB as ELEVENLABS_TAB
     from ui.tabs.nanobanana_tab import TAB as NANOBANANA_TAB
+    from ui.tabs.nanobanana_pro_tab import TAB as NANOBANANA_PRO_TAB
+    from ui.tabs.nanobanana_2_tab import TAB as NANOBANANA_2_TAB
+    from ui.tabs.kling_grok_tab import TAB as KLING_GROK_TAB
+    from ui.tabs.gallery_tab import TAB as GALLERY_TAB
 
     def _to_spec(d: Dict) -> TabSpec:
         return TabSpec(
@@ -27,7 +31,7 @@ def get_all_tabs() -> List[TabSpec]:
             render=d["render"],
         )
 
-    return [_to_spec(GPT_TAB), _to_spec(MJ_TAB), _to_spec(NANOBANANA_TAB), _to_spec(KLING_TAB), _to_spec(KLING_VEO_TAB), _to_spec(ELEVENLABS_TAB), _to_spec(SUNO_TAB)]
+    return [_to_spec(GPT_TAB), _to_spec(MJ_TAB), _to_spec(NANOBANANA_TAB), _to_spec(NANOBANANA_2_TAB), _to_spec(NANOBANANA_PRO_TAB), _to_spec(KLING_TAB), _to_spec(KLING_VEO_TAB), _to_spec(KLING_GROK_TAB), _to_spec(ELEVENLABS_TAB), _to_spec(SUNO_TAB), _to_spec(GALLERY_TAB)]
 
 
 def filter_tabs(all_tabs: List[TabSpec], enabled_features: Set[str]) -> List[TabSpec]:

@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body>
+<script>
+/* ═══════════════════════════════════════
+   Streamlit Component Protocol
+   ═══════════════════════════════════════ */
+function sendMessageToStreamlitClient(type, data) {
+  window.parent.postMessage(Object.assign({isStreamlitMessage:true, type:type}, data), "*");
+}
+function setComponentValue(value) {
+  sendMessageToStreamlitClient("streamlit:setComponentValue", {value:value});
+}
+function setFrameHeight(h) {
+  sendMessageToStreamlitClient("streamlit:setFrameHeight", {height:h});
+}
+function componentReady() {
+  sendMessageToStreamlitClient("streamlit:componentReady", {apiVersion:1});
+}
+
+/* ═══════════════════════════════════════
+   Constants & State
+   ═══════════════════════════════════════ */
+var ROOT_ID  = "fm-root";
+var STYLE_ID = "fm-styles";
+var state = {folder_id:""};
+var myFrame = window.frameElement;
+
+window.parent.__fmFrame = myFrame;
+delete window.parent.__fmCleanupPending;
+
+/* ═══════════════════════════════════════
+   Inject CSS into parent document
+   ═══════════════════════════════════════ */
+function injectStyles(){
+  var pd = window.parent.document;
+  if(pd.getElementById(STYLE_ID)) return;
+  var s = pd.createElement("style");
+  s.id = STYLE_ID;
+  s.textContent = [
+    "#fm-root{position:fixed;bottom:170px;right:24px;z-index:99998;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;}",
+
+    ".fm-fab{width:56px;height:56px;border-radius:50%;background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:24px;box-shadow:0 4px 16px rgba(0,0,0,0.3);transition:transform .2s,box-shadow .2s;}",
+    ".fm-fab:hover{transform:scale(1.08);box-shadow:0 6px 20px rgba(0,0,0,0.4);}",
+    ".fm-fab.hidden{display:none;}",
+
+    ".fm-panel{display:none;flex-direction:column;width:420px;height:520px;background:#1a1a2e;border-radius:16px 16px 0 0;box-shadow:-4px -4px 24px rgba(0,0,0,0.4);overflow:hidden;position:absolute;bottom:0;right:0;}",
+    ".fm-panel.open{display:flex;}",
+
+    ".fm-header{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;flex-shrink:0;}",
+    ".fm-header-title{font-size:15px;font-weight:600;display:flex;align-items:center;gap:8px;}",
+    ".fm-header-actions{display:flex;align-items:center;gap:4px;}",
+    ".fm-btn{background:none;border:none;color:#fff;font-size:18px;cursor:pointer;width:32px;height:32px;display:flex;align-items:center;justify-content:center;border-radius:50%;transition:background .2s;}",
+    ".fm-btn:hover{background:rgba(255,255,255,0.2);}",
+
+    ".fm-drive-frame{flex:1;border:none;width:100%;background:#fff;overflow:hidden;}"
+  ].join("\n");
+  pd.head.appendChild(s);
+}
+
+/* ═══════════════════════════════════════
+   Create / Get Root Element in Parent
+   ═══════════════════════════════════════ */
+function getOrCreateRoot(){
+  var pd = window.parent.document;
+  var root = pd.getElementById(ROOT_ID);
+
+  if(!root){
+    injectStyles();
+    root = pd.createElement("div");
+    root.id = ROOT_ID;
+    root.setAttribute("data-open", "0");
+    root.innerHTML =
+      '<button class="fm-fab" id="fmFab">\uD83D\uDCC4</button>' +
+      '<div class="fm-panel" id="fmPanel">' +
+        '<div class="fm-header">' +
+          '<div class="fm-header-title">\uD83D\uDCC4 \uAC15\uC758\uC790\uB8CC</div>' +
+          '<div class="fm-header-actions">' +
+            '<button class="fm-btn" id="fmClose">\u2715</button>' +
+          '</div>' +
+        '</div>' +
+        '<iframe class="fm-drive-frame" id="fmDriveFrame" scrolling="auto" style="overflow-x:hidden;"></iframe>' +
+      '</div>';
+    pd.body.appendChild(root);
+  }
+
+  attachEvents(root, pd);
+  startCleanupWatcher(pd);
+  return root;
+}
+
+/* ═══════════════════════════════════════
+   Attach Event Listeners
+   ═══════════════════════════════════════ */
+function attachEvents(root, pd){
+  root.querySelector("#fmFab").onclick  = function(){ fmToggle(pd); };
+  root.querySelector("#fmClose").onclick = function(){ fmToggle(pd); };
+
+  if(!window.parent.__fmEscBound){
+    window.parent.__fmEscBound = true;
+    pd.addEventListener("keydown", function(e){
+      if(e.key === "Escape"){
+        var r = pd.getElementById("fm-root");
+        if(r && r.getAttribute("data-open") === "1"){
+          r.setAttribute("data-open", "0");
+          var panel = pd.getElementById("fmPanel");
+          var fab   = pd.getElementById("fmFab");
+          if(panel) panel.classList.remove("open");
+          if(fab)   fab.classList.remove("hidden");
+        }
+      }
+    });
+  }
+}
+
+/* ═══════════════════════════════════════
+   Toggle Panel
+   ═══════════════════════════════════════ */
+function fmToggle(pd){
+  var root = pd.getElementById(ROOT_ID);
+  if(!root) return;
+  var nowOpen = root.getAttribute("data-open") !== "1";
+  root.setAttribute("data-open", nowOpen ? "1" : "0");
+
+  var panel = pd.getElementById("fmPanel");
+  var fab   = pd.getElementById("fmFab");
+  if(panel) panel.classList.toggle("open", nowOpen);
+  if(fab)   fab.classList.toggle("hidden", nowOpen);
+}
+
+/* ═══════════════════════════════════════
+   Render Drive Embed
+   ═══════════════════════════════════════ */
+function renderDriveEmbed(){
+  var pd = window.parent.document;
+  var driveFrame = pd.getElementById("fmDriveFrame");
+  if(!driveFrame || !state.folder_id) return;
+
+  var embedUrl = "https://drive.google.com/embeddedfolderview?id=" + state.folder_id + "#list";
+  if(driveFrame.getAttribute("src") !== embedUrl){
+    driveFrame.setAttribute("src", embedUrl);
+  }
+}
+
+/* ═══════════════════════════════════════
+   Streamlit Render Event
+   ═══════════════════════════════════════ */
+window.addEventListener("message", function(event){
+  if(event.data.type !== "streamlit:render") return;
+  var args = event.data.args || {};
+
+  state.folder_id = args.folder_id || "";
+
+  window.parent.__fmFrame = window.frameElement;
+  delete window.parent.__fmCleanupPending;
+
+  getOrCreateRoot();
+  renderDriveEmbed();
+  setFrameHeight(1);
+});
+
+/* ═══════════════════════════════════════
+   Cleanup Watcher
+   ═══════════════════════════════════════ */
+function startCleanupWatcher(pd){
+  if(window.parent.__fmCleanupInterval) return;
+
+  var rootId  = ROOT_ID;
+  var styleId = STYLE_ID;
+
+  window.parent.__fmCleanupInterval = window.parent.setInterval(function(){
+    try{
+      var frame = window.parent.__fmFrame;
+      if(!frame || !frame.isConnected){
+        if(!window.parent.__fmCleanupPending){
+          window.parent.__fmCleanupPending = Date.now();
+        } else if(Date.now() - window.parent.__fmCleanupPending > 3000){
+          window.parent.clearInterval(window.parent.__fmCleanupInterval);
+          delete window.parent.__fmCleanupInterval;
+          delete window.parent.__fmCleanupPending;
+
+          var r = pd.getElementById(rootId);
+          if(r) r.remove();
+          var s = pd.getElementById(styleId);
+          if(s) s.remove();
+          delete window.parent.__fmFrame;
+        }
+      } else {
+        delete window.parent.__fmCleanupPending;
+      }
+    }catch(e){
+      try{ window.parent.clearInterval(window.parent.__fmCleanupInterval); }catch(e2){}
+    }
+  }, 500);
+}
+
+window.addEventListener("beforeunload", function(){
+  try{
+    if(window.parent.__fmFrame === myFrame){
+      window.parent.__fmFrame = null;
+    }
+  }catch(e){}
+});
+
+/* ═══════════════════════════════════════
+   Init
+   ═══════════════════════════════════════ */
+componentReady();
+setFrameHeight(1);
+</script>
+</body>
+</html>

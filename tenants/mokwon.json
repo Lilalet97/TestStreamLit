@@ -1,0 +1,17 @@
+{
+  "tenant_id": "mokwon",
+  "layout": "목원대학교",
+  "enabled_features": [
+    "tab.gpt",
+    "tab.mj", "mj.create", "mj.imagine", "mj.explore",
+    "tab.nanobanana_2", "nanobanana.generate", "nanobanana.gallery",
+    "tab.kling_grok", "kling.text2video", "kling.assets",
+    "tab.elevenlabs", "elevenlabs.tts", "elevenlabs.gallery",
+    "tab.suno"
+  ],
+  "branding": {
+    "page_title": "목원대학교 AI 교육",
+    "browser_tab_title": "목원대학교",
+    "logo_path": "tenants/logos/Mokwon_logo.png"
+  }
+}

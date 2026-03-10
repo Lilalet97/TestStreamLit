@@ -18,8 +18,6 @@ import requests
 
 from providers.vertex_auth import get_aistudio_url, get_aistudio_headers
 
-# Imagen 4 모델 (Imagen 3은 종료됨)
-DEFAULT_MODEL = "imagen-4.0-generate-001"
 # Gemini 이미지 편집 모델
 # [VERTEX AI] EDIT_MODEL = "gemini-2.5-flash-preview-image-generation"
 EDIT_MODEL = "gemini-2.5-flash-image"

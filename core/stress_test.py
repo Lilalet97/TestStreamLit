@@ -110,15 +110,17 @@ def _burst_worker(
     try:
         barrier.wait(timeout=30)
     except threading.BrokenBarrierError:
+        t_err = _now_iso()
         results_queue.put({
             "test_id": test_id, "worker_id": worker_id, "request_seq": 1,
-            "started_at": _now_iso(), "finished_at": _now_iso(),
+            "started_at": t_err, "finished_at": t_err,
             "duration_ms": 0, "phase": "total",
             "status": "error", "error_text": "barrier broken",
             "provider": provider, "key_name": None,
         })
         return
 
+    started_at = _now_iso()
     t0 = time.time()
     lease: Optional[Lease] = None
     status = "success"
@@ -139,7 +141,7 @@ def _burst_worker(
             time.sleep(random.uniform(mock_latency[0] / 1000, mock_latency[1] / 1000))
         else:
             # Real mode: 실제 provider API 호출
-            _call_real_api(provider, lease.key_payload)
+            _call_real_api(cfg, provider, lease.key_payload)
 
         # 3) release
         release_lease(cfg, lease.lease_id, state="released")
@@ -157,22 +159,26 @@ def _burst_worker(
                 pass
 
     duration_ms = int((time.time() - t0) * 1000)
+    finished_at = _now_iso()
     results_queue.put({
         "test_id": test_id, "worker_id": worker_id, "request_seq": 1,
-        "started_at": _now_iso(), "finished_at": _now_iso(),
+        "started_at": started_at, "finished_at": finished_at,
         "duration_ms": duration_ms, "phase": "total",
         "status": status, "error_text": error_text,
         "provider": provider, "key_name": key_name,
     })
 
 
-def _call_real_api(provider: str, key_payload: dict):
+def _call_real_api(cfg: AppConfig, provider: str, key_payload: dict):
     """Provider별 경량 테스트 요청."""
+    if not key_payload or "api_key" not in key_payload:
+        raise ValueError(f"key_payload에 api_key가 없습니다: {key_payload}")
     if provider == "google_imagen":
         from providers.google_imagen import generate_images
         generate_images(
             api_key=key_payload["api_key"],
             prompt="A simple red circle on white background",
+            model=cfg.google_imagen_model,
             num_images=1,
         )
     elif provider == "openai":
@@ -181,7 +187,7 @@ def _call_real_api(provider: str, key_payload: dict):
             "https://api.openai.com/v1/chat/completions",
             headers={"Authorization": f"Bearer {key_payload['api_key']}",
                      "Content-Type": "application/json"},
-            json={"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "ping"}],
+            json={"model": cfg.openai_model, "messages": [{"role": "user", "content": "ping"}],
                   "max_tokens": 5},
             timeout=30,
         )
@@ -193,6 +199,7 @@ def _call_real_api(provider: str, key_payload: dict):
             api_key=key_payload["api_key"],
             voice_id="21m00Tcm4TlvDq8ikWAM",  # Rachel (default)
             text="Hello stress test",
+            model_id=cfg.elevenlabs_model,
         )
     else:
         # 알 수 없는 provider: mock 처리
@@ -275,9 +282,10 @@ def _compute_summary(cfg: AppConfig, test_id: str) -> dict:
         durations = [row["duration_ms"] for row in cur.fetchall()]
 
         avg_ms = int(sum(durations) / len(durations)) if durations else 0
-        p50 = durations[len(durations) // 2] if durations else 0
-        p95 = durations[int(len(durations) * 0.95)] if durations else 0
-        p99 = durations[int(len(durations) * 0.99)] if durations else 0
+        n = len(durations)
+        p50 = durations[min((n - 1) // 2, n - 1)] if durations else 0
+        p95 = durations[min(int((n - 1) * 0.95), n - 1)] if durations else 0
+        p99 = durations[min(int((n - 1) * 0.99), n - 1)] if durations else 0
 
         cur.execute(
             "SELECT key_name, COUNT(*) AS c FROM stress_test_samples "

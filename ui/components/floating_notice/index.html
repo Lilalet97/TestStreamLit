@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body>
+<script>
+/* ═══════════════════════════════════════
+   Streamlit Component Protocol
+   ═══════════════════════════════════════ */
+function sendMessageToStreamlitClient(type, data) {
+  window.parent.postMessage(Object.assign({isStreamlitMessage:true, type:type}, data), "*");
+}
+function setComponentValue(value) {
+  sendMessageToStreamlitClient("streamlit:setComponentValue", {value:value});
+}
+function setFrameHeight(h) {
+  sendMessageToStreamlitClient("streamlit:setFrameHeight", {height:h});
+}
+function componentReady() {
+  sendMessageToStreamlitClient("streamlit:componentReady", {apiVersion:1});
+}
+
+/* ═══════════════════════════════════════
+   Constants & State
+   ═══════════════════════════════════════ */
+var ROOT_ID  = "fn-root";
+var STYLE_ID = "fn-styles";
+var state = {notices:[], maintenance:null};
+var myFrame = window.frameElement;
+
+window.parent.__fnFrame = myFrame;
+delete window.parent.__fnCleanupPending;
+
+/* ═══════════════════════════════════════
+   Inject CSS into parent document
+   ═══════════════════════════════════════ */
+function injectStyles(){
+  var pd = window.parent.document;
+  if(pd.getElementById(STYLE_ID)) return;
+  var s = pd.createElement("style");
+  s.id = STYLE_ID;
+  s.textContent = [
+    /* Root container — fixed top banner */
+    "#fn-root{position:fixed;top:0;left:0;width:100%;z-index:999999;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;pointer-events:none;}",
+    "#fn-root *{pointer-events:auto;}",
+
+    /* Maintenance countdown bar */
+    ".fn-maint{background:linear-gradient(135deg,#d4380d,#fa541c);color:#fff;padding:10px 20px;display:flex;align-items:center;justify-content:center;gap:12px;font-size:14px;font-weight:600;box-shadow:0 2px 12px rgba(212,56,13,0.4);animation:fn-slideDown .4s ease-out;}",
+    ".fn-maint-icon{font-size:20px;flex-shrink:0;}",
+    ".fn-maint-text{text-align:center;line-height:1.4;}",
+    ".fn-maint-countdown{font-variant-numeric:tabular-nums;min-width:80px;text-align:center;}",
+
+    /* Notice items */
+    ".fn-notice{background:linear-gradient(135deg,#1565c0,#1976d2);color:#fff;padding:12px 20px;display:flex;align-items:center;gap:12px;font-size:14px;font-weight:500;border-bottom:1px solid rgba(255,255,255,0.15);box-shadow:0 2px 8px rgba(21,101,192,0.4);animation:fn-slideDown .4s ease-out;}",
+    ".fn-notice-icon{font-size:16px;flex-shrink:0;}",
+    ".fn-notice-msg{flex:1;line-height:1.4;}",
+    ".fn-notice-close{background:none;border:none;color:#888;font-size:18px;cursor:pointer;width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:50%;transition:background .2s,color .2s;flex-shrink:0;}",
+    ".fn-notice-close:hover{background:rgba(255,255,255,0.1);color:#fff;}",
+
+    /* Slide-out animation for dismiss */
+    ".fn-dismiss{animation:fn-slideUp .3s ease-in forwards;}",
+
+    /* Keyframes */
+    "@keyframes fn-slideDown{from{transform:translateY(-100%);opacity:0;}to{transform:translateY(0);opacity:1;}}",
+    "@keyframes fn-slideUp{from{transform:translateY(0);opacity:1;}to{transform:translateY(-100%);opacity:0;}}"
+  ].join("\n");
+  pd.head.appendChild(s);
+}
+
+/* ═══════════════════════════════════════
+   Create / Get Root Element
+   ═══════════════════════════════════════ */
+function getOrCreateRoot(){
+  var pd = window.parent.document;
+  var root = pd.getElementById(ROOT_ID);
+  if(!root){
+    injectStyles();
+    root = pd.createElement("div");
+    root.id = ROOT_ID;
+    pd.body.appendChild(root);
+  }
+  startCleanupWatcher(pd);
+  return root;
+}
+
+/* ═══════════════════════════════════════
+   Countdown Timer (KST)
+   ═══════════════════════════════════════ */
+function startCountdown(scheduledAtKST){
+  /* scheduledAtKST = "2026-03-09T20:00:00" (naive KST) → append +09:00 */
+  var targetMs = new Date(scheduledAtKST + "+09:00").getTime();
+  if(isNaN(targetMs)) return;
+
+  /* 이전 interval 정리 */
+  if(window.parent.__fnCountdownInterval){
+    clearInterval(window.parent.__fnCountdownInterval);
+  }
+
+  function tick(){
+    var pd = window.parent.document;
+    var el = pd.getElementById("fn-countdown");
+    if(!el) return;
+
+    var diff = targetMs - Date.now();
+    if(diff <= 0){
+      el.textContent = "\uC11C\uBC84 \uC810\uAC80\uC774 \uC2DC\uC791\uB418\uC5C8\uC2B5\uB2C8\uB2E4.";
+      clearInterval(window.parent.__fnCountdownInterval);
+      delete window.parent.__fnCountdownInterval;
+      return;
+    }
+
+    var totalSec = Math.floor(diff / 1000);
+    var hours = Math.floor(totalSec / 3600);
+    var mins  = Math.floor((totalSec % 3600) / 60);
+    var secs  = totalSec % 60;
+
+    var parts = [];
+    if(hours > 0) parts.push(hours + "\uC2DC\uAC04");
+    if(mins > 0 || hours > 0) parts.push(mins + "\uBD84");
+    parts.push(secs + "\uCD08");
+
+    el.textContent = parts.join(" ") + " \uD6C4 \uC11C\uBC84 \uC810\uAC80\uC774 \uC2DC\uC791\uB429\uB2C8\uB2E4.";
+  }
+
+  tick();
+  window.parent.__fnCountdownInterval = setInterval(tick, 1000);
+}
+
+/* ═══════════════════════════════════════
+   Render Banner
+   ═══════════════════════════════════════ */
+function renderBanner(){
+  var pd = window.parent.document;
+  var root = pd.getElementById(ROOT_ID);
+  if(!root) return;
+
+  /* 닫은 알림 Set */
+  if(!window.parent.__fnDismissed) window.parent.__fnDismissed = new Set();
+  var dismissed = window.parent.__fnDismissed;
+
+  var html = "";
+
+  /* Maintenance countdown bar */
+  if(state.maintenance && state.maintenance.scheduled_at){
+    var msg = escHtml(state.maintenance.message || "");
+    html += '<div class="fn-maint">';
+    html += '<span class="fn-maint-icon">\uD83D\uDD27</span>';
+    html += '<span class="fn-maint-text">';
+    html += '<span id="fn-countdown" class="fn-maint-countdown"></span>';
+    if(msg) html += '<br><span style="font-size:12px;font-weight:400;opacity:0.9;">' + msg + '</span>';
+    html += '</span>';
+    html += '</div>';
+  }
+
+  /* Notice items */
+  var notices = state.notices || [];
+  for(var i = 0; i < notices.length; i++){
+    var n = notices[i];
+    if(dismissed.has(n.notice_id)) continue;
+    html += '<div class="fn-notice" data-nid="' + n.notice_id + '">';
+    html += '<span class="fn-notice-icon">\uD83D\uDCE2</span>';
+    html += '<span class="fn-notice-msg">' + escHtml(n.message) + '</span>';
+    html += '<button class="fn-notice-close" data-dismiss="' + n.notice_id + '">\u2715</button>';
+    html += '</div>';
+  }
+
+  root.innerHTML = html;
+
+  /* Dismiss 버튼 바인딩 */
+  var closeBtns = root.querySelectorAll(".fn-notice-close");
+  for(var j = 0; j < closeBtns.length; j++){
+    closeBtns[j].onclick = function(){
+      var nid = parseInt(this.getAttribute("data-dismiss"));
+      dismissed.add(nid);
+      var row = this.closest(".fn-notice");
+      if(row){
+        row.classList.add("fn-dismiss");
+        setTimeout(function(){ row.remove(); }, 300);
+      }
+    };
+  }
+
+  /* Start countdown if maintenance present */
+  if(state.maintenance && state.maintenance.scheduled_at){
+    startCountdown(state.maintenance.scheduled_at);
+  } else {
+    if(window.parent.__fnCountdownInterval){
+      clearInterval(window.parent.__fnCountdownInterval);
+      delete window.parent.__fnCountdownInterval;
+    }
+  }
+}
+
+function escHtml(s){
+  var d = window.parent.document.createElement("div");
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+/* ═══════════════════════════════════════
+   Streamlit Render Event
+   ═══════════════════════════════════════ */
+window.addEventListener("message", function(event){
+  if(event.data.type !== "streamlit:render") return;
+  var args = event.data.args || {};
+
+  state.notices     = args.notices     || [];
+  state.maintenance = args.maintenance || null;
+
+  window.parent.__fnFrame = window.frameElement;
+  delete window.parent.__fnCleanupPending;
+
+  getOrCreateRoot();
+
+  /* 데이터 키 비교 → 변경 시에만 재렌더 (카운트다운은 JS 타이머로 독립 갱신) */
+  var key = JSON.stringify(state.notices.map(function(n){return n.notice_id;}))
+          + "|" + (state.maintenance ? state.maintenance.scheduled_at : "");
+  if(key !== (window.parent.__fnLastKey || "")){
+    window.parent.__fnLastKey = key;
+    renderBanner();
+  }
+
+  setFrameHeight(1);
+});
+
+/* ═══════════════════════════════════════
+   Cleanup Watcher
+   ═══════════════════════════════════════ */
+function startCleanupWatcher(pd){
+  if(window.parent.__fnCleanupInterval) return;
+
+  window.parent.__fnCleanupInterval = window.parent.setInterval(function(){
+    try{
+      var frame = window.parent.__fnFrame;
+      if(!frame || !frame.isConnected){
+        if(!window.parent.__fnCleanupPending){
+          window.parent.__fnCleanupPending = Date.now();
+        } else if(Date.now() - window.parent.__fnCleanupPending > 3000){
+          window.parent.clearInterval(window.parent.__fnCleanupInterval);
+          delete window.parent.__fnCleanupInterval;
+          delete window.parent.__fnCleanupPending;
+
+          var r = pd.getElementById("fn-root");
+          if(r) r.remove();
+          var s = pd.getElementById("fn-styles");
+          if(s) s.remove();
+          delete window.parent.__fnFrame;
+          delete window.parent.__fnLastKey;
+          delete window.parent.__fnDismissed;
+          if(window.parent.__fnCountdownInterval){
+            clearInterval(window.parent.__fnCountdownInterval);
+            delete window.parent.__fnCountdownInterval;
+          }
+        }
+      } else {
+        delete window.parent.__fnCleanupPending;
+      }
+    }catch(e){
+      try{ window.parent.clearInterval(window.parent.__fnCleanupInterval); }catch(e2){}
+    }
+  }, 500);
+}
+
+window.addEventListener("beforeunload", function(){
+  try{
+    if(window.parent.__fnFrame === myFrame){
+      window.parent.__fnFrame = null;
+    }
+  }catch(e){}
+});
+
+/* ═══════════════════════════════════════
+   Init
+   ═══════════════════════════════════════ */
+componentReady();
+setFrameHeight(1);
+</script>
+</body>
+</html>

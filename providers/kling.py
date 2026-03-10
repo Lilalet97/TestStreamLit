@@ -32,11 +32,13 @@ def submit_video(access_key: str, secret_key: str, endpoint: str, payload: dict)
 
 
 def get_task(access_key: str, secret_key: str, task_id: str, task_type: str = "video"):
-    """Kling 작업 상태 조회. task_type: 'video' 또는 'image'."""
+    """Kling 작업 상태 조회. task_type: 'video', 'image2video', 'image'."""
     token = get_kling_token(access_key, secret_key)
     headers = {"Authorization": f"Bearer {token}"}
     if task_type == "image":
         url = f"{KLING_BASE}/images/generations/{task_id}"
+    elif task_type == "image2video":
+        url = f"{KLING_BASE}/videos/image2video/{task_id}"
     else:
         url = f"{KLING_BASE}/videos/text2video/{task_id}"
     return http_get_json(url, headers, timeout=30)

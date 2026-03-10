@@ -7,10 +7,59 @@
 /* ── 리셋 ── */
 *{margin:0;padding:0;box-sizing:border-box;}
 html,body{height:100%;margin:0;}
+
+/* ── 테마 변수 (다크 기본) ── */
+:root{
+  --bg-main:#212121;
+  --bg-sidebar:#171717;
+  --bg-surface:#2d2d2d;
+  --bg-hover:#3d3d3d;
+  --bg-active:#343541;
+  --bg-code:#1a1a1a;
+  --border:#2d2d2d;
+  --border-strong:#404040;
+  --border-code:#333;
+  --border-focus:#606060;
+  --text-primary:#e0e0e0;
+  --text-body:#d0d0d0;
+  --text-secondary:#b0b0b0;
+  --text-muted:#9a9aab;
+  --text-placeholder:#666;
+  --text-code:#d4d4d4;
+  --scrollbar:#3f3f46;
+  --accent:#10a37f;
+  --accent-dot:#4ade80;
+  --error:#ef4444;
+}
+@media(prefers-color-scheme:light){
+  :root{
+    --bg-main:#ffffff;
+    --bg-sidebar:#f9f9f9;
+    --bg-surface:#f4f4f4;
+    --bg-hover:#ebebeb;
+    --bg-active:#e3e3e3;
+    --bg-code:#1e1e1e;
+    --border:#e5e5e5;
+    --border-strong:#d1d5db;
+    --border-code:#333;
+    --border-focus:#a0a0a0;
+    --text-primary:#1a1a1a;
+    --text-body:#374151;
+    --text-secondary:#6b7280;
+    --text-muted:#6b7280;
+    --text-placeholder:#9ca3af;
+    --text-code:#d4d4d4;
+    --scrollbar:#c5c5c5;
+    --accent:#10a37f;
+    --accent-dot:#16a34a;
+    --error:#dc2626;
+  }
+}
+
 body{
   font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-  background:#212121;
-  color:#d0d0d0;
+  background:var(--bg-main);
+  color:var(--text-body);
 }
 button{cursor:pointer;border:none;background:none;font-family:inherit;color:inherit;}
 
@@ -20,8 +69,8 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
 /* ── 왼쪽 사이드바 ── */
 .gpt-sidebar{
   width:260px;min-width:260px;
-  background:#171717;
-  border-right:1px solid #2d2d2d;
+  background:var(--bg-sidebar);
+  border-right:1px solid var(--border);
   display:flex;flex-direction:column;
   overflow:hidden;
 }
@@ -32,13 +81,13 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
 }
 .new-chat-btn{
   width:100%;padding:10px 14px;
-  background:#2d2d2d;border:1px solid #404040;
-  border-radius:10px;color:#e0e0e0;
+  background:var(--bg-surface);border:1px solid var(--border-strong);
+  border-radius:10px;color:var(--text-primary);
   font-size:14px;font-weight:500;
   display:flex;align-items:center;gap:8px;
   transition:background .15s;
 }
-.new-chat-btn:hover{background:#3d3d3d;}
+.new-chat-btn:hover{background:var(--bg-hover);}
 .new-chat-btn svg{flex-shrink:0;}
 
 .conv-list{
@@ -46,18 +95,18 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
 }
 .conv-list::-webkit-scrollbar{width:4px;}
 .conv-list::-webkit-scrollbar-track{background:transparent;}
-.conv-list::-webkit-scrollbar-thumb{background:#3f3f46;border-radius:2px;}
+.conv-list::-webkit-scrollbar-thumb{background:var(--scrollbar);border-radius:2px;}
 
 .conv-item{
   padding:10px 12px;margin:2px 0;
   border-radius:8px;cursor:pointer;
   display:flex;align-items:center;
-  gap:8px;font-size:13px;color:#b0b0b0;
+  gap:8px;font-size:13px;color:var(--text-secondary);
   position:relative;
   transition:background .12s;
 }
-.conv-item:hover{background:#2d2d2d;}
-.conv-item.active{background:#343541;color:#e0e0e0;}
+.conv-item:hover{background:var(--bg-surface);}
+.conv-item.active{background:var(--bg-active);color:var(--text-primary);}
 .conv-item-title{
   flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
 }
@@ -69,15 +118,15 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
 .conv-item-actions button{
   width:24px;height:24px;border-radius:6px;
   display:flex;align-items:center;justify-content:center;
-  color:#a0a0a0;transition:background .12s, color .12s;
+  color:var(--text-secondary);transition:background .12s, color .12s;
 }
-.conv-item-actions button:hover{background:#404040;color:#e0e0e0;}
-.conv-item-actions .del-btn:hover{color:#ef4444;}
+.conv-item-actions button:hover{background:var(--border-strong);color:var(--text-primary);}
+.conv-item-actions .del-btn:hover{color:var(--error);}
 
 /* ── 채팅 영역 ── */
 .chat-area{
   flex:1;display:flex;flex-direction:column;
-  background:#212121;overflow:hidden;min-width:0;
+  background:var(--bg-main);overflow:hidden;min-width:0;
 }
 
 /* 상단 바 */
@@ -85,15 +134,15 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
   height:48px;flex-shrink:0;
   display:flex;align-items:center;
   padding:0 16px;
-  border-bottom:1px solid #2d2d2d;
+  border-bottom:1px solid var(--border);
 }
-.model-select{
-  background:#2d2d2d;border:1px solid #404040;
-  color:#e0e0e0;border-radius:8px;
-  padding:6px 10px;font-size:13px;font-weight:500;
-  outline:none;cursor:pointer;
+.model-tag{
+  background:var(--bg-surface);border:1px solid var(--border-strong);
+  color:var(--text-muted);border-radius:8px;
+  padding:5px 10px;font-size:12px;font-weight:500;
+  user-select:none;display:inline-flex;align-items:center;gap:5px;
 }
-.model-select:hover{border-color:#606060;}
+.model-tag .tag-dot{width:6px;height:6px;border-radius:50%;background:var(--accent-dot);}
 
 /* 메시지 영역 */
 .messages-wrap{
@@ -101,7 +150,7 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
 }
 .messages-wrap::-webkit-scrollbar{width:6px;}
 .messages-wrap::-webkit-scrollbar-track{background:transparent;}
-.messages-wrap::-webkit-scrollbar-thumb{background:#3f3f46;border-radius:3px;}
+.messages-wrap::-webkit-scrollbar-thumb{background:var(--scrollbar);border-radius:3px;}
 
 /* 빈 상태 */
 .empty-state{
@@ -109,7 +158,7 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
   justify-content:center;height:100%;gap:12px;opacity:.6;
 }
 .empty-icon{font-size:48px;}
-.empty-title{font-size:18px;font-weight:500;color:#e0e0e0;}
+.empty-title{font-size:18px;font-weight:500;color:var(--text-primary);}
 
 /* 메시지 */
 .msg{
@@ -117,31 +166,31 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
 }
 .msg-user{padding:16px 24px;}
 .msg-user .msg-bubble{
-  background:#2d2d2d;border-radius:16px;
+  background:var(--bg-surface);border-radius:16px;
   padding:12px 16px;margin-left:auto;
   max-width:85%;width:fit-content;
-  font-size:15px;line-height:1.7;color:#e0e0e0;
+  font-size:15px;line-height:1.7;color:var(--text-primary);
   white-space:pre-wrap;word-break:break-word;
 }
 .msg-assistant{padding:8px 24px;}
 .msg-assistant .msg-content{
-  font-size:15px;line-height:1.7;color:#d0d0d0;
+  font-size:15px;line-height:1.7;color:var(--text-body);
   word-break:break-word;
 }
 
 /* 마크다운 렌더링 */
-.msg-content strong{color:#e0e0e0;}
+.msg-content strong{color:var(--text-primary);}
 .msg-content code.inline-code{
-  background:#2d2d2d;padding:2px 6px;border-radius:4px;
-  font-size:13px;color:#e0e0e0;font-family:"Consolas","Monaco",monospace;
+  background:var(--bg-surface);padding:2px 6px;border-radius:4px;
+  font-size:13px;color:var(--text-primary);font-family:"Consolas","Monaco",monospace;
 }
 .msg-content pre.code-block{
-  background:#1a1a1a;border:1px solid #333;
+  background:var(--bg-code);border:1px solid var(--border-code);
   border-radius:8px;padding:14px 16px;margin:8px 0;
   overflow-x:auto;
 }
 .msg-content pre.code-block code{
-  font-size:13px;line-height:1.5;color:#d4d4d4;
+  font-size:13px;line-height:1.5;color:var(--text-code);
   font-family:"Consolas","Monaco",monospace;
   white-space:pre;
 }
@@ -151,7 +200,7 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
 /* 스트리밍 커서 */
 .streaming-cursor{
   display:inline-block;width:2px;height:18px;
-  background:#10a37f;margin-left:2px;
+  background:var(--accent);margin-left:2px;
   vertical-align:text-bottom;
   animation:blink 1s steps(2) infinite;
 }
@@ -159,7 +208,7 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
 
 /* 에러 메시지 */
 .msg-error{
-  color:#ef4444;background:rgba(239,68,68,.08);
+  color:var(--error);background:rgba(239,68,68,.08);
   border:1px solid rgba(239,68,68,.2);
   border-radius:8px;padding:10px 14px;margin:4px 0;
   font-size:13px;
@@ -172,22 +221,22 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
 .input-wrap{
   max-width:768px;margin:0 auto;
   display:flex;align-items:flex-end;gap:8px;
-  background:#2d2d2d;border:1px solid #404040;
+  background:var(--bg-surface);border:1px solid var(--border-strong);
   border-radius:16px;padding:10px 12px 10px 16px;
   transition:border-color .15s;
 }
-.input-wrap:focus-within{border-color:#606060;}
+.input-wrap:focus-within{border-color:var(--border-focus);}
 .input-wrap textarea{
   flex:1;resize:none;border:none;outline:none;
-  background:transparent;color:#e0e0e0;
+  background:transparent;color:var(--text-primary);
   font-size:15px;line-height:1.5;
   max-height:200px;min-height:24px;
   font-family:inherit;
 }
-.input-wrap textarea::placeholder{color:#666;}
+.input-wrap textarea::placeholder{color:var(--text-placeholder);}
 .send-btn{
   width:32px;height:32px;border-radius:8px;
-  background:#10a37f;color:#fff;
+  background:var(--accent);color:#fff;
   display:flex;align-items:center;justify-content:center;
   flex-shrink:0;transition:opacity .15s;
 }
@@ -200,7 +249,7 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
 }
 .thinking-dots span{
   width:6px;height:6px;border-radius:50%;
-  background:#10a37f;
+  background:var(--accent);
   animation:dot-pulse 1.4s ease-in-out infinite;
 }
 .thinking-dots span:nth-child(2){animation-delay:.2s;}
@@ -238,13 +287,7 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
   <!-- ===== 채팅 영역 ===== -->
   <div class="chat-area">
     <div class="chat-top-bar">
-      <select class="model-select" id="modelSelect">
-        <option value="gpt-4o-mini">GPT-4o mini</option>
-        <option value="gpt-4o">GPT-4o</option>
-        <option value="gpt-4.1-mini">GPT-4.1 mini</option>
-        <option value="gpt-4.1">GPT-4.1</option>
-        <option value="o4-mini">o4-mini</option>
-      </select>
+      <span class="model-tag" id="modelTag"><span class="tag-dot"></span><span id="modelLabel">GPT-4o mini</span></span>
     </div>
 
     <div class="messages-wrap" id="messagesWrap">
@@ -449,31 +492,11 @@ function scrollToBottom() {
 }
 
 /* ═══════════════════════════════════════
-   모델 셀렉트
+   모델 태그 (고정)
    ═══════════════════════════════════════ */
-var modelSelect = document.getElementById("modelSelect");
-
 function updateModelSelect() {
-  var conv = getActiveConv();
-  var model = conv ? (conv.model || state.defaultModel) : state.defaultModel;
-  modelSelect.value = model;
-  // 목록에 없는 모델이면 옵션 추가
-  if (modelSelect.value !== model) {
-    var opt = document.createElement("option");
-    opt.value = model;
-    opt.textContent = model;
-    modelSelect.appendChild(opt);
-    modelSelect.value = model;
-  }
+  document.getElementById("modelLabel").textContent = state.defaultModel;
 }
-
-modelSelect.addEventListener("change", function() {
-  var conv = getActiveConv();
-  if (conv) {
-    conv.model = this.value;
-    setComponentValue({action:"change_model", conv_id:conv.id, model:this.value, ts:Date.now()});
-  }
-});
 
 /* ═══════════════════════════════════════
    입력 & 전송

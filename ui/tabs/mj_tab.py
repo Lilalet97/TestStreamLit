@@ -1,7 +1,6 @@
 # ui/tabs/mj_tab.py
 """Midjourney /imagine 페이지 — declare_component 양방향 통신."""
 import re
-import time
 import random
 from pathlib import Path
 from datetime import datetime
@@ -12,7 +11,6 @@ import streamlit.components.v1 as components
 from core.config import AppConfig
 from core.api_bridge import call_with_lease
 from core.db import insert_mj_gallery_item, load_mj_gallery, update_mj_gallery_images, backfill_mj_gallery_mock_images, load_school_mj_gallery, load_nanobanana_sessions
-from providers import legnext
 from providers import google_imagen
 from ui.sidebar import SidebarState
 
@@ -22,7 +20,7 @@ _mj_component_func = components.declare_component("mj_component", path=str(_COMP
 
 def _mj_component(gallery_items: list, frame_height: int = 900, key: str = "mj_main",
                    enabled_features: list | None = None, school_gallery: list | None = None,
-                   source_gallery: list | None = None):
+                   source_gallery: list | None = None, default_model: str = ""):
     """MJ 커스텀 컴포넌트 래퍼. 반환값: JS에서 setComponentValue로 보낸 dict 또는 None."""
     return _mj_component_func(
         gallery_items=gallery_items,
@@ -30,6 +28,7 @@ def _mj_component(gallery_items: list, frame_height: int = 900, key: str = "mj_m
         enabled_features=enabled_features or [],
         school_gallery=school_gallery,
         source_gallery=source_gallery or [],
+        default_model=default_model,
         key=key,
         default=None,
     )
@@ -240,37 +239,6 @@ def _build_mj_full_text(prompt: str, settings: dict) -> str:
     return " ".join(parts)
 
 
-def _call_legnext_and_poll(api_key: str, full_text: str,
-                           max_poll_sec: int = 300, poll_interval: float = 3.0) -> list:
-    """LegNext API: submit → poll → image_urls 반환."""
-    status_code, _, j = legnext.submit(full_text, api_key)
-    if legnext.is_error_obj(j):
-        raise RuntimeError(f"LegNext submit 오류 ({status_code}): {j.get('message', '')}")
-    if not j or "job_id" not in j:
-        raise RuntimeError(f"LegNext submit 실패: 응답에 job_id 없음")
-
-    job_id = j["job_id"]
-    deadline = time.time() + max_poll_sec
-
-    while time.time() < deadline:
-        time.sleep(poll_interval)
-        _, _, pj = legnext.get_job(job_id, api_key)
-        if not pj:
-            continue
-        status = (pj.get("status") or "").lower()
-        if status == "completed":
-            output = pj.get("output") or {}
-            urls = output.get("image_urls") or []
-            if urls:
-                return urls
-            raise RuntimeError("LegNext 완료되었으나 이미지 URL이 비어있습니다.")
-        if status in ("failed", "error"):
-            err = pj.get("error") or pj.get("message") or "알 수 없는 오류"
-            raise RuntimeError(f"LegNext 작업 실패: {err}")
-
-    raise RuntimeError(f"LegNext 작업 시간 초과 ({max_poll_sec}초)")
-
-
 # ── Gemini 기반 이미지 생성 (Google AI Studio) ──────────────────
 
 _GEMINI_AR = {"1:1": 1.0, "16:9": 16/9, "9:16": 9/16, "4:3": 4/3, "3:4": 3/4}
@@ -328,6 +296,7 @@ def _generate_images(
     api_key: str,
     prompt: str, settings: dict,
     attached_images: dict | None, aspect_ratio: str, num_images: int = 4,
+    model: str = "",
     # [VERTEX AI] sa_json: str = "", project_id: str = "", location: str = "",
 ) -> list[str]:
     """MJ 요청을 Gemini generateContent로 변환하여 호출."""
@@ -354,6 +323,7 @@ def _generate_images(
     return google_imagen.gemini_generate(
         api_key=api_key,
         parts=parts, aspect_ratio=mapped_ar, num_images=num_images,
+        model=model or google_imagen.EDIT_MODEL,
         # [VERTEX AI] sa_json=sa_json, project_id=project_id, location=location,
     )
 
@@ -394,6 +364,7 @@ def render_mj_tab(cfg: AppConfig, sidebar: SidebarState):
                     settings=pending["settings"],
                     attached_images=pending.get("attached_images"),
                     aspect_ratio=pending["aspect_ratio"],
+                    model=cfg.google_imagen_model,
                     # [VERTEX AI] sa_json=kp["sa_json"], project_id=kp["project_id"], location=kp["location"],
                 ),
             )
@@ -406,6 +377,17 @@ def render_mj_tab(cfg: AppConfig, sidebar: SidebarState):
         except Exception as e:
             image_urls = []
             st.session_state["_mj_error_msg"] = f"MJ API 오류: {e}"
+
+        # ── 크레딧 차감 (Phase 2) ──
+        if image_urls:
+            from core.credits import deduct_after_success, get_feature_cost
+            try:
+                _cost = get_feature_cost(cfg, "mj") * 4
+                new_bal = deduct_after_success(cfg, _cost, tab_id="mj")
+                if new_bal >= 0:
+                    st.session_state["_mj_credit_toast"] = new_bal
+            except Exception:
+                pass
 
         # 로딩 아이템 업데이트
         for item in st.session_state.get("mj_gallery", []):
@@ -425,6 +407,10 @@ def render_mj_tab(cfg: AppConfig, sidebar: SidebarState):
     _err = st.session_state.pop("_mj_error_msg", None)
     if _err:
         st.toast(_err, icon="⚠️")
+
+    _cred = st.session_state.pop("_mj_credit_toast", None)
+    if _cred is not None:
+        st.toast(f"크레딧 차감 완료 (잔여: {_cred})", icon="💰")
 
     # Streamlit 패딩 제거 + iframe 전체 화면
     st.markdown(
@@ -475,6 +461,7 @@ def render_mj_tab(cfg: AppConfig, sidebar: SidebarState):
         enabled_features=_get_tab_features(cfg, "mj."),
         school_gallery=school_gallery,
         source_gallery=nano_gallery,
+        default_model=cfg.google_imagen_model,
     )
 
     if not result or not isinstance(result, dict):
@@ -503,6 +490,15 @@ def render_mj_tab(cfg: AppConfig, sidebar: SidebarState):
     elif action == "submit":
         # 이미 대기 중인 요청이 있으면 무시 (중복 방지)
         if st.session_state.get("_mj_pending_submit"):
+            return
+
+        # ── 크레딧 확인 (Phase 1) ──
+        from core.credits import check_credits, get_feature_cost
+        _cost = get_feature_cost(cfg, "mj") * 4
+        ok, msg = check_credits(cfg, _cost)
+        if not ok:
+            st.session_state["_mj_error_msg"] = msg
+            st.rerun()
             return
 
         raw_prompt = result.get("prompt", "")
@@ -609,7 +605,7 @@ def render_mj_tab(cfg: AppConfig, sidebar: SidebarState):
 
 TAB = {
     "tab_id": "mj",
-    "title": "🎨 Midjourney",
+    "title": "🎨 Image Create(ex.⛵MJ)",
     "required_features": {"tab.mj"},
     "render": render_mj_tab,
 }

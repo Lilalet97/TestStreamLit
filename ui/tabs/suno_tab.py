@@ -35,28 +35,50 @@ def render_suno_tab(cfg: AppConfig, sidebar: SidebarState):
 
         st.markdown(
             f"""
-            <div style="
-                background: linear-gradient(135deg, #1e1e2f 0%, #2d2d44 100%);
-                border: 1px solid #3d3d5c;
+            <style>
+            .suno-card {{
+                --suno-bg: linear-gradient(135deg, #1e1e2f 0%, #2d2d44 100%);
+                --suno-border: #3d3d5c;
+                --suno-title: #f0f0f0;
+                --suno-label: #a0a0b8;
+                --suno-value: #f0f0f0;
+                --suno-code: #7dd3fc;
+                --suno-memo: #888;
+            }}
+            @media (prefers-color-scheme: light) {{
+                .suno-card {{
+                    --suno-bg: linear-gradient(135deg, #e2e6ee 0%, #d8dce6 100%);
+                    --suno-border: #b8bfcc;
+                    --suno-title: #1a1a2e;
+                    --suno-label: #555;
+                    --suno-value: #1a1a2e;
+                    --suno-code: #0369a1;
+                    --suno-memo: #777;
+                }}
+            }}
+            </style>
+            <div class="suno-card" style="
+                background: var(--suno-bg);
+                border: 1px solid var(--suno-border);
                 border-radius: 16px;
                 padding: 28px 32px;
                 margin-bottom: 24px;
             ">
-                <div style="font-size:1.3em; font-weight:700; color:#f0f0f0; margin-bottom:18px;">
+                <div style="font-size:1.3em; font-weight:700; color:var(--suno-title); margin-bottom:18px;">
                     🎵 Suno 계정 정보
                 </div>
                 <div style="margin-bottom:12px;">
-                    <span style="color:#a0a0b8; font-size:0.85em;">계정 번호</span><br>
-                    <span style="color:#f0f0f0; font-size:1.05em; font-weight:600;">#{suno_id}</span>
-                    {f'<span style="color:#888; font-size:0.85em; margin-left:8px;">({memo})</span>' if memo else ''}
+                    <span style="color:var(--suno-label); font-size:0.85em;">계정 번호</span><br>
+                    <span style="color:var(--suno-value); font-size:1.05em; font-weight:600;">#{suno_id}</span>
+                    {f'<span style="color:var(--suno-memo); font-size:0.85em; margin-left:8px;">({memo})</span>' if memo else ''}
                 </div>
                 <div style="margin-bottom:12px;">
-                    <span style="color:#a0a0b8; font-size:0.85em;">이메일</span><br>
-                    <code style="color:#7dd3fc; font-size:1.05em;">{email}</code>
+                    <span style="color:var(--suno-label); font-size:0.85em;">이메일</span><br>
+                    <code style="color:var(--suno-code); font-size:1.05em;">{email}</code>
                 </div>
                 <div>
-                    <span style="color:#a0a0b8; font-size:0.85em;">비밀번호</span><br>
-                    <code style="color:#7dd3fc; font-size:1.05em;">{password}</code>
+                    <span style="color:var(--suno-label); font-size:0.85em;">비밀번호</span><br>
+                    <code style="color:var(--suno-code); font-size:1.05em;">{password}</code>
                 </div>
             </div>
             """,

@@ -14,7 +14,7 @@ from providers import google_veo
 from ui.sidebar import SidebarState
 
 _COMPONENT_DIR = Path(__file__).resolve().parent / "templates" / "kling"
-_kling_component_func = components.declare_component("kling_component", path=str(_COMPONENT_DIR))
+_kling_component_func = components.declare_component("kling_veo_component", path=str(_COMPONENT_DIR))
 
 
 def _is_authenticated() -> bool:
@@ -62,7 +62,7 @@ def _call_kling_video(access_key: str, secret_key: str,
                       prompt: str, settings: dict,
                       max_poll_sec: int = 300, poll_interval: float = 5.0) -> list:
     """Kling API: 비디오 생성 submit → poll → video_urls 반환."""
-    model_name = settings.get("model", "kling-v1")
+    model_name = settings.get("model", "kling-v2.6-std")
     duration = settings.get("duration", "5")
     mode = settings.get("mode", "std")
     aspect_ratio = settings.get("aspectRatio", "16:9")
@@ -140,6 +140,7 @@ def _call_veo_video(
     prompt: str, settings: dict,
     start_frame_data: str = "",
     end_frame_data: str = "",
+    model: str = "",
     # [VERTEX AI] sa_json: str = "", project_id: str = "", location: str = "",
 ) -> list:
     """Kling settings → Veo settings 변환 후 Google Veo API 호출."""
@@ -149,6 +150,7 @@ def _call_veo_video(
         prompt=prompt, settings=veo_settings,
         start_image_data_url=start_frame_data,
         end_image_data_url=end_frame_data,
+        model=model or google_veo.DEFAULT_MODEL,
         # [VERTEX AI] sa_json=sa_json, project_id=project_id, location=location,
     )
 
@@ -177,9 +179,11 @@ def render_kling_web_tab(cfg: AppConfig, sidebar: SidebarState):
                     pending["prompt"], pending["settings"],
                     start_frame_data=pending.get("start_frame_data", ""),
                     end_frame_data=pending.get("end_frame_data", ""),
+                    model=cfg.google_veo_model,
                     # [VERTEX AI] kp["sa_json"], kp["project_id"], kp["location"],
                 ),
                 lease_ttl_sec=420,
+                model=cfg.google_veo_model,
             )
             # GCS 업로드 (설정 시)
             if video_urls and cfg.gcs_bucket_name and cfg.vertex_sa_json:
@@ -190,6 +194,18 @@ def render_kling_web_tab(cfg: AppConfig, sidebar: SidebarState):
         except Exception as e:
             video_urls = []
             st.session_state["_kling_error_msg"] = f"Video API 오류: {e}"
+
+        # ── 크레딧 차감 (Phase 2) ──
+        if video_urls:
+            from core.credits import deduct_after_success, get_feature_cost
+            try:
+                _pdur = int(pending.get("settings", {}).get("duration", "8"))
+                _cost = get_feature_cost(cfg, "veo") * _pdur
+                new_bal = deduct_after_success(cfg, _cost, tab_id="veo")
+                if new_bal >= 0:
+                    st.session_state["_kling_credit_toast"] = new_bal
+            except Exception:
+                pass
 
         # 로딩 아이템 업데이트
         for item in st.session_state.get("kling_web_history", []):
@@ -208,6 +224,10 @@ def render_kling_web_tab(cfg: AppConfig, sidebar: SidebarState):
     _err = st.session_state.pop("_kling_error_msg", None)
     if _err:
         st.toast(_err, icon="⚠️")
+
+    _cred = st.session_state.pop("_kling_credit_toast", None)
+    if _cred is not None:
+        st.toast(f"크레딧 차감 완료 (잔여: {_cred})", icon="💰")
 
     st.markdown(
         """<style>
@@ -296,6 +316,16 @@ def render_kling_web_tab(cfg: AppConfig, sidebar: SidebarState):
 
         prompt_text = result.get("prompt", "")
         settings = result.get("settings", {})
+
+        # ── 크레딧 확인 (Phase 1) ──
+        _dur = int(settings.get("duration", "8"))
+        from core.credits import check_credits, get_feature_cost
+        _cost = get_feature_cost(cfg, "veo") * _dur
+        ok, msg = check_credits(cfg, _cost)
+        if not ok:
+            st.session_state["_kling_error_msg"] = msg
+            st.rerun()
+            return
         item_id = result.get("item_id")
 
         if not sidebar.test_mode:

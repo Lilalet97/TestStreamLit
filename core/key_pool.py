@@ -19,6 +19,10 @@ def minute_bucket_iso(dt: Optional[datetime] = None) -> str:
     dt = dt.replace(second=0, microsecond=0)
     return dt.isoformat() + "Z"
 
+def day_bucket_iso(dt: Optional[datetime] = None) -> str:
+    dt = dt or datetime.utcnow()
+    return dt.strftime("%Y-%m-%d")
+
 def _seconds_to_next_minute(dt: Optional[datetime] = None) -> int:
     dt = dt or datetime.utcnow()
     next_min = dt.replace(second=0, microsecond=0) + timedelta(minutes=1)
@@ -76,62 +80,8 @@ def load_key_pool_spec(cfg: AppConfig) -> Dict[str, List[Dict[str, Any]]]:
         except Exception:
             pass
 
-    # 기존 코드 호환: cfg의 단일 키를 1개짜리 풀로 변환
-    spec: Dict[str, List[Dict[str, Any]]] = {}
-    if cfg.openai_api_key:
-        spec["openai"] = [{
-            "name": "openai-fallback",
-            "api_key": cfg.openai_api_key,
-            "concurrency_limit": 3,
-            "rpm_limit": 60,
-            "priority": 0,
-            "tenant_scope": "*",
-            "is_active": True,
-        }]
-    if cfg.elevenlabs_api_key:
-        spec["elevenlabs"] = [{
-            "name": "elevenlabs-fallback",
-            "api_key": cfg.elevenlabs_api_key,
-            "concurrency_limit": 2,
-            "rpm_limit": 30,
-            "priority": 0,
-            "tenant_scope": "*",
-            "is_active": True,
-        }]
-    if cfg.google_api_key:
-        _gk = {"api_key": cfg.google_api_key}
-        spec["google_imagen"] = [{
-            "name": "google-imagen-fallback",
-            **_gk,
-            "concurrency_limit": 2,
-            "rpm_limit": 30,
-            "priority": 0,
-            "tenant_scope": "*",
-            "is_active": True,
-        }]
-        spec["google_veo"] = [{
-            "name": "google-veo-fallback",
-            **_gk,
-            "concurrency_limit": 2,
-            "rpm_limit": 10,
-            "priority": 0,
-            "tenant_scope": "*",
-            "is_active": True,
-        }]
-    # [VERTEX AI] vertex_sa_json 폴백 — 결제 등록 후 복원
-    # if cfg.vertex_sa_json:
-    #     _vx = {
-    #         "sa_json": cfg.vertex_sa_json,
-    #         "project_id": cfg.vertex_project_id,
-    #         "location": cfg.vertex_location,
-    #     }
-    #     spec["google_imagen"] = [{"name": "google-imagen-fallback", **_vx,
-    #         "concurrency_limit": 2, "rpm_limit": 30, "priority": 0,
-    #         "tenant_scope": "*", "is_active": True}]
-    #     spec["google_veo"] = [{"name": "google-veo-fallback", **_vx,
-    #         "concurrency_limit": 2, "rpm_limit": 10, "priority": 0,
-    #         "tenant_scope": "*", "is_active": True}]
-    return spec
+    # KEY_POOL_JSON이 없으면 빈 스펙 반환
+    return {}
 
 def ensure_tables(cfg: AppConfig) -> None:
     conn = get_db(cfg)
@@ -189,6 +139,23 @@ def ensure_tables(cfg: AppConfig) -> None:
     """)
 
     cur.execute("""
+    CREATE TABLE IF NOT EXISTS api_key_usage_daily (
+      api_key_id INTEGER NOT NULL,
+      model TEXT NOT NULL,
+      day_bucket TEXT NOT NULL,
+      count INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY(api_key_id, model, day_bucket),
+      FOREIGN KEY(api_key_id) REFERENCES api_keys(api_key_id)
+    )
+    """)
+
+    # rpd_limits 컬럼 마이그레이션
+    try:
+        cur.execute("ALTER TABLE api_keys ADD COLUMN rpd_limits TEXT")
+    except Exception:
+        pass
+
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS api_key_waiters (
       waiter_id TEXT PRIMARY KEY,
       provider TEXT NOT NULL,
@@ -232,6 +199,8 @@ def seed_keys(cfg: AppConfig) -> None:
                 concurrency_limit = int(item.get("concurrency_limit") or 1)
                 rpm_limit = item.get("rpm_limit")
                 rpm_limit = None if rpm_limit is None else int(rpm_limit)
+                rpd_limits = item.get("rpd_limits")  # dict: model -> daily limit
+                rpd_limits_json = json.dumps(rpd_limits) if isinstance(rpd_limits, dict) else None
 
                 priority = int(item.get("priority") or 0)
                 tenant_scope = (item.get("tenant_scope") or "*").strip()
@@ -239,28 +208,16 @@ def seed_keys(cfg: AppConfig) -> None:
                 expires_at = item.get("expires_at")
 
                 # provider별 payload 구성
-                if provider in ("openai", "midjourney", "elevenlabs"):
+                if provider in ("openai", "elevenlabs",
+                                "google_imagen", "google_veo", "grok"):
                     api_key = (item.get("api_key") or "").strip()
-                    if not api_key:
-                        continue
-                    payload = {"api_key": api_key}
-                elif provider in ("google_imagen", "google_veo"):
-                    api_key = (item.get("api_key") or "").strip()
-                    # __GOOGLE__ 마커: cfg.google_api_key 참조
-                    if api_key == "__GOOGLE__":
-                        api_key = cfg.google_api_key
                     if not api_key:
                         continue
                     payload = {"api_key": api_key}
                     # [VERTEX AI] sa_json 기반 payload — 결제 등록 후 복원
-                    # sa_json = (item.get("sa_json") or "").strip()
-                    # project_id = (item.get("project_id") or "").strip()
-                    # location = (item.get("location") or "us-central1").strip()
-                    # if sa_json == "__VERTEX__": sa_json = cfg.vertex_sa_json
-                    # if not project_id or project_id == "__VERTEX__": project_id = cfg.vertex_project_id
-                    # if not location or location == "__VERTEX__": location = cfg.vertex_location or "us-central1"
-                    # if not sa_json: continue
-                    # payload = {"sa_json": sa_json, "project_id": project_id, "location": location}
+                    # if provider in ("google_imagen", "google_veo"):
+                    #     sa_json = (item.get("sa_json") or "").strip()
+                    #     ...
                 elif provider == "kling":
                     ak = (item.get("access_key") or "").strip()
                     sk = (item.get("secret_key") or "").strip()
@@ -268,20 +225,20 @@ def seed_keys(cfg: AppConfig) -> None:
                         continue
                     payload = {"access_key": ak, "secret_key": sk}
                 else:
-                    # 확장 provider: item에 key_payload를 직접 넣는 방식을 허용
                     payload = item.get("key_payload")
                     if not isinstance(payload, dict):
                         continue
 
                 cur.execute("""
                     INSERT INTO api_keys
-                      (provider, key_name, key_payload, concurrency_limit, rpm_limit, priority,
+                      (provider, key_name, key_payload, concurrency_limit, rpm_limit, rpd_limits, priority,
                        tenant_scope, is_active, expires_at, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(provider, key_name) DO UPDATE SET
                       key_payload=excluded.key_payload,
                       concurrency_limit=excluded.concurrency_limit,
                       rpm_limit=excluded.rpm_limit,
+                      rpd_limits=excluded.rpd_limits,
                       priority=excluded.priority,
                       tenant_scope=excluded.tenant_scope,
                       is_active=excluded.is_active,
@@ -291,6 +248,7 @@ def seed_keys(cfg: AppConfig) -> None:
                     provider, name, json.dumps(payload),
                     max(1, concurrency_limit),
                     rpm_limit,
+                    rpd_limits_json,
                     priority,
                     tenant_scope,
                     is_active,
@@ -350,6 +308,13 @@ def cleanup_orphan_leases(cfg: AppConfig, lease_ttl_sec: Optional[int] = None) -
                 SET state='expired', updated_at=?
                 WHERE state='waiting' AND enqueued_at < ?
             """, (now_iso(), w_cut))
+
+            # 오래된 daily bucket 정리 (7일 이상)
+            old_day = (datetime.utcnow() - timedelta(days=7)).strftime("%Y-%m-%d")
+            cur.execute("""
+                DELETE FROM api_key_usage_daily
+                WHERE day_bucket < ?
+            """, (old_day,))
     finally:
         conn.close()
 
@@ -401,9 +366,14 @@ def _waiter_head_and_pos(cur, provider: str, run_id: str) -> Tuple[Optional[str]
     return head_run, pos
 
 def _select_best_key(cur, provider: str, school_id: str,
-                     lease_cutoff_iso: str, bucket: str, request_units: int):
+                     lease_cutoff_iso: str, bucket: str, request_units: int,
+                     excluded_key_ids: Optional[set] = None):
     # active leases count
     # usage count in current minute bucket
+    excl = excluded_key_ids or set()
+    # SQLite placeholder: 제외할 키 목록 (없으면 0으로 절대 매칭 안 됨)
+    excl_list = list(excl) if excl else [0]
+    excl_ph = ",".join("?" for _ in excl_list)
     cur.execute(f"""
         WITH active AS (
           SELECT api_key_id, COUNT(*) AS active_count
@@ -419,6 +389,7 @@ def _select_best_key(cur, provider: str, school_id: str,
         SELECT
           k.api_key_id, k.provider, k.key_name, k.key_payload,
           k.concurrency_limit, k.rpm_limit, k.priority, k.tenant_scope,
+          k.rpd_limits,
           COALESCE(a.active_count, 0) AS active_count,
           COALESCE(u.rpm_count, 0) AS rpm_count
         FROM api_keys k
@@ -426,6 +397,7 @@ def _select_best_key(cur, provider: str, school_id: str,
         LEFT JOIN usage  u ON u.api_key_id = k.api_key_id
         WHERE k.provider=?
           AND k.is_active=1
+          AND k.api_key_id NOT IN ({excl_ph})
           AND (k.expires_at IS NULL OR k.expires_at='' OR k.expires_at > ?)
           AND COALESCE(a.active_count, 0) < k.concurrency_limit
           AND (
@@ -443,7 +415,7 @@ def _select_best_key(cur, provider: str, school_id: str,
           k.priority DESC,
           k.api_key_id ASC
         LIMIT 1
-    """, (provider, lease_cutoff_iso, bucket, provider, now_iso(), request_units, school_id))
+    """, (provider, lease_cutoff_iso, bucket, *excl_list, provider, now_iso(), request_units, school_id))
     return cur.fetchone()
 
 def _diagnose_block_reason(
@@ -453,10 +425,14 @@ def _diagnose_block_reason(
     lease_cutoff_iso: str,
     bucket: str,
     request_units: int,
+    *,
+    model: Optional[str] = None,
+    day: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     _select_best_key()가 None일 때, 막힌 원인이
     - rpm 때문인지
+    - rpd 때문인지
     - concurrency 때문인지
     - scope/만료/비활성 등으로 '키 자체가 없는지'
     를 최소 비용으로 판별.
@@ -474,15 +450,11 @@ def _diagnose_block_reason(
           WHERE minute_bucket=?
         )
         SELECT
-          COUNT(*) AS total_keys,
-          SUM(CASE WHEN COALESCE(a.active_count, 0) < k.concurrency_limit THEN 1 ELSE 0 END) AS conc_ok,
-          SUM(CASE WHEN
-                (k.rpm_limit IS NULL OR k.rpm_limit <= 0 OR (COALESCE(u.rpm_count, 0) + ?) <= k.rpm_limit)
-              THEN 1 ELSE 0 END) AS rpm_ok,
-          SUM(CASE WHEN
-                COALESCE(a.active_count, 0) < k.concurrency_limit
-                AND (k.rpm_limit IS NULL OR k.rpm_limit <= 0 OR (COALESCE(u.rpm_count, 0) + ?) <= k.rpm_limit)
-              THEN 1 ELSE 0 END) AS both_ok
+          k.api_key_id,
+          k.rpd_limits,
+          COALESCE(a.active_count, 0) < k.concurrency_limit AS conc_ok,
+          (k.rpm_limit IS NULL OR k.rpm_limit <= 0
+           OR (COALESCE(u.rpm_count, 0) + ?) <= k.rpm_limit) AS rpm_ok
         FROM api_keys k
         LEFT JOIN active a ON a.api_key_id = k.api_key_id
         LEFT JOIN usage  u ON u.api_key_id = k.api_key_id
@@ -495,23 +467,48 @@ def _diagnose_block_reason(
           )
     """, (
         provider, lease_cutoff_iso, bucket,
-        int(request_units), int(request_units),
+        int(request_units),
         provider, now_iso(), school_id
     ))
-    r = cur.fetchone()
-    if not r:
-        return {"blocked_by": "no_keys", "total_keys": 0, "conc_ok": 0, "rpm_ok": 0, "both_ok": 0}
+    rows = cur.fetchall()
+    if not rows:
+        return {"blocked_by": "no_keys", "total_keys": 0, "conc_ok": 0, "rpm_ok": 0, "rpd_ok": 0, "both_ok": 0}
 
-    total_keys = int(r["total_keys"] or 0)
-    conc_ok = int(r["conc_ok"] or 0)
-    rpm_ok = int(r["rpm_ok"] or 0)
-    both_ok = int(r["both_ok"] or 0)
+    total_keys = len(rows)
+    conc_ok = 0
+    rpm_ok = 0
+    rpd_ok = 0
+    all_ok = 0
+
+    _day = day or day_bucket_iso()
+    for r in rows:
+        c_ok = bool(r["conc_ok"])
+        r_ok = bool(r["rpm_ok"])
+        # RPD 체크
+        d_ok = True
+        if model:
+            rpd_limit = _get_rpd_limit(r["rpd_limits"], model)
+            if rpd_limit is not None:
+                rpd_count = _get_rpd_count(cur, int(r["api_key_id"]), model, _day)
+                if rpd_count + int(request_units) > rpd_limit:
+                    d_ok = False
+
+        if c_ok:
+            conc_ok += 1
+        if r_ok:
+            rpm_ok += 1
+        if d_ok:
+            rpd_ok += 1
+        if c_ok and r_ok and d_ok:
+            all_ok += 1
 
     blocked_by = "mixed"
     if total_keys <= 0:
         blocked_by = "no_keys"
-    elif both_ok > 0:
-        blocked_by = "none"  # 이 케이스면 원래 _select_best_key가 뽑혔어야 함
+    elif all_ok > 0:
+        blocked_by = "none"
+    elif rpd_ok == 0 and conc_ok > 0 and rpm_ok > 0:
+        blocked_by = "rpd"
     elif conc_ok > 0 and rpm_ok == 0:
         blocked_by = "rpm"
     elif conc_ok == 0 and rpm_ok > 0:
@@ -524,7 +521,8 @@ def _diagnose_block_reason(
         "total_keys": total_keys,
         "conc_ok": conc_ok,
         "rpm_ok": rpm_ok,
-        "both_ok": both_ok,
+        "rpd_ok": rpd_ok,
+        "both_ok": all_ok,
     }
 
 
@@ -535,6 +533,44 @@ def _inc_rpm(cur, api_key_id: int, bucket: str, units: int) -> None:
         ON CONFLICT(api_key_id, minute_bucket) DO UPDATE SET
           count = count + excluded.count
     """, (api_key_id, bucket, int(units)))
+
+
+def _inc_rpd(cur, api_key_id: int, model: str, day: str, units: int) -> None:
+    """일별 사용량 증가."""
+    cur.execute("""
+        INSERT INTO api_key_usage_daily(api_key_id, model, day_bucket, count)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(api_key_id, model, day_bucket) DO UPDATE SET
+          count = count + excluded.count
+    """, (api_key_id, model, day, int(units)))
+
+
+def _get_rpd_count(cur, api_key_id: int, model: str, day: str) -> int:
+    """특정 키·모델의 오늘 사용량 조회."""
+    cur.execute("""
+        SELECT count FROM api_key_usage_daily
+        WHERE api_key_id=? AND model=? AND day_bucket=?
+    """, (api_key_id, model, day))
+    r = cur.fetchone()
+    return int(r["count"]) if r else 0
+
+
+def _get_rpd_limit(rpd_limits_json: Optional[str], model: str) -> Optional[int]:
+    """rpd_limits JSON에서 모델별 일일 한도 추출. None = 무제한."""
+    if not rpd_limits_json:
+        return None
+    try:
+        limits = json.loads(rpd_limits_json)
+        if not isinstance(limits, dict):
+            return None
+        val = limits.get(model)
+        if val is None:
+            return None
+        limit = int(val)
+        return limit if limit > 0 else None  # 0 이하 = 무제한 (RPM과 동일)
+    except Exception:
+        return None
+
 
 def acquire_lease(
     cfg: AppConfig,
@@ -550,6 +586,7 @@ def acquire_lease(
     lease_ttl_sec: Optional[int] = None,
     request_units: int = 1,
     on_wait: Optional[Callable[[Dict[str, Any]], None]] = None,
+    model: Optional[str] = None,
 ) -> Lease:
     """
     - FIFO 대기열(api_key_waiters) 기반으로 '내 차례'가 오면 키를 할당
@@ -565,6 +602,7 @@ def acquire_lease(
             now = datetime.utcnow()
             lease_cutoff = (now - timedelta(seconds=ttl)).isoformat() + "Z"
             bucket = minute_bucket_iso(now)
+            day = day_bucket_iso(now)
 
             wait_info = None
 
@@ -600,8 +638,24 @@ def acquire_lease(
                             "head_run": head_run,
                         }
                     else:
-                        # 내 차례(또는 대기열 없음) → 키 선택 시도
-                        row = _select_best_key(cur, provider, school_id, lease_cutoff, bucket, int(request_units))
+                        # 내 차례(또는 대기열 없음) → 키 선택 시도 (RPD 초과 키 제외 루프)
+                        rpd_excluded: set = set()
+                        row = None
+                        while True:
+                            row = _select_best_key(cur, provider, school_id, lease_cutoff, bucket,
+                                                   int(request_units), excluded_key_ids=rpd_excluded)
+                            if row is None:
+                                break
+                            # RPD 체크: model이 지정된 경우만
+                            if model:
+                                rpd_limit = _get_rpd_limit(row["rpd_limits"], model)
+                                if rpd_limit is not None:
+                                    rpd_count = _get_rpd_count(cur, int(row["api_key_id"]), model, day)
+                                    if rpd_count + int(request_units) > rpd_limit:
+                                        rpd_excluded.add(int(row["api_key_id"]))
+                                        continue
+                            break  # RPD OK 또는 무제한
+
                         if row is not None:
                             lease_id = str(uuid.uuid4())
                             t = now_iso()
@@ -618,6 +672,10 @@ def acquire_lease(
 
                             # submit 1회는 rpm에 반영(요청 단위)
                             _inc_rpm(cur, int(row["api_key_id"]), bucket, int(request_units))
+
+                            # RPD 카운터 증가
+                            if model:
+                                _inc_rpd(cur, int(row["api_key_id"]), model, day, int(request_units))
 
                             # waiter 상태 갱신
                             cur.execute("""
@@ -639,7 +697,8 @@ def acquire_lease(
                                 ttl_sec=ttl,
                             )
                         else:
-                            diag = _diagnose_block_reason(cur, provider, school_id, lease_cutoff, bucket, int(request_units))
+                            diag = _diagnose_block_reason(cur, provider, school_id, lease_cutoff, bucket,
+                                                          int(request_units), model=model, day=day)
                             blocked_by = diag.get("blocked_by")
 
                             if blocked_by == "rpm":
@@ -649,6 +708,15 @@ def acquire_lease(
                                     "run_id": run_id,
                                     "pos": pos,
                                     "retry_after_sec": _seconds_to_next_minute(now),
+                                    **diag,
+                                }
+                            elif blocked_by == "rpd":
+                                wait_info = {
+                                    "state": "waiting_rpd",
+                                    "provider": provider,
+                                    "run_id": run_id,
+                                    "pos": pos,
+                                    "model": model,
                                     **diag,
                                 }
                             else:
@@ -662,7 +730,23 @@ def acquire_lease(
                                     **diag,
                                 }
                 else:
-                    row = _select_best_key(cur, provider, school_id, lease_cutoff, bucket, int(request_units))
+                    # wait=False 경로: RPD 제외 루프
+                    rpd_excluded: set = set()
+                    row = None
+                    while True:
+                        row = _select_best_key(cur, provider, school_id, lease_cutoff, bucket,
+                                               int(request_units), excluded_key_ids=rpd_excluded)
+                        if row is None:
+                            break
+                        if model:
+                            rpd_limit = _get_rpd_limit(row["rpd_limits"], model)
+                            if rpd_limit is not None:
+                                rpd_count = _get_rpd_count(cur, int(row["api_key_id"]), model, day)
+                                if rpd_count + int(request_units) > rpd_limit:
+                                    rpd_excluded.add(int(row["api_key_id"]))
+                                    continue
+                        break
+
                     if row is not None:
                         lease_id = str(uuid.uuid4())
                         t = now_iso()
@@ -676,6 +760,8 @@ def acquire_lease(
                             t, t, ttl
                         ))
                         _inc_rpm(cur, int(row["api_key_id"]), bucket, int(request_units))
+                        if model:
+                            _inc_rpd(cur, int(row["api_key_id"]), model, day, int(request_units))
                         payload = json.loads(row["key_payload"])
                         return Lease(
                             lease_id=lease_id,
@@ -708,6 +794,9 @@ def acquire_lease(
                             )
                     except Exception:
                         pass
+                # RPD 소진으로 대기 중이었는지 확인
+                if wait_info and wait_info.get("state") == "waiting_rpd":
+                    raise TimeoutError(f"[{provider}] 일일 요청 한도(RPD)에 도달했습니다.")
                 raise TimeoutError(f"[{provider}] 키 대기 timeout ({max_wait_sec}s).")
 
             time.sleep(float(poll_interval_sec))
@@ -814,6 +903,37 @@ def consume_rpm(cfg: AppConfig, api_key_id: int, units: int = 1, wait: bool = Tr
 
 
 _BOOTSTRAPPED = False
+
+def get_daily_usage_report(cfg: AppConfig, day: Optional[str] = None) -> List[Dict[str, Any]]:
+    """
+    특정 날짜(기본 오늘)의 키별·모델별 일일 사용량 리포트.
+    Returns: [{"key_name", "model", "count", "rpd_limit"}]
+    """
+    _day = day or day_bucket_iso()
+    conn = get_db(cfg)
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT k.key_name, k.rpd_limits, d.model, d.count
+            FROM api_key_usage_daily d
+            JOIN api_keys k ON k.api_key_id = d.api_key_id
+            WHERE d.day_bucket = ?
+            ORDER BY k.key_name, d.model
+        """, (_day,))
+        rows = cur.fetchall()
+        result = []
+        for r in rows:
+            rpd_limit = _get_rpd_limit(r["rpd_limits"], r["model"])
+            result.append({
+                "key_name": r["key_name"],
+                "model": r["model"],
+                "count": int(r["count"]),
+                "rpd_limit": rpd_limit,
+            })
+        return result
+    finally:
+        conn.close()
+
 
 def bootstrap(cfg: AppConfig) -> None:
     """

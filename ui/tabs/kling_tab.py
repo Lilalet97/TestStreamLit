@@ -59,22 +59,41 @@ def _kling_component(
 
 def _call_kling_video(access_key: str, secret_key: str,
                       prompt: str, settings: dict,
+                      start_frame_data: str = "",
+                      end_frame_data: str = "",
+                      model: str = "",
                       max_poll_sec: int = 300, poll_interval: float = 5.0) -> list:
     """Kling API: 비디오 생성 submit → poll → video_urls 반환."""
-    model_name = settings.get("model", "kling-v1")
+    model_name = model
     duration = settings.get("duration", "5")
     mode = settings.get("mode", "std")
     aspect_ratio = settings.get("aspectRatio", "16:9")
 
-    endpoint = f"{kling.KLING_BASE}/videos/text2video"
-    payload = {
-        "model_name": model_name,
-        "prompt": prompt,
-        "cfg_scale": float(settings.get("cfg_scale", 0.5)),
-        "mode": mode,
-        "aspect_ratio": aspect_ratio,
-        "duration": str(duration),
-    }
+    # start_frame이 있으면 image2video, 없으면 text2video
+    is_i2v = bool(start_frame_data)
+    if is_i2v:
+        endpoint = f"{kling.KLING_BASE}/videos/image2video"
+        payload = {
+            "model_name": model_name,
+            "prompt": prompt,
+            "image": start_frame_data,
+            "cfg_scale": float(settings.get("cfg_scale", 0.5)),
+            "mode": mode,
+            "aspect_ratio": aspect_ratio,
+            "duration": str(duration),
+        }
+        if end_frame_data:
+            payload["image_tail"] = end_frame_data
+    else:
+        endpoint = f"{kling.KLING_BASE}/videos/text2video"
+        payload = {
+            "model_name": model_name,
+            "prompt": prompt,
+            "cfg_scale": float(settings.get("cfg_scale", 0.5)),
+            "mode": mode,
+            "aspect_ratio": aspect_ratio,
+            "duration": str(duration),
+        }
 
     status_code, _, j = kling.submit_video(access_key, secret_key, endpoint, payload)
     if not j or status_code not in (200, 201):
@@ -88,10 +107,11 @@ def _call_kling_video(access_key: str, secret_key: str,
     if not task_id:
         raise RuntimeError("Kling submit 응답에 task_id가 없습니다.")
 
+    task_type = "image2video" if is_i2v else "video"
     deadline = time.time() + max_poll_sec
     while time.time() < deadline:
         time.sleep(poll_interval)
-        _, _, pj = kling.get_task(access_key, secret_key, task_id, task_type="video")
+        _, _, pj = kling.get_task(access_key, secret_key, task_id, task_type=task_type)
         if not pj or not isinstance(pj, dict):
             continue
         pdata = pj.get("data") if isinstance(pj, dict) else None
@@ -133,6 +153,9 @@ def render_kling_tab(cfg: AppConfig, sidebar: SidebarState):
                 real_fn=lambda kp: _call_kling_video(
                     kp["access_key"], kp["secret_key"],
                     pending["prompt"], pending["settings"],
+                    start_frame_data=pending.get("start_frame_data", ""),
+                    end_frame_data=pending.get("end_frame_data", ""),
+                    model=cfg.kling_model,
                 ),
                 lease_ttl_sec=420,
             )
@@ -145,6 +168,18 @@ def render_kling_tab(cfg: AppConfig, sidebar: SidebarState):
         except Exception as e:
             video_urls = []
             st.session_state["_klingapi_error_msg"] = f"Video API 오류: {e}"
+
+        # ── 크레딧 차감 (Phase 2) ──
+        if video_urls:
+            from core.credits import deduct_after_success, get_feature_cost
+            try:
+                _pdur = int(pending.get("settings", {}).get("duration", "5"))
+                _cost = get_feature_cost(cfg, "kling") * _pdur
+                new_bal = deduct_after_success(cfg, _cost, tab_id="kling")
+                if new_bal >= 0:
+                    st.session_state["_klingapi_credit_toast"] = new_bal
+            except Exception:
+                pass
 
         # 로딩 아이템 업데이트
         for item in st.session_state.get("klingapi_history", []):
@@ -163,6 +198,10 @@ def render_kling_tab(cfg: AppConfig, sidebar: SidebarState):
     _err = st.session_state.pop("_klingapi_error_msg", None)
     if _err:
         st.toast(_err, icon="⚠️")
+
+    _cred = st.session_state.pop("_klingapi_credit_toast", None)
+    if _cred is not None:
+        st.toast(f"크레딧 차감 완료 (잔여: {_cred})", icon="💰")
 
     st.markdown(
         """<style>
@@ -251,6 +290,16 @@ def render_kling_tab(cfg: AppConfig, sidebar: SidebarState):
 
         prompt_text = result.get("prompt", "")
         settings = result.get("settings", {})
+
+        # ── 크레딧 확인 (Phase 1) ──
+        _dur = int(settings.get("duration", "5"))
+        from core.credits import check_credits, get_feature_cost
+        _cost = get_feature_cost(cfg, "kling") * _dur
+        ok, msg = check_credits(cfg, _cost)
+        if not ok:
+            st.session_state["_klingapi_error_msg"] = msg
+            st.rerun()
+            return
         item_id = result.get("item_id")
 
         if not sidebar.test_mode:
@@ -288,6 +337,8 @@ def render_kling_tab(cfg: AppConfig, sidebar: SidebarState):
                 "item_id": item_id,
                 "prompt": prompt_text,
                 "settings": settings,
+                "start_frame_data": result.get("start_frame") or "",
+                "end_frame_data": result.get("end_frame") or "",
             }
         else:
             # Mock ON → 기존 동작 유지 (JS가 mock 완료 이벤트 전달)

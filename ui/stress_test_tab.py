@@ -109,7 +109,7 @@ def render_stress_test_execution(cfg: AppConfig):
         results = progress.get("round_results", [])
         if results:
             _show_round_summary_table(results)
-        if st.button("새 테스트 준비", use_container_width=True):
+        if st.button("새 테스트 준비", width="stretch"):
             st.session_state["_stress_progress"] = {}
             st.rerun()
         st.divider()
@@ -119,7 +119,7 @@ def render_stress_test_execution(cfg: AppConfig):
         st.warning("플랜이 실행 중입니다. 완료 또는 중지 후 새 테스트를 시작할 수 있습니다.")
         _plan_live_progress()
 
-        if st.button("플랜 중지", type="primary", use_container_width=True):
+        if st.button("플랜 중지", type="primary", width="stretch"):
             stop_ev = st.session_state.get("_stress_stop_event")
             if stop_ev:
                 stop_ev.set()
@@ -170,7 +170,7 @@ def render_stress_test_execution(cfg: AppConfig):
         submitted = st.form_submit_button(
             "플랜 실행",
             type="primary",
-            use_container_width=True,
+            width="stretch",
         )
 
     if submitted:

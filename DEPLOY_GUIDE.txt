@@ -1,0 +1,121 @@
+============================================================
+  Google Cloud Run 배포 가이드 — AIMZ EDU (Streamlit)
+============================================================
+
+[ Step 0: Google Cloud 준비 ]
+
+1. Google Cloud 계정 생성 (없다면)
+   - https://console.cloud.google.com 접속 → 구글 계정으로 로그인
+   - 신규 가입 시 $300 무료 크레딧 제공 (90일)
+
+2. 프로젝트 생성
+   - Console 상단 → "프로젝트 선택" → "새 프로젝트"
+   - 프로젝트 이름: aimz-edu (원하는 이름)
+   - 프로젝트 ID 기억해 두기 (예: aimz-edu-12345)
+
+3. 결제 계정 연결
+   - 좌측 메뉴 → "결제" → 결제 계정 연결
+   - 카드 등록 필요 (무료 크레딧 범위 내에선 과금 없음)
+
+
+[ Step 1: Google Cloud CLI 설치 ]
+
+  # Windows PowerShell (관리자 권한)
+  winget install Google.CloudSDK
+
+  # 설치 후 터미널 재시작
+  gcloud init
+
+  gcloud init 실행하면:
+  - 브라우저가 열림 → 구글 로그인
+  - 프로젝트 선택 → 위에서 만든 프로젝트 선택
+  - 리전 선택 → asia-northeast3 (서울)
+
+
+[ Step 2: 필요한 API 활성화 ]
+
+  gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com
+
+
+[ Step 3: 배포 ]
+
+  cd d:/StreamLit/TestBase
+
+  gcloud run deploy testbase \
+    --source . \
+    --region asia-northeast3 \
+    --allow-unauthenticated \
+    --memory 1Gi \
+    --timeout 300
+
+  이 명령이 자동으로:
+  1) Dockerfile 읽고 → Docker 이미지 빌드 (Cloud Build에서)
+  2) 이미지를 Artifact Registry에 저장
+  3) Cloud Run에 배포
+  4) URL 발급
+
+  완료되면:
+  Service URL: https://testbase-abcdef123-du.a.run.app
+
+
+[ Step 4: 환경변수(시크릿) 설정 ]
+
+  로컬에서는 .streamlit/secrets.toml을 쓰지만,
+  Cloud Run에서는 환경변수로 넣어야 함.
+
+  방법 A: 명령어
+
+    gcloud run services update testbase \
+      --region asia-northeast3 \
+      --set-env-vars "TURSO_DATABASE_URL=libsql://your-db.turso.io" \
+      --set-env-vars "TURSO_AUTH_TOKEN=your-token" \
+      --set-env-vars "KEY_POOL_JSON={...}" \
+      --set-env-vars "SUNO_ACCOUNTS_JSON=[...]"
+
+  방법 B: Google Cloud Console GUI (더 편함)
+    1) https://console.cloud.google.com/run 접속
+    2) testbase 서비스 클릭
+    3) 상단 "새 버전 수정 및 배포" 클릭
+    4) "변수 및 비밀번호" 탭
+    5) 환경변수 하나씩 추가 → 배포
+
+
+[ Step 5: 확인 ]
+
+  발급된 URL 접속 → 로그인 화면 나오면 성공!
+
+
+[ 이후 업데이트할 때 ]
+
+  코드 수정 후 같은 명령 다시 실행:
+
+  gcloud run deploy testbase \
+    --source . \
+    --region asia-northeast3 \
+    --allow-unauthenticated \
+    --memory 1Gi \
+    --timeout 300
+
+  환경변수는 유지되므로 다시 설정할 필요 없음.
+
+
+[ 커스텀 도메인 연결 (선택) ]
+
+  gcloud run domain-mappings create \
+    --service testbase \
+    --domain your-domain.com \
+    --region asia-northeast3
+
+  이후 안내되는 DNS 레코드(CNAME/A)를 도메인 관리자에서 설정.
+  SSL 인증서는 Google이 자동 발급.
+
+
+[ 비용 참고 — 매월 무료 할당량 ]
+
+  CPU:    180,000 vCPU-초
+  메모리: 360,000 GiB-초
+  요청:   200만 건
+
+  소규모 교육용이면 무료 범위 안에서 운영 가능.
+
+============================================================

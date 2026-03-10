@@ -12,7 +12,16 @@ from pathlib import Path
 class AppConfig:
     # Keys
     openai_api_key: str
+
+    # Models (프로바이더별 사용 모델)
     openai_model: str
+    kling_model: str
+    elevenlabs_model: str
+    google_imagen_model: str
+    google_imagen_model_pro: str
+    google_imagen_model_2: str
+    google_veo_model: str
+    grok_model: str
 
     # DB / limits
     runs_db_path: str
@@ -34,12 +43,6 @@ class AppConfig:
 
     # Suno
     suno_accounts_json: str = "[]"
-
-    # ElevenLabs
-    elevenlabs_api_key: str = ""
-
-    # NanoBanana (Google Imagen / Gemini) — 기존 API Key (fallback용 보존)
-    google_api_key: str = ""
 
     # Vertex AI (google_imagen, google_veo 공용)
     vertex_sa_json: str = ""
@@ -171,6 +174,26 @@ def _load_tenant_json(tenant_dir: str, school_id: str) -> Optional[dict]:
             return j
     return None
 
+def _extract_from_pool(provider: str, field: str = "api_key") -> str:
+    """KEY_POOL_JSON에서 특정 프로바이더의 첫 번째 엔트리 필드를 추출."""
+    raw = os.getenv("KEY_POOL_JSON", "")
+    if not raw:
+        try:
+            raw = st.secrets.get("KEY_POOL_JSON", "")
+        except Exception:
+            pass
+    if not raw:
+        return ""
+    try:
+        pool = json.loads(raw)
+        items = pool.get(provider, [])
+        if items and isinstance(items, list):
+            return (items[0].get(field) or "").strip()
+    except Exception:
+        pass
+    return ""
+
+
 def load_config() -> AppConfig:
     enabled_tabs_default = _parse_csv_list(_get_secret_or_env("ENABLED_TABS", "gpt,mj"))
     enabled_tabs_by_school = _parse_tabs_by_school(_get_secret_or_env("TABS_BY_SCHOOL_JSON", ""))
@@ -182,9 +205,22 @@ def load_config() -> AppConfig:
     if "KEY_POOL_JSON" in st.secrets and not os.getenv("KEY_POOL_JSON"):
         os.environ["KEY_POOL_JSON"] = str(st.secrets["KEY_POOL_JSON"])
 
+    # OPENAI_API_KEY: 개별 시크릿이 없으면 KEY_POOL_JSON의 첫 번째 openai 키에서 자동 추출
+    openai_api_key = _get_secret_or_env("OPENAI_API_KEY", "")
+    if not openai_api_key:
+        openai_api_key = _extract_from_pool("openai", "api_key")
+
     return AppConfig(
-        openai_api_key=_get_secret_or_env("OPENAI_API_KEY", ""),
+        openai_api_key=openai_api_key,
+
         openai_model=_get_secret_or_env("OPENAI_MODEL", "gpt-4o-mini"),
+        kling_model=_get_secret_or_env("KLING_MODEL", "kling-v2.6-std"),
+        elevenlabs_model=_get_secret_or_env("ELEVENLABS_MODEL", "eleven_multilingual_v2"),
+        google_imagen_model=_get_secret_or_env("GOOGLE_IMAGEN_MODEL", "gemini-2.5-flash-image"),
+        google_imagen_model_pro=_get_secret_or_env("GOOGLE_IMAGEN_MODEL_PRO", "gemini-3.0-pro-image"),
+        google_imagen_model_2=_get_secret_or_env("GOOGLE_IMAGEN_MODEL_2", "gemini-3.1-flash-image"),
+        google_veo_model=_get_secret_or_env("GOOGLE_VEO_MODEL", "veo-3.1-generate-preview"),
+        grok_model=_get_secret_or_env("GROK_MODEL", "grok-imagine-video"),
 
         runs_db_path=_get_secret_or_env("RUNS_DB_PATH", "runs.db"),
         user_max_concurrency=int(_get_secret_or_env("USER_MAX_CONCURRENCY", "1") or "1"),
@@ -201,10 +237,6 @@ def load_config() -> AppConfig:
         turso_auth_token=_get_secret_or_env("TURSO_AUTH_TOKEN", ""),
 
         suno_accounts_json=_get_secret_or_env("SUNO_ACCOUNTS_JSON", "[]"),
-
-        elevenlabs_api_key=_get_secret_or_env("ELEVENLABS_API_KEY", ""),
-
-        google_api_key=_get_secret_or_env("GOOGLE_API_KEY", ""),
 
         vertex_sa_json=_get_secret_or_env("VERTEX_SA_JSON", ""),
         vertex_project_id=_get_secret_or_env("VERTEX_PROJECT_ID", ""),

@@ -1,0 +1,14 @@
+{
+  "tenant_id": "hanyang",
+  "layout": "한양대학교",
+  "enabled_features": [
+    "tab.gpt",
+    "tab.nanobanana_pro", "nanobanana.generate", "nanobanana.gallery",
+    "tab.kling_grok", "kling.text2video", "kling.assets"
+  ],
+  "branding": {
+    "page_title": "한양대학교 AI 교육",
+    "browser_tab_title": "한양대학교",
+    "logo_path": "tenants/logos/Hanyang_logo.png"
+  }
+}

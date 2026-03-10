@@ -3,13 +3,17 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from core.config import load_config, ensure_session_ids
-from core.db import init_db, cleanup_orphan_active_jobs
+from core.db import init_db, cleanup_orphan_active_jobs, ensure_notice_tables
 from core.key_pool import bootstrap as key_pool_bootstrap
 from ui.auth_page import render_auth_gate
 from ui.admin_page import render_admin_page, render_viewer_page
 from ui.sidebar import render_profile_card, render_sidebar
 from ui.registry import get_all_tabs, filter_tabs
 from ui.floating_chat import render_floating_chat
+from ui.floating_materials import render_floating_materials
+from core.schedule import check_access
+from core.maintenance import check_maintenance
+from ui.floating_notice import render_floating_notice
 
 
 def main():
@@ -44,10 +48,28 @@ def main():
             pass
         st.session_state["_did_auto_purge"] = True
 
+    # 자동 크레딧 충전 (세션당 1회)
+    if "_did_credit_refill" not in st.session_state:
+        try:
+            from core.db import run_auto_credit_refill
+            run_auto_credit_refill(cfg)
+        except Exception:
+            pass
+        st.session_state["_did_credit_refill"] = True
+
     # --- Auth Gate ---
     auth_user = render_auth_gate(cfg)
     if not auth_user:
         # 로그인/부트스트랩 UI가 렌더링된 상태
+        # 이전 세션의 플로팅 요소 정리 (채팅, 강의자료)
+        components.html("""<script>
+        (function(){
+          var pd=window.parent.document;
+          ['fc-root','fc-styles','fm-root','fm-styles','fn-root','fn-styles'].forEach(function(id){
+            var el=pd.getElementById(id); if(el) el.remove();
+          });
+        })();
+        </script>""", height=0)
         return
 
     # 인증 완료 후 실제 school_id로 갱신
@@ -68,6 +90,16 @@ def main():
                 height=0,
             )
 
+    # ── 알림/점검 테이블 보장 (핫 업데이트 대응) ──
+    ensure_notice_tables(cfg)
+
+    # ── 서버 점검 체크 ──
+    maint_status = check_maintenance(cfg)
+
+    # ── 플로팅 알림 배너 (모든 역할에게 표시, 5초 폴링 + JS 카운트다운) ──
+    with st.sidebar:
+        render_floating_notice(cfg)
+
     # 역할별 라우팅
     if auth_user.role == "admin":
         render_profile_card(cfg)
@@ -80,6 +112,12 @@ def main():
         with st.sidebar:
             st.markdown("### 👁️ 모니터링 페이지")
         render_viewer_page(cfg)
+        return
+
+    # 점검 중이면 비admin 사용자 차단
+    if maint_status.is_maintenance_active:
+        st.error(f"🔧 **서버 점검 중입니다.** {maint_status.message}")
+        st.info("점검이 완료되면 다시 이용하실 수 있습니다.")
         return
 
     # --- User UI (teacher / student) ---
@@ -96,6 +134,22 @@ def main():
         )
         return
 
+    # ── 수업 시간표 기반 접근 제어 ──
+    access = check_access(cfg, school_id, auth_user.role)
+    if not access.has_full_access:
+        # 다른 학교 수업 중 → 갤러리 탭만 허용
+        visible_tabs = [t for t in visible_tabs if t.tab_id == "gallery"]
+        if not visible_tabs:
+            # 갤러리 탭이 필터링으로 제외된 경우 직접 추가
+            from ui.tabs.gallery_tab import TAB as GALLERY_TAB
+            from ui.registry import TabSpec
+            visible_tabs = [TabSpec(
+                tab_id=GALLERY_TAB["tab_id"],
+                title=GALLERY_TAB["title"],
+                required_features=set(),
+                render=GALLERY_TAB["render"],
+            )]
+
     # 1) 프로필 카드 (최상단)
     render_profile_card(cfg)
 
@@ -110,19 +164,27 @@ def main():
             label_visibility="collapsed",
         )
 
-    # 3) 나머지 사이드바 (동시실행, 테스트모드)
+    # 3) 나머지 사이드바 (크레딧, 테스트모드)
     sidebar_state = render_sidebar(cfg)
 
-    # 메인 영역: 선택된 탭 콘텐츠만 렌더링
-    visible_tabs[selected_idx].render(cfg, sidebar_state)
+    # 수업 시간 제한 안내 배너
+    if not access.has_full_access:
+        end_str = f"{access.active_end_hour:02d}:{access.active_end_minute:02d}"
+        st.warning(
+            f"현재 다른 학교의 수업 시간입니다. "
+            f"**{end_str}**까지 갤러리 탭만 이용 가능합니다.",
+            icon="🕐",
+        )
 
-    # 플로팅 채팅 (teacher/student만)
-    # sidebar에 렌더링: 채팅 iframe(1px)이 .stMainBlockContainer에 있으면
-    # GPT 탭 CSS가 전체화면으로 확장하여 빈 공간 생성. sidebar는 CSS 영향 밖.
-    # 채팅 UI는 parent.document.body에 position:fixed로 주입되므로 위치 무관.
+    # 플로팅 채팅/강의자료 (teacher/student — spacer/MOCK 뒤에 배치)
+    # position:fixed로 parent.document.body에 주입되므로 DOM 위치 무관.
     if auth_user.role in ("teacher", "student"):
         with st.sidebar:
             render_floating_chat(cfg)
+            render_floating_materials(cfg)
+
+    # 메인 영역: 선택된 탭 콘텐츠만 렌더링
+    visible_tabs[selected_idx].render(cfg, sidebar_state)
 
 
 if __name__ == "__main__":

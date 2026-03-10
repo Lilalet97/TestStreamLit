@@ -42,6 +42,7 @@ def _elevenlabs_component(
     key: str = "elevenlabs_main",
     enabled_features: list | None = None,
     school_gallery: list | None = None,
+    default_model: str = "",
 ):
     """ElevenLabs 커스텀 컴포넌트 래퍼."""
     return _elevenlabs_component_func(
@@ -49,6 +50,7 @@ def _elevenlabs_component(
         history=history or [],
         enabled_features=enabled_features or [],
         school_gallery=school_gallery,
+        default_model=default_model,
         key=key,
         default=None,
     )
@@ -77,7 +79,7 @@ def render_elevenlabs_tab(cfg: AppConfig, sidebar: SidebarState):
                     api_key=kp["api_key"],
                     voice_id=pending["voice_id"],
                     text=pending["text"],
-                    model_id=pending["model_id"],
+                    model_id=cfg.elevenlabs_model,
                     stability=float(pending["settings"].get("stability", 0.5)),
                     similarity_boost=float(pending["settings"].get("similarity_boost", 0.75)),
                     style=float(pending["settings"].get("style", 0.0)),
@@ -93,6 +95,17 @@ def render_elevenlabs_tab(cfg: AppConfig, sidebar: SidebarState):
         except Exception as e:
             audio_url = None
             st.session_state["_el_error_msg"] = f"ElevenLabs API 오류: {e}"
+
+        # ── 크레딧 차감 (Phase 2) ──
+        if audio_url:
+            from core.credits import deduct_after_success, get_feature_cost
+            try:
+                _cost = get_feature_cost(cfg, "elevenlabs")
+                new_bal = deduct_after_success(cfg, _cost, tab_id="elevenlabs")
+                if new_bal >= 0:
+                    st.session_state["_el_credit_toast"] = new_bal
+            except Exception:
+                pass
 
         # 로딩 아이템 업데이트
         for item in st.session_state.get("elevenlabs_history", []):
@@ -111,6 +124,10 @@ def render_elevenlabs_tab(cfg: AppConfig, sidebar: SidebarState):
     _err = st.session_state.pop("_el_error_msg", None)
     if _err:
         st.toast(_err, icon="⚠️")
+
+    _cred = st.session_state.pop("_el_credit_toast", None)
+    if _cred is not None:
+        st.toast(f"크레딧 차감 완료 (잔여: {_cred})", icon="💰")
 
     st.markdown(
         """<style>
@@ -138,7 +155,8 @@ def render_elevenlabs_tab(cfg: AppConfig, sidebar: SidebarState):
     history = st.session_state.get("elevenlabs_history", [])
     result = _elevenlabs_component(frame_height=900, history=history,
                                    enabled_features=_get_tab_features(cfg, "elevenlabs."),
-                                   school_gallery=school_gallery)
+                                   school_gallery=school_gallery,
+                                   default_model=cfg.elevenlabs_model)
 
     if not result or not isinstance(result, dict):
         return
@@ -165,6 +183,15 @@ def render_elevenlabs_tab(cfg: AppConfig, sidebar: SidebarState):
     elif action == "generate":
         # 이미 대기 중인 요청이 있으면 무시 (중복 방지)
         if st.session_state.get("_el_pending_generate"):
+            return
+
+        # ── 크레딧 확인 (Phase 1) ──
+        from core.credits import check_credits, get_feature_cost
+        _cost = get_feature_cost(cfg, "elevenlabs")
+        ok, msg = check_credits(cfg, _cost)
+        if not ok:
+            st.session_state["_el_error_msg"] = msg
+            st.rerun()
             return
 
         text = result.get("text", "")
