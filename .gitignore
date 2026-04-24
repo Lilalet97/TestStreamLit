@@ -8,8 +8,7 @@ venv/
 # Claude Code
 .claude/
 
-# Streamlit secrets (API 키 포함)
-.streamlit/secrets.toml
+# Streamlit 민감 파일
 .streamlit/*.json
 .streamlit/*.pem
 .streamlit/*.csv
