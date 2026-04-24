@@ -221,7 +221,8 @@ function renderMessages(){
     var rowCls = isMine ? "mine" : "other";
     var bubCls = m.sender_role === "teacher" ? "teacher-msg" : "student-msg";
     var roleL  = m.sender_role === "teacher" ? "\uD83E\uDDD1\u200D\uD83C\uDFEB " : "";
-    var sender = isMine ? "\uB098" : (roleL + m.sender_id);
+    var displayName = (m.sender_nickname || m.sender_id);
+    var sender = isMine ? "\uB098" : (roleL + displayName);
 
     var ts = "";
     if(m.created_at){

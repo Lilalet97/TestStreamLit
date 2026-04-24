@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body>
+<script>
+/* Streamlit Component Protocol */
+function sendMessageToStreamlitClient(type, data) {
+  window.parent.postMessage(Object.assign({isStreamlitMessage:true, type:type}, data), "*");
+}
+function componentReady() {
+  sendMessageToStreamlitClient("streamlit:componentReady", {apiVersion:1});
+}
+
+var state = {allData:{}, providers:[], isGuest:false};
+var currentScope = "my";
+var currentProvider = "";
+
+/* ═══════════════════════════════════════
+   Lightbox
+   ═══════════════════════════════════════ */
+function openLightbox(src, prompt, nickname, itemType, date, model, ar){
+  var o = document.getElementById('glbOverlay');
+  document.getElementById('glbImg').src = src;
+  document.getElementById('glbDl').onclick = function(e){
+    e.preventDefault();
+    fetch(src).then(function(r){return r.blob();}).then(function(blob){
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = src.split('/').pop() || 'download';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(a.href);
+    }).catch(function(){ window.open(src,'_blank'); });
+  };
+
+  var parts = [];
+  if(nickname) parts.push('<span class="glb-meta-item">\uD83D\uDC64 ' + nickname + '</span>');
+  if(itemType) parts.push('<span class="glb-meta-item">\uD83C\uDFF7\uFE0F ' + itemType + '</span>');
+  if(date) parts.push('<span class="glb-meta-item">\uD83D\uDCC5 ' + date + '</span>');
+  if(model) parts.push('<span class="glb-meta-item">\uD83E\uDD16 ' + model + '</span>');
+  if(ar) parts.push('<span class="glb-meta-item">\uD83D\uDCD0 ' + ar + '</span>');
+  document.getElementById('glbMeta').innerHTML = parts.join('');
+
+  var pr = document.getElementById('glbPrompt');
+  pr.textContent = prompt || '';
+  pr.style.display = prompt ? 'block' : 'none';
+
+  o.classList.add('active');
+}
+function closeLb(){
+  document.getElementById('glbOverlay').classList.remove('active');
+}
+document.addEventListener('keydown', function(e){ if(e.key==='Escape') closeLb(); });
+
+/* ═══════════════════════════════════════
+   Tab / Provider Switch
+   ═══════════════════════════════════════ */
+function switchScope(scope){
+  currentScope = scope;
+  renderAll();
+}
+function switchProvider(prov){
+  currentProvider = prov;
+  renderAll();
+}
+
+/* ═══════════════════════════════════════
+   Render
+   ═══════════════════════════════════════ */
+function renderAll(){
+  // Scope tabs
+  var tabHtml = '<div class="gg-tabs">';
+  ['my','school'].forEach(function(s){
+    var label = s === 'my' ? '\uB0B4 \uC791\uC5C5' : '\uD559\uAD50 \uAC24\uB7EC\uB9AC';
+    var cls = s === currentScope ? 'gg-tab active' : 'gg-tab';
+    tabHtml += '<div class="' + cls + '" onclick="switchScope(\'' + s + '\')">' + label + '</div>';
+  });
+  tabHtml += '</div>';
+
+  // Guest check
+  if(state.isGuest && currentScope === 'my'){
+    document.getElementById('mainRoot').innerHTML = tabHtml +
+      '<div style="text-align:center;color:#888;padding:40px;">\uB85C\uADF8\uC778 \uD6C4 \uC774\uC6A9 \uAC00\uB2A5\uD569\uB2C8\uB2E4.</div>';
+    return;
+  }
+
+  // Provider buttons
+  var provHtml = '<div class="gg-providers">';
+  for(var i = 0; i < state.providers.length; i++){
+    var p = state.providers[i];
+    var cls = p === currentProvider ? 'gg-prov-btn active' : 'gg-prov-btn';
+    provHtml += '<button class="' + cls + '" onclick="switchProvider(\'' + escAttr(p) + '\')">' + escHtml(p) + '</button>';
+  }
+  provHtml += '</div>';
+
+  // Items
+  var provData = (state.allData[currentProvider] || {})[currentScope] || [];
+  var itemsHtml = '';
+
+  if(provData.length === 0){
+    itemsHtml = '<div style="text-align:center;color:#888;padding:40px;font-size:14px;">\uC791\uD488\uC774 \uC5C6\uC2B5\uB2C8\uB2E4.</div>';
+  } else {
+    for(var i = 0; i < provData.length; i++){
+      var item = provData[i];
+      var type = item.type || 'image';
+
+      if(item.label){
+        itemsHtml += '<div class="gg-caption">' + escHtml(item.label) + '</div>';
+      }
+
+      if(type === 'image' && item.urls && item.urls.length > 0){
+        itemsHtml += '<div class="gg-grid">';
+        for(var j = 0; j < item.urls.length; j++){
+          var u = item.urls[j];
+          itemsHtml += '<div class="gg-thumb" onclick="openLightbox(\'' + escAttr(u) + '\',\'' +
+            escAttr(item.prompt||'') + '\',\'' + escAttr(item.nickname||'') + '\',\'' +
+            escAttr(item.item_type||'') + '\',\'' + escAttr(item.date||'') + '\',\'' +
+            escAttr(item.model||'') + '\',\'' + escAttr(item.ar||'') + '\')">' +
+            '<img src="' + escAttr(u) + '" loading="lazy">' +
+            '</div>';
+        }
+        itemsHtml += '</div>';
+      } else if(type === 'video' && item.urls && item.urls.length > 0){
+        itemsHtml += '<div class="gg-grid">';
+        for(var j = 0; j < item.urls.length; j++){
+          itemsHtml += '<div class="gg-video-wrap"><video src="' + escAttr(item.urls[j]) + '" controls preload="metadata"></video></div>';
+        }
+        itemsHtml += '</div>';
+      } else if(type === 'audio' && item.audio_url){
+        itemsHtml += '<div class="gg-audio-row">';
+        itemsHtml += '<span class="gg-audio-label">\uD83D\uDD0A ' + escHtml(item.voice||'') + '</span>';
+        itemsHtml += '<audio src="' + escAttr(item.audio_url) + '" controls preload="metadata"></audio>';
+        itemsHtml += '</div>';
+        if(item.prompt) itemsHtml += '<div class="gg-audio-text">' + escHtml(item.prompt) + '</div>';
+      } else {
+        itemsHtml += '<div class="gg-empty">\u23F3 \uB300\uAE30 \uC911</div>';
+      }
+      itemsHtml += '<hr class="gg-divider">';
+    }
+  }
+
+  document.getElementById('mainRoot').innerHTML = tabHtml + provHtml + '<div class="gg-items">' + itemsHtml + '</div>';
+}
+
+function escHtml(s){
+  var d = document.createElement('div');
+  d.textContent = s || '';
+  return d.innerHTML;
+}
+function escAttr(s){
+  return (s||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'&quot;').replace(/</g,'&lt;');
+}
+
+/* ═══════════════════════════════════════
+   Streamlit Render Event
+   ═══════════════════════════════════════ */
+window.addEventListener("message", function(event){
+  if(event.data.type !== "streamlit:render") return;
+  var args = event.data.args || {};
+  state.allData = args.all_data || {};
+  state.providers = args.providers || [];
+  state.isGuest = args.is_guest || false;
+  if(!currentProvider && state.providers.length > 0) currentProvider = state.providers[0];
+  renderAll();
+});
+
+componentReady();
+</script>
+
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+html, body { height:100%; overflow-y:auto; background:transparent;
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; color:#e0e0e0;
+}
+
+/* Scope Tabs */
+.gg-tabs { display:flex; gap:0; border-bottom:2px solid #333; margin-bottom:16px; padding:0 16px; }
+.gg-tab { padding:10px 20px; cursor:pointer; font-size:14px; color:#888; border-bottom:2px solid transparent; margin-bottom:-2px; transition:color 0.2s; }
+.gg-tab:hover { color:#ccc; }
+.gg-tab.active { color:#e74c3c; border-bottom-color:#e74c3c; font-weight:600; }
+
+/* Provider Buttons */
+.gg-providers { display:flex; gap:8px; padding:0 16px; margin-bottom:16px; }
+.gg-prov-btn { flex:1; padding:10px; border:1px solid #444; border-radius:8px; background:transparent; color:#ccc; font-size:14px; cursor:pointer; transition:all 0.2s; }
+.gg-prov-btn:hover { border-color:#888; color:#fff; }
+.gg-prov-btn.active { background:#e74c3c; border-color:#e74c3c; color:#fff; font-weight:600; }
+
+/* Items */
+.gg-items { padding:0 16px; }
+.gg-caption { font-size:13px; color:#aaa; margin-bottom:6px; }
+.gg-grid { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:8px; }
+.gg-thumb { position:relative; cursor:pointer; border-radius:8px; overflow:hidden; flex:1 1 calc(25% - 8px); min-width:140px; max-width:280px; }
+.gg-thumb img { width:100%; display:block; border-radius:8px; transition:transform 0.2s, filter 0.2s; }
+.gg-thumb:hover img { transform:scale(1.03); filter:brightness(1.1); }
+.gg-video-wrap { flex:1 1 calc(50% - 8px); min-width:200px; max-width:480px; }
+.gg-video-wrap video { width:100%; border-radius:8px; }
+.gg-audio-row { display:flex; align-items:center; gap:12px; margin-bottom:4px; }
+.gg-audio-label { font-size:13px; color:#ccc; white-space:nowrap; }
+.gg-audio-row audio { flex:1; height:36px; }
+.gg-audio-text { font-size:12px; color:#888; margin-bottom:4px; }
+.gg-empty { background:rgba(128,128,128,0.1); border-radius:8px; padding:40px; text-align:center; color:gray; }
+.gg-divider { border:none; border-top:1px solid rgba(128,128,128,0.2); margin:12px 0; }
+
+/* Lightbox */
+.glb-overlay { display:none; position:fixed; inset:0; z-index:99999; background:rgba(0,0,0,0.92); flex-direction:column; overflow-y:auto; }
+.glb-overlay.active { display:flex; }
+.glb-topbar { position:absolute; top:16px; right:16px; display:flex; gap:8px; z-index:100000; }
+.glb-topbar a, .glb-topbar button { width:40px; height:40px; border-radius:10px; background:rgba(255,255,255,0.1); display:flex; align-items:center; justify-content:center; color:#fff; border:none; cursor:pointer; transition:background 0.15s; text-decoration:none; }
+.glb-topbar a:hover, .glb-topbar button:hover { background:rgba(255,255,255,0.2); }
+.glb-body { flex:1; display:flex; gap:24px; padding:0 40px 24px; min-height:0; overflow-y:auto; align-items:center; justify-content:center; }
+.glb-img-wrap { flex:3; display:flex; justify-content:center; align-items:center; }
+.glb-img { max-width:100%; max-height:80vh; object-fit:contain; border-radius:8px; }
+.glb-sidebar { flex:1; min-width:260px; max-width:360px; display:flex; flex-direction:column; gap:12px; }
+.glb-meta { display:flex; gap:8px; flex-wrap:wrap; font-size:12px; color:#999; }
+.glb-meta-item { background:rgba(255,255,255,0.08); border-radius:6px; padding:4px 10px; }
+.glb-prompt-label { font-size:11px; color:#777; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px; }
+.glb-prompt { background:rgba(255,255,255,0.08); border-radius:8px; padding:12px 16px; font-size:13px; color:#ccc; line-height:1.5; max-height:300px; overflow-y:auto; word-break:break-word; }
+@media(max-width:768px){ .glb-body{flex-direction:column;padding:0 16px 16px;} .glb-sidebar{max-width:100%;} }
+</style>
+
+<!-- Lightbox -->
+<div class="glb-overlay" id="glbOverlay" onclick="if(event.target===this)closeLb()">
+  <div class="glb-topbar">
+    <a id="glbDl" href="" download title="Download"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></a>
+    <button onclick="closeLb()" title="Close"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+  </div>
+  <div class="glb-body">
+    <div class="glb-img-wrap">
+      <img class="glb-img" id="glbImg" src="">
+    </div>
+    <div class="glb-sidebar">
+      <div class="glb-meta" id="glbMeta"></div>
+      <div>
+        <div class="glb-prompt-label">PROMPT</div>
+        <div class="glb-prompt" id="glbPrompt"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Main -->
+<div id="mainRoot"></div>
+</body>
+</html>

@@ -3,15 +3,15 @@
 import re
 import random
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 
 import streamlit as st
 import streamlit.components.v1 as components
 
 from core.config import AppConfig
 from core.api_bridge import call_with_lease
-from core.db import insert_mj_gallery_item, load_mj_gallery, update_mj_gallery_images, backfill_mj_gallery_mock_images, load_school_mj_gallery, load_nanobanana_sessions
-from providers import google_imagen
+from core.db import insert_mj_gallery_item, load_mj_gallery, update_mj_gallery_images, load_school_mj_gallery, load_nanobanana_sessions
+from providers import google_imagen, useapi_mj
 from ui.sidebar import SidebarState
 
 _COMPONENT_DIR = Path(__file__).resolve().parent / "templates" / "mj"
@@ -47,57 +47,15 @@ def _init_state(cfg: AppConfig):
         return
 
     if _is_authenticated():
-        # 이미지가 없는 기존 레코드에 mock 이미지 채우기 (1회만 실행)
-        if not st.session_state.get("_mj_backfill_done"):
-            try:
-                backfill_mj_gallery_mock_images(cfg)
-            except Exception:
-                pass
-            st.session_state["_mj_backfill_done"] = True
-
         items = load_mj_gallery(cfg, st.session_state["user_id"])
         if items:
             st.session_state.mj_gallery = items
             st.session_state["_mj_db_loaded"] = True
             return
 
-    # 비로그인(게스트) 또는 DB에 데이터 없음 → 샘플 데이터
+    # 비로그인(게스트) 또는 DB에 데이터 없음 → 빈 갤러리
     if "mj_gallery" not in st.session_state:
-        st.session_state.mj_gallery = [
-            {
-                "date": "Feb 6, 2026",
-                "prompt": "solid black background, a full-frame cyan neon grid pattern filling the entire screen, "
-                          "top-down view, the grid forming a convex bulging surface toward the center, grid spacing "
-                          "wider and more open near the center, gradually becoming tighter and denser toward the edges, "
-                          "smooth perspective distortion creating a dome-like depth illusion, glowing cyan neon lines "
-                          "with clean sharp edges, uniform brightness, no textures, no noise, abstract digital aesthetic, "
-                          "precise geometric layout, high contrast, minimal and graphic composition,",
-                "tags": ["ar 16:9", "raw"],
-                "aspect_ratio": "16:9",
-                "images": ["./872.png"],
-            },
-            {
-                "date": "Feb 5, 2026",
-                "prompt": "hyper-intense kung-fu fight, extreme first-person POV, both hands visible, fists raised "
-                          "in front of the camera, ultra-fast punch motion, violent motion blur, heavy camera shake, "
-                          "rapid breathing, sweat particles flying, cinematic speed lines, distorted wide-angle lens, "
-                          "impact sparks, adrenaline rush, chaotic night city background, immersive action, 8k cinematic realism",
-                "tags": ["ar 7:3"],
-                "aspect_ratio": "7:3",
-                "images": [],
-            },
-            {
-                "date": "Feb 5, 2026",
-                "prompt": "A high-quality cinematic photo of a beautiful woman standing on a stylish city street at "
-                          "sunset. She is wearing casual elegant spring outfits, holding a white shopping bag in her "
-                          "right hand. She has a gentle smile on her face, looking slightly towards the camera. "
-                          "The lighting is warm and golden, with soft shadows. 8k resolution, highly detailed "
-                          "skin texture, photorealistic, film noir lighting touch.",
-                "tags": ["ar 9:16"],
-                "aspect_ratio": "9:16",
-                "images": [],
-            },
-        ]
+        st.session_state.mj_gallery = []
     st.session_state["_mj_db_loaded"] = True
 
 
@@ -231,11 +189,8 @@ def _build_mj_full_text(prompt: str, settings: dict) -> str:
     ver = settings.get("version", "7")
     if ver != "7":
         parts.append(f"--v {ver}")
-    speed = settings.get("speed", "Fast")
-    if speed == "Turbo":
-        parts.append("--turbo")
-    elif speed == "Relax":
-        parts.append("--relax")
+    # Fast/Turbo 비활성화 — 무조건 Relax로 강제
+    parts.append("--relax")
     return " ".join(parts)
 
 
@@ -353,19 +308,36 @@ def render_mj_tab(cfg: AppConfig, sidebar: SidebarState):
     if pending:
         del st.session_state["_mj_pending_submit"]
         try:
+            mj_prompt = _build_mj_full_text(pending["prompt"], pending.get("settings", {}))
+
+            # 첨부 이미지 → GCS 업로드 → URL을 프롬프트 앞에 추가
+            attached = pending.get("attached_images")
+            if attached and cfg.gcs_bucket_name and cfg.vertex_sa_json:
+                from providers.gcs_storage import upload_single_media_url
+                img_urls_for_prompt = []
+                for category in ["imagePrompts", "styleRef", "omniRef"]:
+                    for data_url in (attached.get(category) or []):
+                        try:
+                            gcs_url = upload_single_media_url(
+                                cfg.vertex_sa_json, cfg.gcs_bucket_name,
+                                data_url, prefix="mj/refs",
+                            )
+                            if gcs_url and gcs_url.startswith("http"):
+                                img_urls_for_prompt.append(gcs_url)
+                        except Exception:
+                            pass
+                if img_urls_for_prompt:
+                    mj_prompt = " ".join(img_urls_for_prompt) + " " + mj_prompt
+
             image_urls = call_with_lease(
                 cfg,
                 test_mode=False,
-                provider="google_imagen",
+                provider="midjourney",
                 mock_fn=lambda: _mock_image_urls(pending["aspect_ratio"], 4),
-                real_fn=lambda kp: _generate_images(
-                    api_key=kp["api_key"],
-                    prompt=pending["prompt"],
-                    settings=pending["settings"],
-                    attached_images=pending.get("attached_images"),
-                    aspect_ratio=pending["aspect_ratio"],
-                    model=cfg.google_imagen_model,
-                    # [VERTEX AI] sa_json=kp["sa_json"], project_id=kp["project_id"], location=kp["location"],
+                real_fn=lambda kp: useapi_mj.imagine(
+                    api_token=kp["api_key"],
+                    prompt=mj_prompt,
+                    channel=kp.get("channel", ""),
                 ),
             )
             # GCS 업로드 (설정 시)
@@ -380,9 +352,10 @@ def render_mj_tab(cfg: AppConfig, sidebar: SidebarState):
 
         # ── 크레딧 차감 (Phase 2) ──
         if image_urls:
-            from core.credits import deduct_after_success, get_feature_cost
+            from core.credits import deduct_after_success
             try:
-                _cost = get_feature_cost(cfg, "mj") * 4
+                # Relax 고정: 이미지당 2크레딧 × 4장 = 8
+                _cost = 2 * 4
                 new_bal = deduct_after_success(cfg, _cost, tab_id="mj")
                 if new_bal >= 0:
                     st.session_state["_mj_credit_toast"] = new_bal
@@ -403,10 +376,72 @@ def render_mj_tab(cfg: AppConfig, sidebar: SidebarState):
                 break
         st.rerun()
 
+    # ── 대기 중인 Describe 요청 처리 ──
+    describe_pending = st.session_state.get("_mj_pending_describe")
+    if describe_pending:
+        del st.session_state["_mj_pending_describe"]
+        try:
+            image_data_url = describe_pending["image_data_url"]
+            # GCS에 업로드하여 공개 URL 획득
+            from providers.gcs_storage import upload_single_media_url
+            gcs_url = upload_single_media_url(
+                cfg.vertex_sa_json, cfg.gcs_bucket_name,
+                image_data_url, prefix="mj/describe",
+            )
+            if not gcs_url or not gcs_url.startswith("http"):
+                raise RuntimeError("이미지 업로드 실패")
+
+            prompts = call_with_lease(
+                cfg,
+                test_mode=sidebar.test_mode,
+                provider="midjourney",
+                mock_fn=lambda: [
+                    "a beautiful landscape with mountains and rivers",
+                    "scenic view of nature with vibrant colors",
+                    "panoramic mountain scenery at golden hour",
+                    "serene natural landscape photography",
+                ],
+                real_fn=lambda kp: useapi_mj.describe(
+                    api_token=kp["api_key"],
+                    image_url=gcs_url,
+                    channel=kp.get("channel", ""),
+                ),
+                model="describe",
+            )
+            # DB에 Describe 기록 저장
+            from datetime import date
+            describe_item = {
+                "date": date.today().isoformat(),
+                "prompt": "\n".join(f"{i+1}. {p}" for i, p in enumerate(prompts)),
+                "tags": ["describe"],
+                "aspect_ratio": "",
+                "images": [gcs_url],  # 분석한 원본 이미지
+                "settings": {},
+            }
+            if _is_authenticated():
+                try:
+                    row_id = insert_mj_gallery_item(cfg, st.session_state["user_id"], describe_item)
+                    describe_item["id"] = row_id
+                except Exception:
+                    pass
+            st.session_state.mj_gallery.insert(0, describe_item)
+
+            # Phase 2: 크레딧 차감 (1크레딧)
+            from core.credits import deduct_after_success
+            from core.credits import get_feature_cost as _gfc
+            new_bal = deduct_after_success(cfg, _gfc(cfg, "mj_describe"), tab_id="mj_describe")
+            if new_bal is not None:
+                st.session_state["_mj_credit_toast"] = new_bal
+        except Exception as e:
+            st.session_state["_mj_error_msg"] = f"Describe 오류: {e}"
+        st.rerun()
+
     # ── 에러 메시지 표시 (이전 rerun에서 저장된 것) ──
     _err = st.session_state.pop("_mj_error_msg", None)
     if _err:
         st.toast(_err, icon="⚠️")
+        from core.db import insert_error_log
+        insert_error_log(cfg, st.session_state.get("user_id", ""), st.session_state.get("school_id", "default"), "midjourney", _err)
 
     _cred = st.session_state.pop("_mj_credit_toast", None)
     if _cred is not None:
@@ -440,7 +475,7 @@ def render_mj_tab(cfg: AppConfig, sidebar: SidebarState):
     nano_gallery = []
     if _is_authenticated():
         try:
-            nb_sessions = load_nanobanana_sessions(cfg, st.session_state["user_id"], limit=20)
+            nb_sessions = load_nanobanana_sessions(cfg, st.session_state["user_id"], limit=20, tab_id=None)
             for sess in nb_sessions:
                 for turn in (sess.get("turns") or []):
                     prompt = (turn.get("prompt") or "")[:60]
@@ -478,7 +513,7 @@ def render_mj_tab(cfg: AppConfig, sidebar: SidebarState):
     if dedup_key in _processed:
         return
     _processed.add(dedup_key)
-    if len(_processed) > 100:
+    if len(_processed) > 500:
         st.session_state["_mj_processed_actions"] = {dedup_key}
 
     if action == "open_gallery":
@@ -487,14 +522,37 @@ def render_mj_tab(cfg: AppConfig, sidebar: SidebarState):
     elif action == "close_gallery":
         st.session_state["_mj_gallery_open"] = False
         st.rerun()
+    elif action == "describe":
+        if not _is_authenticated():
+            return
+        if st.session_state.get("_mj_pending_describe"):
+            return
+        # 크레딧 확인 (1크레딧)
+        from core.credits import check_credits
+        from core.credits import get_feature_cost as _gfc2
+        ok, msg = check_credits(cfg, _gfc2(cfg, "mj_describe"))
+        if not ok:
+            st.session_state["_mj_error_msg"] = msg
+            st.rerun()
+            return
+        image_data = result.get("describe_image", "")
+        if not image_data:
+            return
+        st.session_state["_mj_pending_describe"] = {
+            "image_data_url": image_data,
+        }
+        st.rerun()
     elif action == "submit":
+        if not _is_authenticated():
+            return
         # 이미 대기 중인 요청이 있으면 무시 (중복 방지)
         if st.session_state.get("_mj_pending_submit"):
             return
 
         # ── 크레딧 확인 (Phase 1) ──
-        from core.credits import check_credits, get_feature_cost
-        _cost = get_feature_cost(cfg, "mj") * 4
+        from core.credits import check_credits
+        # Relax 고정: 이미지당 2크레딧 × 4장 = 8
+        _cost = 2 * 4
         ok, msg = check_credits(cfg, _cost)
         if not ok:
             st.session_state["_mj_error_msg"] = msg
@@ -502,6 +560,8 @@ def render_mj_tab(cfg: AppConfig, sidebar: SidebarState):
             return
 
         raw_prompt = result.get("prompt", "")
+        if len(raw_prompt) > 10000:
+            raw_prompt = raw_prompt[:10000]
         s = result.get("settings", {})
 
         # 프롬프트에서 --ar, --s 등 MJ 파라미터 추출 → settings 병합
@@ -510,7 +570,7 @@ def render_mj_tab(cfg: AppConfig, sidebar: SidebarState):
         if prompt:
             tags = _build_tags(s)
             ar = s.get("aspectRatio", "1:1")
-            today = datetime.now().strftime("%b %d, %Y")
+            today = datetime.now(timezone.utc).strftime("%b %d, %Y")
 
             if not sidebar.test_mode:
                 # Real API → 로딩 아이템 먼저 표시, 다음 rerun에서 API 호출
@@ -605,7 +665,7 @@ def render_mj_tab(cfg: AppConfig, sidebar: SidebarState):
 
 TAB = {
     "tab_id": "mj",
-    "title": "🎨 Image Create(ex.⛵MJ)",
+    "title": "Image Create(ex. MJ)",
     "required_features": {"tab.mj"},
     "render": render_mj_tab,
 }

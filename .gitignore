@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Claude Code
+.claude/
+
+# Streamlit secrets (API 키 포함)
+.streamlit/secrets.toml
+.streamlit/*.json
+.streamlit/*.pem
+.streamlit/*.csv
+
+# EC2 환경변수 (API 키 포함)
+ec2_env.list
+
+# 계정 CSV (비밀번호 포함)
+*_accounts.csv
+DMPA_accounts.csv
+
+# SQLite DB
+runs.db
+runs.db-shm
+runs.db-wal
+*.db-shm
+*.db-wal
+
+# Service Account JSON
+*.pem
+*.key
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.bak
+
+# Logs
+*.log

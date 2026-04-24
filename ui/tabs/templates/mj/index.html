@@ -227,14 +227,15 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
 }
 .setting-card h3{
   font-size:15px;font-weight:600;color:var(--text-primary);
-  text-align:center;margin-bottom:16px;
+  text-align:center;margin-bottom:20px;
 }
 .setting-row{
   display:flex;align-items:center;justify-content:space-between;
-  margin-bottom:14px;
+  margin-bottom:18px;
 }
 .setting-row:last-child{margin-bottom:0;}
 .setting-label{font-size:13px;color:var(--text-secondary);font-weight:500;}
+.setting-desc{font-size:10px;color:var(--text-dim,#71717a);line-height:1.4;margin-top:1px;}
 
 /* ── 토글 버튼 그룹 ── */
 .toggle-group{
@@ -597,7 +598,12 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
 }
 .sg-card{
   background:var(--bg-card);border:1px solid var(--border);border-radius:12px;
-  overflow:hidden;transition:border-color .15s;
+  overflow:hidden;transition:border-color .15s;position:relative;
+}
+.sg-card-badge{
+  position:absolute;top:6px;left:6px;font-size:10px;font-weight:600;
+  padding:2px 6px;border-radius:4px;background:rgba(0,0,0,.6);color:#fff;
+  pointer-events:none;letter-spacing:0.3px;
 }
 .sg-card:hover{border-color:var(--border-mid);}
 .sg-card img{width:100%;aspect-ratio:1;object-fit:cover;display:block;}
@@ -618,24 +624,40 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
 /* ── 갤러리 피커 모달 ── */
 .gallery-picker-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity .2s;}
 .gallery-picker-overlay.open{opacity:1;}
-.gallery-picker{background:var(--picker-bg);border-radius:16px;width:92%;max-width:640px;max-height:75vh;display:flex;flex-direction:column;box-shadow:0 8px 32px rgba(0,0,0,.5);overflow:hidden;}
+.gallery-picker{background:#1a1a2e;border-radius:16px;width:92%;max-width:640px;max-height:75vh;display:flex;flex-direction:column;box-shadow:0 8px 32px rgba(0,0,0,.5);overflow:hidden;}
 .gallery-picker-header{display:flex;justify-content:space-between;align-items:center;padding:16px 20px 8px;}
-.gallery-picker-title{font-size:16px;font-weight:700;color:var(--text-primary);}
-.gallery-picker-close{font-size:22px;color:var(--text-muted);cursor:pointer;padding:4px 8px;border-radius:6px;background:none;border:none;}
+.gallery-picker-title{font-size:16px;font-weight:700;color:#e4e4e7;}
+.gallery-picker-close{font-size:22px;color:#71717a;cursor:pointer;padding:4px 8px;border-radius:6px;background:none;border:none;}
 .gallery-picker-close:hover{color:var(--text-primary);background:var(--bg-surface-hover);}
 .gallery-picker-tabs{display:flex;gap:8px;padding:8px 20px 12px;}
-.gp-tab{padding:6px 14px;border-radius:20px;border:1px solid var(--picker-border);background:transparent;color:var(--text-secondary);cursor:pointer;font-size:13px;transition:all .15s;}
+.gp-tab{padding:6px 14px;border-radius:20px;border:1px solid #3f3f46;background:none;color:#a1a1aa;font-size:13px;cursor:pointer;transition:all .15s;}
 .gp-tab:hover{border-color:var(--border-mid);color:var(--text-body);}
-.gp-tab.active{background:var(--accent);color:#fff;border-color:var(--accent);}
+.gp-tab.active{background:#7c3aed;color:#fff;border-color:#7c3aed;}
 .gallery-picker-scroll{flex:1;min-height:0;overflow-y:auto;padding:4px 20px 12px;}
 .gallery-picker-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;}
-.gp-item{position:relative;border-radius:8px;overflow:hidden;cursor:pointer;aspect-ratio:4/3;background:var(--picker-item-bg);border:2px solid transparent;transition:border-color .15s;}
+.gp-item{cursor:pointer;border-radius:8px;overflow:hidden;position:relative;aspect-ratio:1;background:#111113;}
 .gp-item:hover{border-color:var(--accent);}
 .gp-item img{width:100%;height:100%;object-fit:cover;display:block;}
-.gp-item-badge{position:absolute;top:4px;left:4px;font-size:10px;padding:2px 6px;border-radius:4px;background:rgba(0,0,0,.65);color:#fff;pointer-events:none;}
+.gp-item-badge{position:absolute;top:4px;left:4px;background:rgba(0,0,0,.6);color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;}
 .gp-item-prompt{position:absolute;bottom:0;left:0;right:0;padding:4px 6px;font-size:10px;color:#fff;background:linear-gradient(transparent,rgba(0,0,0,.7));line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;pointer-events:none;}
-.gallery-picker-empty{grid-column:1/-1;text-align:center;padding:40px 20px;color:var(--text-dim);font-size:13px;}
-.gallery-picker-footer{padding:12px 20px;border-top:1px solid var(--picker-footer-border);text-align:center;}
+.gallery-picker-empty{grid-column:1/-1;text-align:center;padding:40px 20px;color:#71717a;font-size:13px;}
+.gallery-picker-footer{padding:12px 20px;border-top:1px solid #3f3f46;text-align:center;}
+/* Gallery Picker Lightbox */
+.gp-lb-overlay{display:none;position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.92);flex-direction:column;align-items:center;justify-content:center;}
+.gp-lb-overlay.active{display:flex;}
+.gp-lb-topbar{position:absolute;top:16px;right:16px;display:flex;gap:8px;z-index:100000;}
+.gp-lb-topbar a,.gp-lb-topbar button{width:40px;height:40px;border-radius:10px;background:rgba(255,255,255,.1);display:flex;align-items:center;justify-content:center;color:#fff;border:none;cursor:pointer;transition:background .15s;text-decoration:none;}
+.gp-lb-topbar a:hover,.gp-lb-topbar button:hover{background:rgba(255,255,255,.2);}
+.gp-lb-body{display:flex;gap:24px;padding:0 40px;max-width:1200px;width:100%;align-items:center;justify-content:center;}
+.gp-lb-img{max-width:100%;max-height:80vh;object-fit:contain;border-radius:8px;}
+.gp-lb-side{min-width:240px;max-width:320px;display:flex;flex-direction:column;gap:12px;}
+.gp-lb-meta{display:flex;gap:6px;flex-wrap:wrap;font-size:12px;color:#999;}
+.gp-lb-meta span{background:rgba(255,255,255,.08);border-radius:6px;padding:4px 10px;}
+.gp-lb-prompt-label{font-size:11px;color:#777;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;}
+.gp-lb-prompt{background:rgba(255,255,255,.08);border-radius:8px;padding:12px 16px;font-size:13px;color:#ccc;line-height:1.5;max-height:200px;overflow-y:auto;word-break:break-word;}
+.gp-lb-select{margin-top:12px;padding:10px 20px;border-radius:8px;background:#7c3aed;color:#fff;border:none;cursor:pointer;font-size:14px;font-weight:600;transition:opacity .15s;}
+.gp-lb-select:hover{filter:brightness(1.1);}
+@media(max-width:768px){.gp-lb-body{flex-direction:column;padding:0 16px;}.gp-lb-side{max-width:100%;}}
 .gp-upload-btn{padding:10px 24px;border-radius:8px;border:1px solid var(--upload-btn-border);background:transparent;color:var(--upload-btn-text);cursor:pointer;font-size:13px;transition:all .15s;}
 .gp-upload-btn:hover{border-color:var(--upload-btn-border-hover);color:var(--text-primary);background:var(--bg-surface-hover);}
 </style>
@@ -748,7 +770,7 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
         <button data-action="search" data-feature="mj.search"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="opacity:.7;"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></button>
         <button data-action="organize" data-feature="mj.organize_top"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="opacity:.7;"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M2 8h20"/></svg></button>
         <button data-action="plan" data-feature="mj.plan" style="display:flex;align-items:center;gap:4px;padding:0 10px;font-size:13px;font-weight:600;color:var(--text-body);">P <span style="font-size:10px;opacity:.5;">&#9660;</span></button>
-        <button data-action="fast" data-feature="mj.fast"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="opacity:.7;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></button>
+        <button data-action="fast" data-feature="mj.fast" disabled style="opacity:0.3;cursor:default;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="opacity:.7;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></button>
         <button data-action="chat" data-feature="mj.chat_top"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="opacity:.7;"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg></button>
       </div>
     </div>
@@ -778,21 +800,30 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
       <div class="setting-card">
         <h3>Aesthetics</h3>
         <div class="setting-row">
-          <span class="setting-label">Stylization</span>
+          <div>
+            <span class="setting-label">Stylization</span>
+            <div class="setting-desc">How artistic vs. photorealistic</div>
+          </div>
           <div class="slider-wrap">
             <input type="range" data-key="stylization" min="0" max="1000" value="100" step="10">
             <span class="slider-val">100</span>
           </div>
         </div>
         <div class="setting-row">
-          <span class="setting-label">Weirdness</span>
+          <div>
+            <span class="setting-label">Weirdness</span>
+            <div class="setting-desc">Unusual and unexpected results</div>
+          </div>
           <div class="slider-wrap">
             <input type="range" data-key="weirdness" min="0" max="3000" value="0" step="10">
             <span class="slider-val">0</span>
           </div>
         </div>
         <div class="setting-row">
-          <span class="setting-label">Variety</span>
+          <div>
+            <span class="setting-label">Variety</span>
+            <div class="setting-desc">Diversity between generated images</div>
+          </div>
           <div class="slider-wrap">
             <input type="range" data-key="variety" min="0" max="100" value="0" step="10">
             <span class="slider-val">0</span>
@@ -804,7 +835,10 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
       <div class="setting-card">
         <h3>Model</h3>
         <div class="setting-row">
-          <span class="setting-label">Engine</span>
+          <div>
+            <span class="setting-label">Engine</span>
+            <div class="setting-desc">AI model used for prompt enhancement</div>
+          </div>
           <span style="display:inline-flex;align-items:center;gap:6px;background:var(--bg-input);border:1px solid var(--border-mid);border-radius:6px;padding:5px 10px;font-size:12px;color:var(--text-secondary);">
             <span style="width:6px;height:6px;border-radius:50%;background:#4ade80;"></span>
             <span id="mjModelTag">Gemini Flash</span>
@@ -816,33 +850,45 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
       <div class="setting-card">
         <h3>More Options</h3>
         <div class="setting-row">
-          <span class="setting-label">Speed</span>
+          <div>
+            <span class="setting-label">Speed</span>
+            <div class="setting-desc">Generation speed tier</div>
+          </div>
           <div class="toggle-group" data-group="speed">
-            <button class="toggle-btn" data-val="Relax">Relax</button>
-            <button class="toggle-btn active" data-val="Fast">Fast</button>
-            <button class="toggle-btn" data-val="Turbo">Turbo</button>
+            <button class="toggle-btn active" data-val="Relax">Relax</button>
+            <button class="toggle-btn" data-val="Fast" disabled style="opacity:0.3;cursor:default;">Fast</button>
+            <button class="toggle-btn" data-val="Turbo" disabled style="opacity:0.3;cursor:default;">Turbo</button>
           </div>
         </div>
         <div class="setting-row">
-          <span class="setting-label">Stealth</span>
+          <div>
+            <span class="setting-label">Stealth</span>
+            <div class="setting-desc">Hide prompts from public gallery</div>
+          </div>
           <div class="toggle-group" data-group="stealth">
-            <button class="toggle-btn active" data-val="On">On</button>
-            <button class="toggle-btn" data-val="Off">Off</button>
+            <button class="toggle-btn" data-val="On" disabled style="opacity:0.3;cursor:default;">On</button>
+            <button class="toggle-btn active" data-val="Off">Off</button>
           </div>
         </div>
         <div class="setting-row">
-          <span class="setting-label">Video Resolution</span>
+          <div>
+            <span class="setting-label">Video Resolution</span>
+            <div class="setting-desc">Output video quality</div>
+          </div>
           <div class="toggle-group" data-group="videoRes">
-            <button class="toggle-btn active" data-val="SD">SD</button>
-            <button class="toggle-btn" data-val="HD">HD</button>
+            <button class="toggle-btn" data-val="SD" disabled style="opacity:0.3;cursor:default;">SD</button>
+            <button class="toggle-btn" data-val="HD" disabled style="opacity:0.3;cursor:default;">HD</button>
           </div>
         </div>
         <div class="setting-row">
-          <span class="setting-label">Video Batch Size</span>
+          <div>
+            <span class="setting-label">Video Batch Size</span>
+            <div class="setting-desc">Number of videos per generation</div>
+          </div>
           <div class="toggle-group" data-group="videoBatch">
-            <button class="toggle-btn" data-val="1">1</button>
-            <button class="toggle-btn" data-val="2">2</button>
-            <button class="toggle-btn active" data-val="4">4</button>
+            <button class="toggle-btn" data-val="1" disabled style="opacity:0.3;cursor:default;">1</button>
+            <button class="toggle-btn" data-val="2" disabled style="opacity:0.3;cursor:default;">2</button>
+            <button class="toggle-btn" data-val="4" disabled style="opacity:0.3;cursor:default;">4</button>
           </div>
         </div>
       </div>
@@ -893,6 +939,18 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
           <input type="file" id="attachFileInput" accept="image/*" multiple style="display:none;">
         </div>
         <div class="attach-images" id="attachImages"></div>
+      </div>
+      <!-- Describe 전용 드롭존 -->
+      <div style="border-top:1px solid var(--border,#27272a);padding:12px 16px;">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+          <span style="font-size:13px;font-weight:600;color:var(--accent,#dc2626);">Describe</span>
+          <span style="font-size:11px;color:var(--text-dim,#52525b);">이미지를 분석하여 프롬프트 추출</span>
+        </div>
+        <div id="describeDropZone" style="border:2px dashed var(--border-mid,#3f3f46);border-radius:10px;padding:20px 16px;text-align:center;cursor:pointer;transition:border-color 0.2s;">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:0.4;"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+          <div style="font-size:12px;color:var(--text-muted,#71717a);margin-top:6px;">Drop image to describe</div>
+          <input type="file" id="describeFileInput" accept="image/*" style="display:none;">
+        </div>
       </div>
     </div>
 
@@ -951,6 +1009,22 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
   </div>
 </div>
 
+<!-- Gallery Picker Lightbox -->
+<div class="gp-lb-overlay" id="gpLbOverlay" onclick="if(event.target===this)_closeGpLb()">
+  <div class="gp-lb-topbar">
+    <a id="gpLbDl" href="" download title="Download"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></a>
+    <button onclick="_closeGpLb()" title="Close"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+  </div>
+  <div class="gp-lb-body">
+    <img class="gp-lb-img" id="gpLbImg" src="">
+    <div class="gp-lb-side">
+      <div class="gp-lb-meta" id="gpLbMeta"></div>
+      <div><div class="gp-lb-prompt-label">PROMPT</div><div class="gp-lb-prompt" id="gpLbPrompt"></div></div>
+      <button class="gp-lb-select" id="gpLbSelect">이 이미지 선택</button>
+    </div>
+  </div>
+</div>
+
 <script>
 /* ═══════════════════════════════════════
    Streamlit Component 통신
@@ -980,8 +1054,8 @@ var settings = {
   mode: "Standard",
   versionType: "Standard",
   version: "7",
-  speed: "Fast",
-  stealth: "On",
+  speed: "Relax",
+  stealth: "Off",
   videoRes: "SD",
   videoBatch: "4"
 };
@@ -1071,11 +1145,7 @@ function getActiveTabKey() {
 
 attachUpload.addEventListener("click", function() {
   var items = buildPickerItems();
-  if (items.length > 0) {
-    showGalleryPicker(items);
-  } else {
-    attachFileInput.click();
-  }
+  showGalleryPicker(items);
 });
 
 attachUpload.addEventListener("dragover", function(e) {
@@ -1426,14 +1496,19 @@ document.addEventListener("keydown", function(e) {
 
 lbDownload.addEventListener("click", function() {
   if (!currentImgSrc) return;
-  var a = document.createElement("a");
-  a.href = currentImgSrc;
-  a.download = currentImgSrc.split("/").pop() || "image.png";
-  a.target = "_blank";
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
+  fetch(currentImgSrc).then(function(r){return r.blob();}).then(function(blob){
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = currentImgSrc.split("/").pop() || "image.png";
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(a.href);
+  }).catch(function(){ window.open(currentImgSrc,"_blank"); });
 });
+
+function escHtml(s){
+  if(!s) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
 
 /* ═══════════════════════════════════════
    갤러리 렌더링
@@ -1473,100 +1548,150 @@ function renderGallery(items, highlight) {
     }
 
     var card = document.createElement("div");
-    card.className = "gen-card" + (item.loading ? " gen-card-loading" : "");
+    var isDescribe = item.tags && item.tags.indexOf("describe") >= 0;
 
-    // 이미지 그리드
-    var isLandscape = isLandscapeAR(item.aspect_ratio || "1:1");
-    var grid = document.createElement("div");
-    grid.className = "gen-grid";
-    grid.setAttribute("data-layout", isLandscape ? "landscape" : "portrait");
+    if (isDescribe) {
+      // ── Describe 카드 레이아웃 ──
+      card.className = "gen-card";
+      card.style.cssText = "display:flex;gap:20px;margin-bottom:40px;";
 
-    var imgCount = (item.images && item.images.length) || 4;
-    for (var i = 0; i < 4; i++) {
-      var imgDiv = document.createElement("div");
-      imgDiv.className = "gen-img";
-      var imgSrc = (item.images && item.images[i]) || null;
-      var phCls = phClasses[(idx * 4 + i) % phClasses.length];
-      if (imgSrc) {
-        var img = document.createElement("img");
-        img.src = imgSrc;
-        img.alt = "";
-        imgDiv.appendChild(img);
-      } else {
-        var ph = document.createElement("div");
-        ph.className = "img-placeholder " + phCls;
-        imgDiv.appendChild(ph);
+      // 왼쪽: 프롬프트 4개
+      var promptsDiv = document.createElement("div");
+      promptsDiv.style.cssText = "flex:3;display:grid;grid-template-columns:1fr 1fr;gap:8px;";
+      var promptLines = (item.prompt || "").split("\n").filter(function(l){return l.trim();});
+      promptLines.forEach(function(line) {
+        var pCard = document.createElement("div");
+        pCard.style.cssText = "background:var(--bg-surface,#27272a);border:1px solid var(--border-mid,#3f3f46);border-radius:8px;padding:12px 14px;font-size:13px;line-height:1.5;color:var(--text-body,#d0d0d0);cursor:pointer;transition:border-color 0.15s;position:relative;";
+        var textContent = line.replace(/^\d+\.\s*/, "");
+        pCard.textContent = textContent;
+        // "+ Use Prompt" 버튼
+        var useBtn = document.createElement("div");
+        useBtn.style.cssText = "margin-top:8px;font-size:11px;color:var(--accent,#dc2626);opacity:0.7;";
+        useBtn.textContent = "+ Use Prompt";
+        pCard.appendChild(useBtn);
+        pCard.addEventListener("mouseenter", function(){ pCard.style.borderColor = "var(--accent,#dc2626)"; });
+        pCard.addEventListener("mouseleave", function(){ pCard.style.borderColor = "var(--border-mid,#3f3f46)"; });
+        pCard.addEventListener("click", function(){
+          document.getElementById("promptInput").value = textContent;
+        });
+        promptsDiv.appendChild(pCard);
+      });
+
+      // 오른쪽: Describe 라벨 + 원본 이미지
+      var rightDiv = document.createElement("div");
+      rightDiv.style.cssText = "flex:2;display:flex;flex-direction:column;align-items:flex-start;gap:8px;";
+      var label = document.createElement("span");
+      label.style.cssText = "font-size:13px;font-weight:600;color:var(--accent,#dc2626);";
+      label.textContent = "Describe";
+      rightDiv.appendChild(label);
+      if (item.images && item.images[0]) {
+        var origImg = document.createElement("img");
+        origImg.src = item.images[0];
+        origImg.style.cssText = "max-width:100%;max-height:240px;border-radius:8px;cursor:pointer;";
+        origImg.addEventListener("click", function(){ openLightbox(item.images[0], ""); });
+        rightDiv.appendChild(origImg);
       }
-      var ov = document.createElement("div");
-      ov.className = "img-overlay";
-      ov.innerHTML = expandSvg;
-      imgDiv.appendChild(ov);
-      (function(src, cls) {
-        imgDiv.addEventListener("click", function() { openLightbox(src, cls); });
-      })(imgSrc, phCls);
-      grid.appendChild(imgDiv);
-    }
 
-    // 로딩 오버레이
-    if (item.loading) {
-      var loadOv = document.createElement("div");
-      loadOv.className = "loading-overlay";
-      loadOv.innerHTML =
-        '<div class="loading-spinner"></div>' +
-        '<span class="loading-text">Dreaming...</span>' +
-        '<span class="loading-elapsed" data-loading-start="' + (item.loading_ts || 0) + '"></span>';
-      grid.appendChild(loadOv);
-    }
-
-    // 정보
-    var info = document.createElement("div");
-    info.className = "gen-info";
-    var prompt = document.createElement("div");
-    prompt.className = "gen-prompt";
-    var promptText = item.prompt || "";
-    if (highlight && promptText) {
-      prompt.innerHTML = highlightText(promptText, highlight);
+      card.appendChild(promptsDiv);
+      card.appendChild(rightDiv);
+      container.appendChild(card);
     } else {
-      prompt.textContent = promptText;
-    }
-    info.appendChild(prompt);
+      // ── 기존 이미지 생성 카드 레이아웃 ──
+      card.className = "gen-card" + (item.loading ? " gen-card-loading" : "");
 
-    // 첨부 이미지 썸네일
-    var ai = item.attached_images;
-    if (ai) {
-      var aiWrap = document.createElement("div");
-      aiWrap.className = "gen-attached";
-      var aiKeys = ["imagePrompts", "styleRef", "omniRef"];
-      aiKeys.forEach(function(k) {
-        if (ai[k]) {
-          ai[k].forEach(function(src) {
-            var w = document.createElement("div");
-            w.className = "gen-attached-img";
-            var im = document.createElement("img");
-            im.src = src;
-            w.appendChild(im);
-            aiWrap.appendChild(w);
-          });
+      // 이미지 그리드
+      var isLandscape = isLandscapeAR(item.aspect_ratio || "1:1");
+      var grid = document.createElement("div");
+      grid.className = "gen-grid";
+      grid.setAttribute("data-layout", isLandscape ? "landscape" : "portrait");
+
+      var imgCount = (item.images && item.images.length) || 4;
+      for (var i = 0; i < 4; i++) {
+        var imgDiv = document.createElement("div");
+        imgDiv.className = "gen-img";
+        var imgSrc = (item.images && item.images[i]) || null;
+        var phCls = phClasses[(idx * 4 + i) % phClasses.length];
+        if (imgSrc) {
+          var img = document.createElement("img");
+          img.src = imgSrc;
+          img.alt = "";
+          imgDiv.appendChild(img);
+        } else {
+          var ph = document.createElement("div");
+          ph.className = "img-placeholder " + phCls;
+          imgDiv.appendChild(ph);
         }
-      });
-      if (aiWrap.children.length > 0) info.appendChild(aiWrap);
-    }
+        var ov = document.createElement("div");
+        ov.className = "img-overlay";
+        ov.innerHTML = expandSvg;
+        imgDiv.appendChild(ov);
+        (function(src, cls) {
+          imgDiv.addEventListener("click", function() { openLightbox(src, cls); });
+        })(imgSrc, phCls);
+        grid.appendChild(imgDiv);
+      }
 
-    var tags = document.createElement("div");
-    tags.className = "gen-tags";
-    if (item.tags) {
-      item.tags.forEach(function(t) {
-        var tag = document.createElement("span");
-        tag.className = "gen-tag";
-        tag.textContent = t;
-        tags.appendChild(tag);
-      });
-    }
-    info.appendChild(tags);
+      // 로딩 오버레이
+      if (item.loading) {
+        var loadOv = document.createElement("div");
+        loadOv.className = "loading-overlay";
+        loadOv.innerHTML =
+          '<div class="loading-spinner"></div>' +
+          '<span class="loading-text">Dreaming...</span>' +
+          '<span class="loading-elapsed" data-loading-start="' + (item.loading_ts || 0) + '"></span>';
+        grid.appendChild(loadOv);
+      }
 
-    card.appendChild(grid);
-    card.appendChild(info);
-    container.appendChild(card);
+      // 정보
+      var info = document.createElement("div");
+      info.className = "gen-info";
+      var prompt = document.createElement("div");
+      prompt.className = "gen-prompt";
+      var promptText = item.prompt || "";
+      if (highlight && promptText) {
+        prompt.innerHTML = highlightText(promptText, highlight);
+      } else {
+        prompt.textContent = promptText;
+      }
+      info.appendChild(prompt);
+
+      // 첨부 이미지 썸네일
+      var ai = item.attached_images;
+      if (ai) {
+        var aiWrap = document.createElement("div");
+        aiWrap.className = "gen-attached";
+        var aiKeys = ["imagePrompts", "styleRef", "omniRef"];
+        aiKeys.forEach(function(k) {
+          if (ai[k]) {
+            ai[k].forEach(function(src) {
+              var w = document.createElement("div");
+              w.className = "gen-attached-img";
+              var im = document.createElement("img");
+              im.src = src;
+              w.appendChild(im);
+              aiWrap.appendChild(w);
+            });
+          }
+        });
+        if (aiWrap.children.length > 0) info.appendChild(aiWrap);
+      }
+
+      var tags = document.createElement("div");
+      tags.className = "gen-tags";
+      if (item.tags) {
+        item.tags.forEach(function(t) {
+          var tag = document.createElement("span");
+          tag.className = "gen-tag";
+          tag.textContent = t;
+          tags.appendChild(tag);
+        });
+      }
+      info.appendChild(tags);
+
+      card.appendChild(grid);
+      card.appendChild(info);
+      container.appendChild(card);
+    }
   });
 
   updateFrameHeight();
@@ -1703,10 +1828,11 @@ function renderSchoolGallery(items) {
       var card = document.createElement('div');
       card.className = 'sg-card';
       card.innerHTML =
-        '<img src="' + imgUrl + '" loading="lazy" onerror="this.style.display=\'none\'">' +
+        '<img src="' + escHtml(imgUrl) + '" loading="lazy" onerror="this.style.display=\'none\'">' +
+        '<div class="sg-card-badge">MJ</div>' +
         '<div class="sg-card-info">' +
-          '<div class="sg-card-prompt">' + (item.prompt || '').replace(/</g,'&lt;') + '</div>' +
-          '<div class="sg-card-meta"><span>' + (item.user_id || '') + '</span><span>' + (item.date || '') + '</span></div>' +
+          '<div class="sg-card-prompt">' + escHtml(item.prompt || '') + '</div>' +
+          '<div class="sg-card-meta"><span>' + escHtml(item.nickname || item.user_id || '') + '</span><span>' + escHtml(item.date || '') + '</span></div>' +
         '</div>';
       grid.appendChild(card);
     });
@@ -1756,6 +1882,8 @@ window.addEventListener("message", function(event) {
     renderSchoolGallery(schoolGallery);
     document.getElementById('schoolGallery').classList.add('open');
   }
+
+  // Describe 결과 → 갤러리 리렌더 (카드로 표시됨)
 
   setFrameHeight(FRAME_H);
 });
@@ -1821,18 +1949,57 @@ function renderPickerGrid(items, filter) {
   grid.innerHTML = filtered.map(function(it, idx) {
     var badge = it.source === "mj" ? "MJ" : "NB";
     return '<div class="gp-item" data-gp-idx="' + idx + '">' +
-      '<img src="' + it.url + '" loading="lazy">' +
+      '<img src="' + escHtml(it.url) + '" loading="lazy">' +
       '<div class="gp-item-badge">' + badge + '</div>' +
-      (it.prompt ? '<div class="gp-item-prompt">' + it.prompt.replace(/</g, '&lt;') + '</div>' : '') +
+      (it.prompt ? '<div class="gp-item-prompt">' + escHtml(it.prompt) + '</div>' : '') +
     '</div>';
   }).join("");
 
   grid.querySelectorAll(".gp-item").forEach(function(el, i) {
     el.addEventListener("click", function() {
-      onGalleryImageSelect(filtered[i].url);
+      _openGpLb(filtered[i]);
     });
   });
 }
+
+/* Gallery Picker Lightbox */
+var _gpLbCurrent = null;
+function _openGpLb(item) {
+  _gpLbCurrent = item;
+  var o = document.getElementById("gpLbOverlay");
+  document.getElementById("gpLbImg").src = item.url;
+  document.getElementById("gpLbDl").onclick = function(e){
+    e.preventDefault();
+    fetch(item.url).then(function(r){return r.blob();}).then(function(blob){
+      var a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = item.url.split("/").pop() || "download";
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(a.href);
+    }).catch(function(){ window.open(item.url,"_blank"); });
+  };
+  var meta = [];
+  if(item.source) meta.push('<span>'+(item.source==="mj"?"MJ":"NB")+'</span>');
+  if(item.prompt) meta.push('<span>'+escHtml(item.prompt.slice(0,60))+'</span>');
+  document.getElementById("gpLbMeta").innerHTML = meta.join("");
+  var pr = document.getElementById("gpLbPrompt");
+  pr.textContent = item.prompt || "";
+  pr.style.display = item.prompt ? "block" : "none";
+  o.classList.add("active");
+}
+function _closeGpLb() { document.getElementById("gpLbOverlay").classList.remove("active"); }
+document.getElementById("gpLbSelect").addEventListener("click", function(){
+  if(!_gpLbCurrent) return;
+  // Describe 모드면 describe 처리
+  if (window._onGalleryPickerSelectForDescribe && window._onGalleryPickerSelectForDescribe(_gpLbCurrent.url)) {
+    _closeGpLb();
+    hideGalleryPicker();
+    return;
+  }
+  onGalleryImageSelect(_gpLbCurrent.url);
+  _closeGpLb();
+});
+document.addEventListener("keydown", function(e){ if(e.key==="Escape" && document.getElementById("gpLbOverlay").classList.contains("active")) _closeGpLb(); });
 
 function onGalleryImageSelect(url) {
   resolveToDataUrl(url, function(dataUrl) {
@@ -1871,8 +2038,73 @@ function onGalleryImageSelect(url) {
   // PC에서 업로드 버튼
   document.getElementById("gpUploadBtn").addEventListener("click", function() {
     hideGalleryPicker();
-    attachFileInput.click();
+    if (window._describeMode) {
+      document.getElementById("describeFileInput").click();
+    } else {
+      attachFileInput.click();
+    }
   });
+})();
+
+
+/* ═══════════════════════════════════════
+   Describe (이미지 → 프롬프트 추출)
+   ═══════════════════════════════════════ */
+(function(){
+  var dropZone = document.getElementById("describeDropZone");
+  var fileInput = document.getElementById("describeFileInput");
+  window._describeMode = false;
+
+  // 클릭 → 갤러리 피커 열기 (Describe 모드)
+  dropZone.addEventListener("click", function(){
+    window._describeMode = true;
+    var items = buildPickerItems();
+    showGalleryPicker(items);
+  });
+
+  // 드래그앤드롭은 직접 처리
+  dropZone.addEventListener("dragover", function(e){ e.preventDefault(); dropZone.style.borderColor = "var(--accent,#dc2626)"; });
+  dropZone.addEventListener("dragleave", function(){ dropZone.style.borderColor = "var(--border-mid,#3f3f46)"; });
+  dropZone.addEventListener("drop", function(e){
+    e.preventDefault();
+    dropZone.style.borderColor = "var(--border-mid,#3f3f46)";
+    var file = e.dataTransfer.files[0];
+    if (file && file.type.startsWith("image/")) sendDescribeFile(file);
+  });
+  fileInput.addEventListener("change", function(e){
+    var file = e.target.files[0];
+    if (file) sendDescribeFile(file);
+    fileInput.value = "";
+  });
+
+  // 갤러리 피커에서 이미지 선택 시 Describe 모드면 describe 요청
+  window._onGalleryPickerSelectForDescribe = function(url) {
+    if (!window._describeMode) return false;
+    window._describeMode = false;
+    // URL → data URL 변환 후 describe 요청
+    fetch(url).then(function(r){return r.blob();}).then(function(blob){
+      var reader = new FileReader();
+      reader.onload = function(ev){
+        document.getElementById("attachPanel").classList.remove("open");
+        setComponentValue({action:"describe", describe_image: ev.target.result, ts: Date.now()});
+      };
+      reader.readAsDataURL(blob);
+    }).catch(function(){
+      // CORS 실패 시 URL 그대로 전달
+      document.getElementById("attachPanel").classList.remove("open");
+      setComponentValue({action:"describe", describe_image: url, ts: Date.now()});
+    });
+    return true;
+  };
+
+  function sendDescribeFile(file) {
+    var reader = new FileReader();
+    reader.onload = function(ev) {
+      document.getElementById("attachPanel").classList.remove("open");
+      setComponentValue({action:"describe", describe_image: ev.target.result, ts: Date.now()});
+    };
+    reader.readAsDataURL(file);
+  }
 })();
 
 componentReady();

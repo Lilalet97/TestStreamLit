@@ -6,6 +6,7 @@ google_imagen, google_veo 등 Vertex AI 기반 provider가 공유.
 """
 import hashlib
 import json
+import re
 import threading
 
 from google.oauth2 import service_account
@@ -28,6 +29,9 @@ def get_auth_headers(sa_json: str) -> dict:
         cred = _CRED_CACHE.get(cache_key)
         if cred is None:
             info = json.loads(sa_json)
+            # TOML 작은따옴표에서 \\n이 리터럴로 저장되는 문제 해결
+            if "private_key" in info and "\\n" in info["private_key"]:
+                info["private_key"] = info["private_key"].replace("\\n", "\n")
             cred = service_account.Credentials.from_service_account_info(
                 info, scopes=_SCOPES,
             )
@@ -52,6 +56,8 @@ def get_vertex_url(
         projects/{project_id}/locations/{location}/
         publishers/google/models/{model}:{method}
     """
+    if not re.match(r'^[a-z][a-z0-9-]{0,30}$', location):
+        raise ValueError(f"Invalid Vertex AI location: {location!r}")
     base = f"https://{location}-aiplatform.googleapis.com/v1"
     return (
         f"{base}/projects/{project_id}/locations/{location}"

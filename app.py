@@ -1,6 +1,9 @@
 # app.py
+import logging
 import streamlit as st
 import streamlit.components.v1 as components
+
+_log = logging.getLogger(__name__)
 
 from core.config import load_config, ensure_session_ids
 from core.db import init_db, cleanup_orphan_active_jobs, ensure_notice_tables
@@ -13,7 +16,6 @@ from ui.floating_chat import render_floating_chat
 from ui.floating_materials import render_floating_materials
 from core.schedule import check_access
 from core.maintenance import check_maintenance
-from ui.floating_notice import render_floating_notice
 
 
 def main():
@@ -26,8 +28,62 @@ def main():
 
     school_id = st.session_state.get("school_id", "default")
 
+    from PIL import Image, ImageDraw
+    _src = Image.open("Sources/aimz_browser_logo.png").convert("RGBA")
+    # 파비콘용: 흰 배경 + 둥근 모서리 (다크모드 대응)
+    _bbox = _src.getbbox()
+    if _bbox:
+        _src = _src.crop(_bbox)
+    _pad = max(_src.width, _src.height) // 8
+    _size = max(_src.width, _src.height) + _pad * 2
+    _radius = _size // 4
+    # 둥근 마스크 생성
+    _mask = Image.new("L", (_size, _size), 0)
+    ImageDraw.Draw(_mask).rounded_rectangle(
+        [(0, 0), (_size - 1, _size - 1)], radius=_radius, fill=255,
+    )
+    _favicon = Image.new("RGBA", (_size, _size), (0, 0, 0, 0))
+    _bg = Image.new("RGBA", (_size, _size), (255, 255, 255, 255))
+    _favicon.paste(_bg, mask=_mask)
+    _ox = (_size - _src.width) // 2
+    _oy = (_size - _src.height) // 2
+    _favicon.paste(_src, (_ox, _oy), _src)
     st.set_page_config(
-        page_title=cfg.get_browser_tab_title(school_id), layout="wide"
+        page_title="AIMZ Studio", layout="wide",
+        page_icon=_favicon,
+    )
+
+    # AI 생성 대기 중 → 전체 화면 로딩 오버레이 (사이드바 조작 방지)
+    _pending_keys = [
+        "_gpt_pending_send",
+        "_mj_pending_submit", "_mj_pending_describe",
+        "_mjf_pending_submit", "_mjf_pending_describe",
+        "_mjp_pending_submit", "_mjp_pending_describe",
+        "_klingapi_pending_generate", "_kling_pending_generate",
+        "_grok_pending_generate", "_ltx_pending_generate", "_el_pending_generate",
+        "_nb_pending_generate", "_nb2_pending_generate", "_nbp_pending_generate",
+    ]
+    _is_pending = any(st.session_state.get(k) for k in _pending_keys)
+
+    # 상단 헤더: Deploy·메뉴 숨김 + 로딩 오버레이 CSS (항상 포함, display만 토글)
+    st.markdown(
+        "<style>"
+        "[data-testid='stToolbar'] .stDeployButton{display:none!important;}"
+        "[data-testid='stToolbar'] [data-testid='stToolbarActions']{display:none!important;}"
+        "#MainMenu{display:none!important;}"
+        "footer{display:none!important;}"
+        ".aimz-loading-overlay{position:fixed;inset:0;z-index:999999;background:rgba(0,0,0,0.7);"
+        "display:" + ("flex" if _is_pending else "none") + ";align-items:center;justify-content:center;flex-direction:column;gap:16px;}"
+        ".aimz-loading-spinner{width:48px;height:48px;border:4px solid rgba(255,255,255,0.2);"
+        "border-top-color:#a78bfa;border-radius:50%;animation:aimz-spin 0.8s linear infinite;}"
+        "@keyframes aimz-spin{to{transform:rotate(360deg)}}"
+        ".aimz-loading-text{color:#e0e0e0;font-size:16px;font-weight:500;}"
+        "</style>"
+        "<div class='aimz-loading-overlay'>"
+        "<div class='aimz-loading-spinner'></div>"
+        "<div class='aimz-loading-text'>AI 생성 중입니다. 잠시만 기다려주세요...</div>"
+        "</div>",
+        unsafe_allow_html=True,
     )
 
     # DB 및 키풀 초기화 (프로세스당 1회만 실행)
@@ -45,7 +101,7 @@ def main():
             from core.db import run_auto_purge
             run_auto_purge(cfg)
         except Exception:
-            pass
+            _log.warning("auto_purge 실패", exc_info=True)
         st.session_state["_did_auto_purge"] = True
 
     # 자동 크레딧 충전 (세션당 1회)
@@ -54,7 +110,7 @@ def main():
             from core.db import run_auto_credit_refill
             run_auto_credit_refill(cfg)
         except Exception:
-            pass
+            _log.warning("auto_credit_refill 실패", exc_info=True)
         st.session_state["_did_credit_refill"] = True
 
     # --- Auth Gate ---
@@ -96,21 +152,13 @@ def main():
     # ── 서버 점검 체크 ──
     maint_status = check_maintenance(cfg)
 
-    # ── 플로팅 알림 배너 (모든 역할에게 표시, 5초 폴링 + JS 카운트다운) ──
-    with st.sidebar:
-        render_floating_notice(cfg)
-
     # 역할별 라우팅
     if auth_user.role == "admin":
         render_profile_card(cfg)
-        with st.sidebar:
-            st.markdown("### 🛠️ 운영 페이지")
         render_admin_page(cfg)
         return
     elif auth_user.role == "viewer":
         render_profile_card(cfg)
-        with st.sidebar:
-            st.markdown("### 👁️ 모니터링 페이지")
         render_viewer_page(cfg)
         return
 
@@ -150,10 +198,12 @@ def main():
                 render=GALLERY_TAB["render"],
             )]
 
-    # 1) 프로필 카드 (최상단)
+    # 1) 프로필 카드 (최상단, 플로팅 알림 포함)
     render_profile_card(cfg)
 
     # 2) 페이지 타이틀 + 탭 선택
+    locked_indices = {i for i, t in enumerate(visible_tabs) if t.locked}
+
     with st.sidebar:
         st.markdown(f"### {cfg.get_page_title(school_id)}")
         selected_idx = st.radio(
@@ -163,6 +213,38 @@ def main():
             key="selected_tab",
             label_visibility="collapsed",
         )
+
+        # 잠긴 탭 선택 시 이전 탭으로 되돌리기
+        if selected_idx in locked_indices:
+            prev = st.session_state.get("_prev_tab", 0)
+            st.session_state["selected_tab"] = prev
+            selected_idx = prev
+            st.rerun()
+        # 탭 전환 시 모든 갤러리 닫기
+        if selected_idx != st.session_state.get("_prev_tab"):
+            for gk in ("_mj_gallery_open", "_el_gallery_open", "_klingapi_gallery_open",
+                        "_kling_gallery_open", "_grok_gallery_open",
+                        "_nb_gallery_open", "_nb2_gallery_open", "_nbp_gallery_open"):
+                st.session_state.pop(gk, None)
+        st.session_state["_prev_tab"] = selected_idx
+
+        # 잠긴 탭 CSS (클릭 차단 + 라디오 버튼 숨김)
+        if locked_indices:
+            css_rules = []
+            for li in locked_indices:
+                nth = li + 1
+                css_rules.append(
+                    f'div[data-testid="stRadio"] label:nth-of-type({nth}){{'
+                    f'  pointer-events:none; opacity:0.35; cursor:default;'
+                    f'}}'
+                    f'div[data-testid="stRadio"] label:nth-of-type({nth}) div[data-testid="stMarkdownContainer"]{{'
+                    f'  font-style:italic;'
+                    f'}}'
+                )
+            st.markdown(
+                f"<style>{''.join(css_rules)}</style>",
+                unsafe_allow_html=True,
+            )
 
     # 3) 나머지 사이드바 (크레딧, 테스트모드)
     sidebar_state = render_sidebar(cfg)

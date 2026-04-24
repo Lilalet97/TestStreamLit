@@ -1,5 +1,7 @@
 # ui/tabs/suno_tab.py
 """Suno 탭 — 배정된 Suno 계정 정보 표시 + 웹사이트 열기 버튼."""
+import html as _html
+
 import streamlit as st
 
 from core.config import AppConfig
@@ -29,9 +31,9 @@ def render_suno_tab(cfg: AppConfig, sidebar: SidebarState):
     if suno_id == 0 or not account:
         st.info("배정된 Suno 계정이 없습니다. 관리자에게 문의하세요.")
     else:
-        email = account.get("email", "")
-        password = account.get("password", "")
-        memo = account.get("memo", "")
+        email = _html.escape(account.get("email", ""))
+        password = _html.escape(account.get("password", ""))
+        memo = _html.escape(account.get("memo", ""))
 
         st.markdown(
             f"""
@@ -95,7 +97,7 @@ def render_suno_tab(cfg: AppConfig, sidebar: SidebarState):
 
 TAB = {
     "tab_id": "suno",
-    "title": "🎵 Suno",
+    "title": "Suno",
     "required_features": {"tab.suno"},
     "render": render_suno_tab,
 }

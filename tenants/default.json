@@ -6,8 +6,9 @@
     "tab.mj", "mj.create", "mj.imagine", "mj.explore",
     "tab.nanobanana", "tab.nanobanana_2", "tab.nanobanana_pro", "nanobanana.generate", "nanobanana.gallery",
     "tab.kling", "tab.kling_veo", "tab.kling_grok", "kling.text2video", "kling.assets",
-    "tab.elevenlabs", "elevenlabs.tts", "elevenlabs.gallery",
-    "tab.suno"
+    "tab.elevenlabs", "elevenlabs.tts", "elevenlabs.vtv", "elevenlabs.sfx", "elevenlabs.clone", "elevenlabs.gallery",
+    "tab.suno",
+    "tab.deepfake", "tab.ai_avatar", "tab.voice_clone", "tab.ai_presentation", "tab.video_edit", "tab.ai_translation"
   ],
   "branding": {
     "page_title": "운영팀용 페이지",

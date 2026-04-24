@@ -6,12 +6,13 @@
     "tab.mj", "mj.create", "mj.imagine", "mj.explore",
     "tab.nanobanana_2", "nanobanana.generate", "nanobanana.gallery",
     "tab.kling_grok", "kling.text2video", "kling.assets",
-    "tab.elevenlabs", "elevenlabs.tts", "elevenlabs.gallery",
-    "tab.suno"
+    "tab.elevenlabs", "elevenlabs.tts", "elevenlabs.vtv", "elevenlabs.sfx", "elevenlabs.clone", "elevenlabs.gallery",
+    "tab.deepfake", "tab.ai_avatar", "tab.voice_clone", "tab.ai_presentation", "tab.video_edit", "tab.ai_translation"
   ],
   "branding": {
     "page_title": "목원대학교 AI 교육",
     "browser_tab_title": "목원대학교",
-    "logo_path": "tenants/logos/Mokwon_logo.png"
+    "logo_path": "tenants/logos/Mokwon_logo.png",
+    "main_path": "tenants/logos/Mokwon_main.png"
   }
 }

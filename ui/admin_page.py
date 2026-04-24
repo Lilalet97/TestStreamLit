@@ -5,9 +5,6 @@ import streamlit as st
 from core.config import AppConfig
 from core.auth import current_user, hash_password
 from core.db import (
-    list_active_jobs_all,
-    list_key_waiters,
-    list_key_leases,
     list_users,
     list_mj_gallery_admin,
     get_mj_gallery_by_id,
@@ -25,7 +22,6 @@ from core.db import (
     set_user_active,
     hard_delete_user,
     PURGEABLE_TABLES,
-    LEGACY_TABLES,
     get_all_admin_settings,
     set_admin_setting,
     get_table_row_counts,
@@ -41,15 +37,22 @@ from core.db import (
     add_balance_bulk,
     get_school_credit_report,
     get_student_credit_report,
+    get_usage_call_counts,
+    get_api_keys_summary, set_api_key_active,
     get_admin_setting,
     list_class_schedules,
     insert_class_schedule,
     update_class_schedule,
     delete_class_schedule,
+    log_admin_action,
 )
-from core.credits import FEATURE_IDS, FEATURE_LABELS, FEATURE_UNITS, DEFAULT_FEATURE_COSTS, get_feature_cost
+from core.credits import (
+    FEATURE_IDS, FEATURE_LABELS, FEATURE_UNITS,
+    get_feature_cost, get_api_unit_cost, get_exchange_rate,
+)
 from providers.gdrive import extract_folder_id
-from ui.stress_test_tab import render_stress_test_execution, render_stress_test_results
+from core.stress_test import PROVIDER_ORDER
+from ui.stress_test_tab import render_algorithm_test, render_burst_test, render_stress_test_execution, render_stress_test_results
 from ui.stress_report import render_stress_report
 
 
@@ -354,37 +357,161 @@ def _list_tenant_ids(cfg: AppConfig) -> list[str]:
                 ids.append(tid)
     return ids or ["default"]
 
-@st.fragment(run_every="1s")
-def _live_monitor_panel(cfg: AppConfig):
-    jobs = _rows_to_dicts(list_active_jobs_all(cfg, limit=500))
-    active_users = sorted({j.get('user_id') for j in jobs if j.get('user_id')})
+def _render_key_pool_summary(cfg: AppConfig, editable: bool = False):
+    """키풀 현황: 등록된 API 키 요약 표시. editable=True이면 활성/비활성 토글 제공."""
+    import pandas as pd
+    st.subheader("등록된 API 키")
+    keys = get_api_keys_summary(cfg)
+    if not keys:
+        st.info("등록된 API 키가 없습니다.")
+        return
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric('Active Jobs', len(jobs))
-    c2.metric('Active Users', len(active_users))
-    c3.metric('Providers', len({j.get('provider') for j in jobs if j.get('provider')}))
+    # provider별 그룹핑
+    by_prov: dict[str, list] = {}
+    for k in keys:
+        by_prov.setdefault(k["provider"], []).append(k)
 
-    st.subheader('Active Jobs')
-    if jobs:
-        st.dataframe(jobs, width="stretch", hide_index=True)
+    # registry.py 탭 순서 기준 정렬
+    ordered_provs = [p for p in PROVIDER_ORDER if p in by_prov]
+    ordered_provs += sorted(set(by_prov.keys()) - set(ordered_provs))
+
+    for provider in ordered_provs:
+        pkeys = by_prov[provider]
+        active_cnt = sum(1 for k in pkeys if k["is_active"])
+        total_conc = sum(k["concurrency_limit"] for k in pkeys if k["is_active"])
+        st.markdown(
+            f"**{provider}** "
+            f"<span style='font-size:0.85em;color:gray;'>"
+            f"활성 {active_cnt}/{len(pkeys)}  |  동시 사용 {total_conc}</span>",
+            unsafe_allow_html=True,
+        )
+
+        for k in pkeys:
+            cur_active = bool(k["is_active"])
+            kid = k["api_key_id"]
+
+            if editable:
+                c1, c2, c3, c4 = st.columns([3, 1.5, 1.5, 1.5])
+            else:
+                c1, c2, c3, c4 = st.columns([3, 1.5, 1.5, 1.5])
+
+            with c1:
+                status = "🟢" if cur_active else "🔴"
+                st.markdown(f"{status} **{k['key_name']}**")
+            with c2:
+                st.caption(f"동시 {k['concurrency_limit']}")
+            with c3:
+                st.caption(f"RPM {k['rpm_limit'] or '-'}")
+            with c4:
+                if editable:
+                    new_active = st.toggle(
+                        "활성", value=cur_active,
+                        key=f"key_toggle_{kid}",
+                        label_visibility="collapsed",
+                    )
+                    if new_active != cur_active:
+                        set_api_key_active(cfg, kid, new_active)
+                        st.rerun()
+                else:
+                    st.caption("활성" if cur_active else "비활성")
+
+        st.markdown("---")
+
+
+def _render_api_cost_estimation(cfg: AppConfig, editable: bool = False, key_prefix: str = ""):
+    """API 비용 추정 섹션. editable=True이면 단가/환율 설정 가능."""
+    import pandas as pd
+
+    st.subheader("API 비용 추정")
+    st.caption("credit_usage_log의 호출 횟수 × 설정 단가로 추정합니다. 실제 청구 금액과 다를 수 있습니다.")
+
+    cc1, cc2 = st.columns(2)
+    with cc1:
+        cost_days = st.selectbox(
+            "기간", [7, 14, 30, 60, 90], index=2,
+            format_func=lambda d: f"최근 {d}일",
+            key=f"{key_prefix}cost_days",
+        )
+    with cc2:
+        rate = get_exchange_rate(cfg)
+        if editable:
+            rate = st.number_input(
+                "환율 (USD→KRW)", min_value=1.0, max_value=99999.0,
+                value=float(rate), step=10.0, key=f"{key_prefix}exchange_rate",
+            )
+        else:
+            st.metric("환율 (USD→KRW)", f"₩{rate:,.0f}")
+
+    counts = get_usage_call_counts(cfg, days=cost_days)
+    rows = []
+    total_usd = 0.0
+    for fid in FEATURE_IDS:
+        cnt = counts.get(fid, 0)
+        if cnt == 0:
+            continue
+        unit_cost = get_api_unit_cost(cfg, fid)
+        est_usd = cnt * unit_cost
+        total_usd += est_usd
+        rows.append({
+            "기능": FEATURE_LABELS.get(fid, fid),
+            "호출 수": cnt,
+            "단가 (USD)": f"${unit_cost:.4f}",
+            "추정 비용 (USD)": f"${est_usd:.2f}",
+            "추정 비용 (KRW)": f"₩{est_usd * rate:,.0f}",
+        })
+
+    if rows:
+        rows.append({
+            "기능": "합계",
+            "호출 수": sum(r["호출 수"] for r in rows),
+            "단가 (USD)": "",
+            "추정 비용 (USD)": f"${total_usd:.2f}",
+            "추정 비용 (KRW)": f"₩{total_usd * rate:,.0f}",
+        })
+        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
     else:
-        st.info('현재 active_jobs가 없습니다.')
+        st.info("해당 기간에 사용 내역이 없습니다.")
+
+    # 관리자만 단가 설정 가능
+    if editable:
+        st.markdown("---")
+        st.subheader("API 단가 설정 (USD)")
+        st.caption("기능별 API 1회 호출당 예상 비용 (USD). 0 = 비용 추정 제외.")
+        with st.form(f"{key_prefix}api_cost_form"):
+            new_costs: dict[str, float] = {}
+            cols = st.columns(3)
+            for i, fid in enumerate(FEATURE_IDS):
+                with cols[i % 3]:
+                    cur = float(get_api_unit_cost(cfg, fid))
+                    new_costs[fid] = st.number_input(
+                        FEATURE_LABELS.get(fid, fid),
+                        min_value=0.0, max_value=99.0,
+                        value=cur, step=0.001, format="%.4f",
+                        key=f"{key_prefix}api_cost_{fid}",
+                    )
+            if st.form_submit_button("단가 저장", width="stretch"):
+                for fid, val in new_costs.items():
+                    set_admin_setting(cfg, f"api_unit_cost.{fid}", f"{val:.6f}")
+                set_admin_setting(cfg, "api_exchange_rate", str(rate))
+                st.session_state["_admin_toast"] = "저장되었습니다."
+                st.rerun()
+
 
 def render_viewer_page(cfg: AppConfig):
-    """viewer 역할용: 모니터링 + 실행 기록만 표시 (읽기 전용)."""
+    """viewer 역할용: 크레딧 현황, 키풀, 실행 기록 등 (읽기 전용)."""
     u = current_user()
     if not u or u.role != 'viewer':
         st.error('viewer 권한이 필요합니다.')
         return
 
     _VIEWER_GROUPS = [
-        ("현황",  ["크레딧 현황", "시간표"]),
+        ("운영",  ["시간표"]),
+        ("관리",  ["크레딧 현황", "키풀 관리"]),
         ("기록",  ["실행 기록", "부하테스트 결과"]),
-        ("시스템", ["모니터링"]),
     ]
 
     if "_viewer_active" not in st.session_state:
-        st.session_state["_viewer_active"] = "크레딧 현황"
+        st.session_state["_viewer_active"] = "시간표"
 
     with st.sidebar:
         for group_name, items in _VIEWER_GROUPS:
@@ -394,7 +521,7 @@ def render_viewer_page(cfg: AppConfig):
                 if st.button(
                     item,
                     key=f"_vm_{item}",
-                    use_container_width=True,
+                    width="stretch",
                     type="primary" if is_active else "secondary",
                 ):
                     st.session_state["_viewer_active"] = item
@@ -402,20 +529,30 @@ def render_viewer_page(cfg: AppConfig):
 
     selected_label = st.session_state["_viewer_active"]
 
-    if selected_label == "모니터링":
-        _live_monitor_panel(cfg)
+    if selected_label == "키풀 관리":
+        _render_key_pool_summary(cfg)
 
     elif selected_label == "실행 기록":
-        user_rows = list_users(cfg, include_inactive=True)
+        # viewer는 자기 학교 사용자만 조회 가능
+        viewer_school = u.school_id
+        all_users = list_users(cfg, include_inactive=True)
+        user_rows = [r for r in all_users if r.get('school_id') == viewer_school]
         user_ids = ['(all)'] + [r['user_id'] for r in user_rows]
         sel_user = st.selectbox('필터: user_id', user_ids, index=0, key='viewer_user_filter')
         limit = st.slider('표시 개수', 50, 500, 200, 50, key='viewer_limit')
 
         filter_uid = None if sel_user == '(all)' else sel_user
+        _school_uids = {r['user_id'] for r in user_rows}
+
+        def _filter_school(items):
+            """viewer 학교에 속한 사용자 기록만 필터."""
+            if filter_uid:
+                return items
+            return [it for it in items if (it.get('user_id') or '') in _school_uids]
 
         # ── GPT Conversations ──
         st.subheader('💬 GPT Conversations')
-        gpt_items = list_gpt_conversations_admin(cfg, limit=limit, user_id=filter_uid)
+        gpt_items = _filter_school(list_gpt_conversations_admin(cfg, limit=limit, user_id=filter_uid))
         if gpt_items:
             import pandas as pd
             df = pd.DataFrame(gpt_items)
@@ -431,6 +568,7 @@ def render_viewer_page(cfg: AppConfig):
                 disabled=[c for c in df.columns if c != '보기'],
                 hide_index=True,
                 width='stretch',
+                height=400,
                 key=f'v_gpt_conv_table_{tbl_ver}',
             )
 
@@ -450,7 +588,7 @@ def render_viewer_page(cfg: AppConfig):
         # ── Midjourney ──
         st.subheader('🎨 Midjourney')
         mj_rows = list_mj_gallery_admin(cfg, limit=limit, user_id=filter_uid)
-        mj_items = _rows_to_dicts(mj_rows)
+        mj_items = _filter_school(_rows_to_dicts(mj_rows))
         if mj_items:
             import pandas as pd
             mj_df = pd.DataFrame(mj_items)
@@ -466,6 +604,7 @@ def render_viewer_page(cfg: AppConfig):
                 disabled=[c for c in mj_df.columns if c != '보기'],
                 hide_index=True,
                 width='stretch',
+                height=400,
                 key=f'v_mj_table_{mj_tbl_ver}',
             )
 
@@ -482,9 +621,44 @@ def render_viewer_page(cfg: AppConfig):
 
         _maybe_open_mj_dialog(cfg)
 
+        # ── NanoBanana Sessions (멀티턴) ──
+        st.subheader('\U0001f34c NanoBanana Sessions')
+        nb_sessions = _filter_school(list_nanobanana_sessions_admin(cfg, limit=limit, user_id=filter_uid))
+        if nb_sessions:
+            import pandas as pd
+            nb_df = pd.DataFrame(nb_sessions)
+            nb_df.insert(0, '보기', False)
+
+            nb_tbl_ver = st.session_state.get('_v_nb_tbl_ver', 0)
+            nb_edited = st.data_editor(
+                nb_df,
+                column_config={
+                    '보기': st.column_config.CheckboxColumn('👁', default=False, width='small'),
+                    'id': None,
+                },
+                disabled=[c for c in nb_df.columns if c != '보기'],
+                hide_index=True,
+                width='stretch',
+                height=400,
+                key=f'v_nb_table_{nb_tbl_ver}',
+            )
+
+            nb_checked = nb_edited.index[nb_edited['보기'] == True].tolist()
+            if nb_checked:
+                idx = nb_checked[0]
+                if idx < len(nb_sessions):
+                    st.session_state['_view_nb_session_id'] = nb_sessions[idx]['id']
+                    st.session_state['_open_nb_session_detail'] = True
+                    st.session_state['_v_nb_tbl_ver'] = nb_tbl_ver + 1
+                    st.rerun()
+        else:
+            st.info('표시할 NanoBanana 세션이 없습니다.')
+
+        _maybe_open_nanobanana_session_dialog(cfg)
+
         # ── Kling Web ──
         st.subheader('🎬 Kling Web')
-        kling_items = list_kling_web_admin(cfg, limit=limit, user_id=filter_uid)
+        kling_items = _filter_school(list_kling_web_admin(cfg, limit=limit, user_id=filter_uid))
         if kling_items:
             import pandas as pd
             kling_df = pd.DataFrame(kling_items)
@@ -500,6 +674,7 @@ def render_viewer_page(cfg: AppConfig):
                 disabled=[c for c in kling_df.columns if c != '보기'],
                 hide_index=True,
                 width='stretch',
+                height=400,
                 key=f'v_kling_web_table_{kling_tbl_ver}',
             )
 
@@ -518,7 +693,7 @@ def render_viewer_page(cfg: AppConfig):
 
         # ── ElevenLabs TTS ──
         st.subheader('🔊 ElevenLabs TTS')
-        el_items = list_elevenlabs_admin(cfg, limit=limit, user_id=filter_uid)
+        el_items = _filter_school(list_elevenlabs_admin(cfg, limit=limit, user_id=filter_uid))
         if el_items:
             import pandas as pd
             el_df = pd.DataFrame(el_items)
@@ -534,6 +709,7 @@ def render_viewer_page(cfg: AppConfig):
                 disabled=[c for c in el_df.columns if c != '보기'],
                 hide_index=True,
                 width='stretch',
+                height=400,
                 key=f'v_el_table_{el_tbl_ver}',
             )
 
@@ -550,42 +726,8 @@ def render_viewer_page(cfg: AppConfig):
 
         _maybe_open_elevenlabs_dialog(cfg)
 
-        # ── NanoBanana Sessions (멀티턴) ──
-        st.subheader('\U0001f34c NanoBanana Sessions')
-        nb_sessions = list_nanobanana_sessions_admin(cfg, limit=limit, user_id=filter_uid)
-        if nb_sessions:
-            import pandas as pd
-            nb_df = pd.DataFrame(nb_sessions)
-            nb_df.insert(0, '보기', False)
-
-            nb_tbl_ver = st.session_state.get('_v_nb_tbl_ver', 0)
-            nb_edited = st.data_editor(
-                nb_df,
-                column_config={
-                    '보기': st.column_config.CheckboxColumn('👁', default=False, width='small'),
-                    'id': None,
-                },
-                disabled=[c for c in nb_df.columns if c != '보기'],
-                hide_index=True,
-                width='stretch',
-                key=f'v_nb_table_{nb_tbl_ver}',
-            )
-
-            nb_checked = nb_edited.index[nb_edited['보기'] == True].tolist()
-            if nb_checked:
-                idx = nb_checked[0]
-                if idx < len(nb_sessions):
-                    st.session_state['_view_nb_session_id'] = nb_sessions[idx]['id']
-                    st.session_state['_open_nb_session_detail'] = True
-                    st.session_state['_v_nb_tbl_ver'] = nb_tbl_ver + 1
-                    st.rerun()
-        else:
-            st.info('표시할 NanoBanana 세션이 없습니다.')
-
-        _maybe_open_nanobanana_session_dialog(cfg)
-
     elif selected_label == "부하테스트 결과":
-        render_stress_report(cfg)
+        render_stress_report(cfg, school_id=u.school_id)
 
     # ── 크레딧 현황 (읽기 전용) ──
     elif selected_label == "크레딧 현황":
@@ -651,6 +793,7 @@ def render_viewer_page(cfg: AppConfig):
             st.dataframe(pd.DataFrame(s_rows), width="stretch", hide_index=True)
         else:
             st.info("해당 조건에 맞는 사용자가 없습니다.")
+
 
     # ── 시간표 (읽기 전용) ──
     elif selected_label == "시간표":
@@ -730,7 +873,8 @@ def _render_db_management(cfg: AppConfig):
             if st.button("삭제 실행", type="primary", key="db_purge_btn"):
                 if confirm.strip() == sel_table:
                     deleted = purge_old_records(cfg, sel_table, del_days)
-                    st.success(f"{deleted:,}건 삭제 완료")
+                    log_admin_action(cfg, st.session_state.get("user_id", ""), "purge_records", sel_table, f"{deleted} rows, older_than={del_days}d")
+                    st.session_state["_admin_toast"] = f"{deleted:,}건 삭제 완료"
                     st.rerun()
                 else:
                     st.error("확인 문구가 일치하지 않습니다.")
@@ -757,7 +901,7 @@ def _render_db_management(cfg: AppConfig):
     if submitted:
         for tbl in PURGEABLE_TABLES:
             set_admin_setting(cfg, f"purge_days.{tbl['key']}", str(new_vals[tbl["key"]]))
-        st.success("자동 삭제 설정이 저장되었습니다.")
+        st.session_state["_admin_toast"] = "자동 삭제 설정이 저장되었습니다."
         st.rerun()
 
     if st.button("지금 자동 삭제 실행", key="db_purge_now"):
@@ -765,7 +909,7 @@ def _render_db_management(cfg: AppConfig):
         if results:
             for key, cnt in results.items():
                 label = next((t["label"] for t in PURGEABLE_TABLES if t["key"] == key), key)
-                st.success(f"{label}: {cnt:,}건 삭제")
+                st.session_state["_admin_toast"] = f"{label}: {cnt:,}건 삭제"
         else:
             st.info("삭제 대상이 없거나 자동 삭제가 비활성 상태입니다.")
 
@@ -789,7 +933,7 @@ def _render_db_management(cfg: AppConfig):
         if st.button("레거시 테이블 삭제", type="primary", key="db_legacy_drop"):
             if confirm_legacy.strip() == "정리":
                 dropped = drop_legacy_tables(cfg)
-                st.success(f"삭제 완료: {', '.join(dropped)}")
+                st.session_state["_admin_toast"] = f"삭제 완료: {', '.join(dropped)}"
                 st.rerun()
             else:
                 st.error("확인 문구가 일치하지 않습니다.")
@@ -819,7 +963,7 @@ def _render_db_management(cfg: AppConfig):
         if confirm_reset.strip() == "초기화":
             result = reset_all_data(cfg)
             total = sum(result.values())
-            st.success(f"초기화 완료 — 총 {total:,}건 삭제")
+            st.session_state["_admin_toast"] = f"초기화 완료 — 총 {total:,}건 삭제"
             for table, cnt in result.items():
                 if cnt > 0:
                     st.write(f"  {table}: {cnt:,}건")
@@ -834,11 +978,15 @@ def render_admin_page(cfg: AppConfig):
         st.error('관리자 권한이 필요합니다.')
         return
 
+    # ── rerun 후 토스트 표시 ──
+    _pending_toast = st.session_state.pop("_admin_toast", None)
+    if _pending_toast:
+        st.toast(_pending_toast, icon="✅")
+
     _MENU_GROUPS = [
-        ("운영",   ["알림/점검", "강의자료", "시간표 관리"]),
-        ("사용자", ["계정 관리", "크레딧 설정"]),
+        ("운영",   ["알림/점검", "문의 관리", "강의자료", "시간표 관리", "학교 정보"]),
+        ("관리",   ["크레딧 관리", "키풀 관리", "계정 관리", "DB 관리"]),
         ("기록",   ["실행 기록", "부하테스트"]),
-        ("시스템", ["모니터링", "키풀 상태", "DB 관리"]),
     ]
 
     if "_admin_active" not in st.session_state:
@@ -852,7 +1000,7 @@ def render_admin_page(cfg: AppConfig):
                 if st.button(
                     item,
                     key=f"_am_{item}",
-                    use_container_width=True,
+                    width="stretch",
                     type="primary" if is_active else "secondary",
                 ):
                     st.session_state["_admin_active"] = item
@@ -860,37 +1008,9 @@ def render_admin_page(cfg: AppConfig):
 
     selected_label = st.session_state["_admin_active"]
 
-    # --- 모니터링 ---
-    if selected_label == "모니터링":
-        _live_monitor_panel(cfg)
-
-    # --- 키풀 상태 ---
-    elif selected_label == "키풀 상태":
-        st.subheader('Waiters')
-        waiters = _rows_to_dicts(list_key_waiters(cfg, limit=500))
-        if waiters:
-            st.dataframe(waiters, width="stretch", hide_index=True)
-        else:
-            st.info('대기열(waiters)이 없습니다.')
-
-        st.subheader('Leases')
-        leases = _rows_to_dicts(list_key_leases(cfg, limit=500))
-        if leases:
-            st.dataframe(leases, width="stretch", hide_index=True)
-        else:
-            st.info('임대(leases)가 없습니다.')
-
-        st.subheader('일일 사용량 (RPD)')
-        from core.key_pool import get_daily_usage_report
-        daily_report = get_daily_usage_report(cfg)
-        if daily_report:
-            import pandas as pd
-            df = pd.DataFrame(daily_report)
-            df["rpd_limit"] = df["rpd_limit"].apply(lambda x: x if x is not None else "∞")
-            df.columns = ["키 이름", "모델", "오늘 사용량", "일일 한도"]
-            st.dataframe(df, width="stretch", hide_index=True)
-        else:
-            st.info('오늘 일일 사용량 기록이 없습니다.')
+    # --- 키풀 관리 ---
+    if selected_label == "키풀 관리":
+        _render_key_pool_summary(cfg, editable=True)
 
     # --- 실행 기록 ---
     elif selected_label == "실행 기록":
@@ -919,6 +1039,7 @@ def render_admin_page(cfg: AppConfig):
                 disabled=[c for c in df.columns if c != '보기'],
                 hide_index=True,
                 width='stretch',
+                height=400,
                 key=f'gpt_conv_table_{tbl_ver}',
             )
 
@@ -954,6 +1075,7 @@ def render_admin_page(cfg: AppConfig):
                 disabled=[c for c in mj_df.columns if c != '보기'],
                 hide_index=True,
                 width='stretch',
+                height=400,
                 key=f'mj_table_{mj_tbl_ver}',
             )
 
@@ -969,6 +1091,41 @@ def render_admin_page(cfg: AppConfig):
             st.info('표시할 MJ 기록이 없습니다.')
 
         _maybe_open_mj_dialog(cfg)
+
+        # ── NanoBanana Sessions (멀티턴) ──
+        st.subheader('\U0001f34c NanoBanana Sessions')
+        nb_sessions = list_nanobanana_sessions_admin(cfg, limit=limit, user_id=filter_uid)
+        if nb_sessions:
+            import pandas as pd
+            nb_df = pd.DataFrame(nb_sessions)
+            nb_df.insert(0, '보기', False)
+
+            nb_tbl_ver = st.session_state.get('_nb_tbl_ver', 0)
+            nb_edited = st.data_editor(
+                nb_df,
+                column_config={
+                    '보기': st.column_config.CheckboxColumn('👁', default=False, width='small'),
+                    'id': None,
+                },
+                disabled=[c for c in nb_df.columns if c != '보기'],
+                hide_index=True,
+                width='stretch',
+                height=400,
+                key=f'nb_table_{nb_tbl_ver}',
+            )
+
+            nb_checked = nb_edited.index[nb_edited['보기'] == True].tolist()
+            if nb_checked:
+                idx = nb_checked[0]
+                if idx < len(nb_sessions):
+                    st.session_state['_view_nb_session_id'] = nb_sessions[idx]['id']
+                    st.session_state['_open_nb_session_detail'] = True
+                    st.session_state['_nb_tbl_ver'] = nb_tbl_ver + 1
+                    st.rerun()
+        else:
+            st.info('표시할 NanoBanana 세션이 없습니다.')
+
+        _maybe_open_nanobanana_session_dialog(cfg)
 
         # ── Kling Web ──
         st.subheader('🎬 Kling Web')
@@ -988,6 +1145,7 @@ def render_admin_page(cfg: AppConfig):
                 disabled=[c for c in kling_df.columns if c != '보기'],
                 hide_index=True,
                 width='stretch',
+                height=400,
                 key=f'kling_web_table_{kling_tbl_ver}',
             )
 
@@ -1022,6 +1180,7 @@ def render_admin_page(cfg: AppConfig):
                 disabled=[c for c in el_df.columns if c != '보기'],
                 hide_index=True,
                 width='stretch',
+                height=400,
                 key=f'el_table_{el_tbl_ver}',
             )
 
@@ -1038,54 +1197,60 @@ def render_admin_page(cfg: AppConfig):
 
         _maybe_open_elevenlabs_dialog(cfg)
 
-        # ── NanoBanana Sessions (멀티턴) ──
-        st.subheader('\U0001f34c NanoBanana Sessions')
-        nb_sessions = list_nanobanana_sessions_admin(cfg, limit=limit, user_id=filter_uid)
-        if nb_sessions:
-            import pandas as pd
-            nb_df = pd.DataFrame(nb_sessions)
-            nb_df.insert(0, '보기', False)
-
-            nb_tbl_ver = st.session_state.get('_nb_tbl_ver', 0)
-            nb_edited = st.data_editor(
-                nb_df,
-                column_config={
-                    '보기': st.column_config.CheckboxColumn('👁', default=False, width='small'),
-                    'id': None,
-                },
-                disabled=[c for c in nb_df.columns if c != '보기'],
-                hide_index=True,
-                width='stretch',
-                key=f'nb_table_{nb_tbl_ver}',
-            )
-
-            nb_checked = nb_edited.index[nb_edited['보기'] == True].tolist()
-            if nb_checked:
-                idx = nb_checked[0]
-                if idx < len(nb_sessions):
-                    st.session_state['_view_nb_session_id'] = nb_sessions[idx]['id']
-                    st.session_state['_open_nb_session_detail'] = True
-                    st.session_state['_nb_tbl_ver'] = nb_tbl_ver + 1
-                    st.rerun()
-        else:
-            st.info('표시할 NanoBanana 세션이 없습니다.')
-
-        _maybe_open_nanobanana_session_dialog(cfg)
-
         # ── 향후 추가: Wisk 등 ──
 
     # --- 부하테스트 ---
     elif selected_label == "부하테스트":
-        render_stress_test_execution(cfg)
-        st.divider()
-        render_stress_test_results(cfg)
+        tab_algo, tab_burst, tab_real = st.tabs(["알고리즘 검증", "키 부하테스트", "실제 부하테스트"])
+        with tab_algo:
+            render_algorithm_test(cfg)
+            st.divider()
+            render_stress_test_results(cfg, test_mode="mock")
+        with tab_burst:
+            render_burst_test(cfg)
+            st.divider()
+            render_stress_test_results(cfg, test_mode="burst")
+        with tab_real:
+            render_stress_test_execution(cfg)
+            st.divider()
+            render_stress_test_results(cfg, test_mode="realistic")
 
     # --- 계정 관리 ---
     elif selected_label == "계정 관리":
         st.subheader('계정 목록')
         users = _rows_to_dicts(list_users(cfg, include_inactive=True))
         if users:
-            st.dataframe(users, width="stretch", hide_index=True)
+            import pandas as pd
+            user_df = pd.DataFrame(users)
+
+            filter_col1, filter_col2 = st.columns(2)
+            with filter_col1:
+                school_opts = ["전체"] + sorted(user_df['school_id'].dropna().unique().tolist())
+                sel_school = st.selectbox(
+                    "학교 필터",
+                    school_opts,
+                    key="_acct_school_filter",
+                )
+            with filter_col2:
+                search_query = st.text_input("검색 (ID / 닉네임)", key="_acct_search", placeholder="검색어 입력...")
+
+            filtered = user_df.copy()
+            if sel_school != "전체":
+                filtered = filtered[filtered['school_id'] == sel_school]
+            if search_query:
+                q = search_query.strip().lower()
+                filtered = filtered[
+                    filtered['user_id'].str.lower().str.contains(q, na=False)
+                    | filtered['nickname'].astype(str).str.lower().str.contains(q, na=False)
+                ]
+
+            col_order = ['user_id', 'nickname', 'school_id', 'role', 'is_active', 'created_at', 'updated_at']
+            col_order = [c for c in col_order if c in filtered.columns]
+            remaining = [c for c in filtered.columns if c not in col_order and c not in ('password_hash', 'suno_account_id')]
+            filtered = filtered[col_order + remaining]
+
+            st.caption(f"{len(filtered)}명 표시 / 전체 {len(user_df)}명")
+            st.dataframe(filtered, width="stretch", hide_index=True, height=400)
         else:
             st.warning('등록된 계정이 없습니다(부트스트랩 관리자만 있는 경우에도 여기에 보입니다).')
 
@@ -1096,6 +1261,7 @@ def render_admin_page(cfg: AppConfig):
         with st.form('create_user'):
             new_user_id = st.text_input('User ID')
             new_pw = st.text_input('Password', type='password')
+            new_nickname = st.text_input('닉네임 (선택)')
             new_role = st.selectbox('Role', ['student', 'teacher', 'viewer', 'admin'], index=0)
             new_school_id = st.selectbox(
                 'School ID',
@@ -1110,15 +1276,151 @@ def render_admin_page(cfg: AppConfig):
             if not new_user_id or not new_pw:
                 st.error('User ID와 Password는 필수입니다.')
             else:
-                upsert_user(cfg, user_id=new_user_id, password_hash=hash_password(new_pw), role=new_role, school_id=new_school_id, is_active=1)
+                upsert_user(cfg, user_id=new_user_id, password_hash=hash_password(new_pw), role=new_role, school_id=new_school_id, is_active=1, nickname=(new_nickname or '').strip())
                 init_user_balance_from_default(cfg, new_user_id)
-                st.success('계정이 추가/갱신되었습니다.')
+                log_admin_action(cfg, u.user_id, "create_user", new_user_id, f"role={new_role}, school={new_school_id}")
+                st.session_state["_admin_toast"] = '계정이 추가/갱신되었습니다.'
                 st.rerun()
+
+        st.markdown('---')
+
+        st.subheader('CSV 일괄 등록')
+        st.caption('CSV 형식: 첫 번째 행은 헤더(user_id, password, nickname), 이후 행에 데이터를 입력하세요.')
+        st.caption('학교 컬럼이 포함된 CSV(Google Forms 등)는 학교가 자동 지정됩니다.')
+        tenant_ids_csv = _list_tenant_ids(cfg)
+        # 학교 이름(layout) → tenant_id 매핑 생성
+        _school_name_to_id: dict[str, str] = {}
+        for _tid in tenant_ids_csv:
+            _layout = cfg.get_layout(_tid)
+            _school_name_to_id[_layout] = _tid
+            # 부분 매칭용: "홍익대" → "hongik" 등
+            if _layout.endswith('학교'):
+                _school_name_to_id[_layout[:-1]] = _tid  # 홍익대학 → hongik
+            if len(_layout) >= 3:
+                _school_name_to_id[_layout[:3]] = _tid  # 홍익대 → hongik
+
+        with st.form('csv_bulk_create'):
+            csv_file = st.file_uploader('CSV 파일 업로드', type=['csv'], key='csv_bulk_file')
+            col_c1, col_c2 = st.columns(2)
+            with col_c1:
+                csv_role = st.selectbox('역할', ['student', 'teacher'], index=0, key='csv_role')
+                csv_school = st.selectbox(
+                    'School ID (학교 컬럼 없을 때 사용)',
+                    tenant_ids_csv,
+                    index=tenant_ids_csv.index('default') if 'default' in tenant_ids_csv else 0,
+                    format_func=lambda tid: f"{cfg.get_layout(tid)}  ({tid})",
+                    key='csv_school',
+                )
+            with col_c2:
+                csv_credits = st.number_input('초기 크레딧', min_value=0, value=100, step=10, key='csv_credits')
+            csv_submitted = st.form_submit_button('일괄 등록')
+
+        if csv_submitted:
+            if not csv_file:
+                st.error('CSV 파일을 업로드해주세요.')
+            else:
+                import csv as _csv
+                import io
+                try:
+                    content = csv_file.read().decode('utf-8-sig')
+                    reader = _csv.reader(io.StringIO(content))
+                    header = next(reader, None)
+                    if not header or len(header) < 3:
+                        raise ValueError('CSV 헤더가 올바르지 않습니다. 최소 3개 컬럼이 필요합니다.')
+                    # 컬럼 매핑: 헤더명 기반 또는 순서 기반 자동 감지
+                    _h_lower = [h.strip().lower() for h in header]
+                    _idx_school = -1  # 학교 컬럼 인덱스
+                    if 'user_id' in _h_lower:
+                        # 표준 헤더: user_id, password, nickname [, school]
+                        _idx_uid = _h_lower.index('user_id')
+                        _idx_pw = _h_lower.index('password') if 'password' in _h_lower else 1
+                        _idx_nick = _h_lower.index('nickname') if 'nickname' in _h_lower else -1
+                        if 'school' in _h_lower:
+                            _idx_school = _h_lower.index('school')
+                    else:
+                        # Google Forms 비표준 자동 감지
+                        if len(header) >= 6:
+                            # 타임스탬프, ID, 학교, PW, PW확인, 닉네임
+                            _idx_uid = 1
+                            _idx_school = 2
+                            _idx_pw = 3
+                            _idx_nick = 5
+                        elif len(header) >= 5:
+                            # 기존: 타임스탬프, ID, PW, PW확인, 닉네임
+                            _idx_uid = 1
+                            _idx_pw = 2
+                            _idx_nick = 4
+                        else:
+                            _idx_uid = 0
+                            _idx_pw = 1
+                            _idx_nick = 2 if len(header) >= 3 else -1
+
+                    _auto_school = _idx_school >= 0
+                    if _auto_school:
+                        st.info('📋 학교 컬럼이 감지되었습니다. CSV의 학교 값으로 자동 지정됩니다.')
+
+                    created, skipped, errors = 0, 0, []
+                    _school_counts: dict[str, int] = {}
+                    for i, row in enumerate(reader, start=2):
+                        uid = (row[_idx_uid] if _idx_uid < len(row) else '').strip()
+                        pw = (row[_idx_pw] if _idx_pw < len(row) else '').strip()
+                        nick = (row[_idx_nick] if 0 <= _idx_nick < len(row) else '').strip()
+                        if not uid or not pw:
+                            skipped += 1
+                            errors.append(f'{i}행: user_id 또는 password 누락')
+                            continue
+
+                        # 학교 결정: CSV 컬럼 우선, 없으면 폼 선택값 사용
+                        if _auto_school:
+                            raw_school = (row[_idx_school] if _idx_school < len(row) else '').strip()
+                            resolved = _school_name_to_id.get(raw_school)
+                            if resolved is None:
+                                # tenant_id 직접 입력도 허용
+                                resolved = raw_school if raw_school in tenant_ids_csv else None
+                            if resolved is None:
+                                skipped += 1
+                                errors.append(f'{i}행: 알 수 없는 학교 "{raw_school}"')
+                                continue
+                            row_school = resolved
+                        else:
+                            row_school = csv_school
+
+                        upsert_user(
+                            cfg, user_id=uid,
+                            password_hash=hash_password(pw),
+                            role=csv_role, school_id=row_school,
+                            is_active=1, nickname=nick,
+                        )
+                        if csv_credits > 0:
+                            set_user_balance(cfg, uid, csv_credits)
+                        else:
+                            init_user_balance_from_default(cfg, uid)
+                        created += 1
+                        _school_counts[row_school] = _school_counts.get(row_school, 0) + 1
+
+                    _school_detail = ', '.join(f'{cfg.get_layout(s)}({cnt}명)' for s, cnt in sorted(_school_counts.items()))
+                    _log_school = _school_detail if _auto_school else csv_school
+                    log_admin_action(cfg, u.user_id, "csv_bulk_create", f"{created}명", f"role={csv_role}, school={_log_school}, credits={csv_credits}")
+                    _toast = f'{created}명 등록 완료' + (f', {skipped}명 스킵' if skipped else '')
+                    if _auto_school and _school_counts:
+                        _toast += f' | {_school_detail}'
+                    st.session_state["_admin_toast"] = _toast
+                    if errors:
+                        st.warning('\n'.join(errors))
+                    st.rerun()
+                except Exception as e:
+                    st.error(f'CSV 처리 오류: {e}')
+
+        st.markdown('---')
 
         st.subheader('계정 수정')
         if users:
             ids = [x['user_id'] for x in users]
-            target = st.selectbox('대상 계정', ids, key='edit_target')
+            _nick_map = {x['user_id']: x.get('nickname', '') for x in users}
+            target = st.selectbox(
+                '대상 계정', ids, key='edit_target',
+                format_func=lambda uid: f"{uid} ({_nick_map[uid]})" if _nick_map.get(uid) else uid,
+            )
             target_row = next((x for x in users if x['user_id'] == target), {})
             is_self = (target == u.user_id)
 
@@ -1140,6 +1442,9 @@ def render_admin_page(cfg: AppConfig):
                         index=tenant_ids.index(cur_school) if cur_school in tenant_ids else 0,
                         format_func=lambda tid: f"{cfg.get_layout(tid)}  ({tid})",
                     )
+
+                cur_nickname = target_row.get('nickname', '') or ''
+                new_nickname = st.text_input('닉네임', value=cur_nickname, key=f'nick_{target}')
 
                 col3, col4 = st.columns(2)
                 with col3:
@@ -1213,13 +1518,20 @@ def render_admin_page(cfg: AppConfig):
                     update_user_fields(cfg, target, suno_account_id=new_suno)
                     changes.append(f'Suno: #{cur_suno} → #{new_suno}')
 
+                # 닉네임 변경
+                _new_nick = (new_nickname or '').strip()
+                if _new_nick != cur_nickname:
+                    update_user_fields(cfg, target, nickname=_new_nick)
+                    changes.append(f'닉네임: "{cur_nickname}" → "{_new_nick}"')
+
                 # 비밀번호 변경
                 if new_pw2:
                     set_user_password(cfg, target, hash_password(new_pw2))
                     changes.append('비밀번호 재설정')
 
                 if changes:
-                    st.success('변경 완료: ' + ', '.join(changes))
+                    log_admin_action(cfg, u.user_id, "modify_user", target, "; ".join(changes))
+                    st.session_state["_admin_toast"] = '변경 완료: ' + ', '.join(changes)
                     st.rerun()
                 elif not any(st.session_state.get(f'_edit_err_{i}') for i in range(4)):
                     st.info('변경된 항목이 없습니다.')
@@ -1227,23 +1539,23 @@ def render_admin_page(cfg: AppConfig):
             st.markdown('---')
             st.subheader('계정 삭제(하드 삭제)')
             st.warning('삭제는 되돌릴 수 없습니다. 기본적으로는 비활성화를 권장합니다.')
-            confirm = st.text_input('삭제 확인: 대상 user_id를 그대로 입력하세요', key=f'del_confirm_{target}')
+            confirm = st.text_input(f'삭제 확인: **{target}** 을 그대로 입력하세요', key=f'del_confirm_{target}')
             if st.button('하드 삭제 실행'):
                 if is_self:
                     st.error('본인 계정은 삭제할 수 없습니다.')
-                elif confirm != target:
+                elif confirm.strip() != target:
                     st.error('확인 문구가 일치하지 않습니다.')
                 else:
                     hard_delete_user(cfg, target)
-                    st.success('삭제되었습니다.')
+                    st.session_state["_admin_toast"] = '삭제되었습니다.'
                     st.rerun()
 
     # --- DB 관리 ---
     elif selected_label == "DB 관리":
         _render_db_management(cfg)
 
-    # --- 크레딧 설정 ---
-    elif selected_label == "크레딧 설정":
+    # --- 크레딧 관리 ---
+    elif selected_label == "크레딧 관리":
         st.subheader("학교별 크레딧 현황")
         report_days = st.selectbox("기간", [7, 14, 30, 60, 90], index=2, format_func=lambda d: f"최근 {d}일", key="report_days")
         report = get_school_credit_report(cfg, days=report_days)
@@ -1306,6 +1618,9 @@ def render_admin_page(cfg: AppConfig):
             st.info("해당 조건에 맞는 사용자가 없습니다.")
 
         st.markdown("---")
+        _render_api_cost_estimation(cfg, editable=True, key_prefix="a_")
+
+        st.markdown("---")
 
         st.subheader("기능별 단위 비용")
         st.caption("0 = 무제한 (크레딧 차감 없음). 영상 기능은 '초당' 비용입니다.")
@@ -1324,7 +1639,7 @@ def render_admin_page(cfg: AppConfig):
             if st.form_submit_button("비용 저장", width="stretch"):
                 for fid, val in new_costs.items():
                     set_admin_setting(cfg, f"credit_cost.{fid}", str(val))
-                st.success("저장되었습니다.")
+                st.session_state["_admin_toast"] = "저장되었습니다."
                 st.rerun()
 
         st.markdown("---")
@@ -1341,7 +1656,7 @@ def render_admin_page(cfg: AppConfig):
             )
             if st.form_submit_button("기본값 저장", width="stretch"):
                 set_admin_setting(cfg, "credit_default", str(new_default))
-                st.success("저장되었습니다.")
+                st.session_state["_admin_toast"] = "저장되었습니다."
                 st.rerun()
 
         st.markdown("---")
@@ -1373,7 +1688,7 @@ def render_admin_page(cfg: AppConfig):
             if st.form_submit_button("추가 실행", width="stretch"):
                 affected = add_balance_bulk(cfg, role_choice, school_choice, bulk_amount)
                 if affected > 0:
-                    st.success(f"{affected}명에게 {bulk_amount} 크레딧이 추가되었습니다.")
+                    st.session_state["_admin_toast"] = f"{affected}명에게 {bulk_amount} 크레딧이 추가되었습니다."
                 else:
                     st.warning("대상 사용자가 없거나 추가할 크레딧이 없습니다.")
 
@@ -1403,7 +1718,7 @@ def render_admin_page(cfg: AppConfig):
             if st.form_submit_button("자동 충전 설정 저장", width="stretch"):
                 set_admin_setting(cfg, "credit_refill_day", str(refill_day))
                 set_admin_setting(cfg, "credit_refill_amount", str(refill_amount))
-                st.success("저장되었습니다.")
+                st.session_state["_admin_toast"] = "저장되었습니다."
                 st.rerun()
 
     # --- 강의자료 ---
@@ -1433,7 +1748,7 @@ def render_admin_page(cfg: AppConfig):
             if st.button("폴더 ID 저장", key="lm_save_folder"):
                 folder_val = extract_folder_id(new_folder)
                 set_admin_setting(cfg, f"drive_folder.{sel_school}", folder_val)
-                st.success("폴더 ID가 저장되었습니다.")
+                st.session_state["_admin_toast"] = "폴더 ID가 저장되었습니다."
                 st.rerun()
 
         folder_id = get_admin_setting(cfg, f"drive_folder.{sel_school}", "")
@@ -1463,9 +1778,96 @@ def render_admin_page(cfg: AppConfig):
     elif selected_label == "시간표 관리":
         _render_timetable_admin(cfg)
 
+    # --- 학교 정보 ---
+    elif selected_label == "학교 정보":
+        _render_school_info(cfg)
+
     # --- 알림/점검 ---
     elif selected_label == "알림/점검":
         _render_notice_and_maintenance(cfg)
+
+    # --- 문의 관리 ---
+    elif selected_label == "문의 관리":
+        _render_support_management(cfg)
+
+
+# ── 문의 관리 ──────────────────────────────────────────────
+
+def _render_support_management(cfg: AppConfig):
+    from core.db import (
+        list_support_tickets_admin,
+        reply_support_ticket,
+        delete_support_ticket,
+    )
+    from datetime import datetime, timedelta, timezone as _tz
+    _KST = _tz(timedelta(hours=9))
+
+    st.header("📮 문의 관리")
+
+    _filter = st.radio(
+        "상태 필터",
+        options=["전체", "대기 중", "답변 완료"],
+        horizontal=True,
+        key="_admin_support_filter",
+    )
+    status_map = {"전체": "", "대기 중": "open", "답변 완료": "answered"}
+    tickets = list_support_tickets_admin(cfg, status=status_map[_filter], limit=200)
+
+    if not tickets:
+        st.info("문의 내역이 없습니다.")
+        return
+
+    _me = current_user()
+    admin_uid = _me.user_id if _me else ""
+
+    for t in tickets:
+        try:
+            _dt = datetime.fromisoformat(t["created_at"].replace("Z", "+00:00")).astimezone(_KST).strftime("%m/%d %H:%M")
+        except Exception:
+            _dt = t.get("created_at", "")
+        has_reply = bool(t.get("reply"))
+        badge = "✅" if has_reply else "⏳"
+        user_label = f"{t['user_id']}"
+        if t.get("school_id"):
+            user_label += f" ({t['school_id']})"
+        title = f"{badge} [{user_label}] {t['subject']} · {_dt}"
+        with st.expander(title, expanded=not has_reply):
+            st.markdown(f"**문의 내용**  \n{t['message']}")
+
+            if has_reply:
+                try:
+                    _rdt = datetime.fromisoformat(t["reply_at"].replace("Z", "+00:00")).astimezone(_KST).strftime("%m/%d %H:%M")
+                except Exception:
+                    _rdt = t.get("reply_at", "")
+                st.markdown(f"---\n**답변** ({t.get('reply_by','')}, {_rdt})  \n{t['reply']}")
+
+            st.markdown("---")
+            new_reply = st.text_area(
+                "답변 작성" if not has_reply else "답변 수정",
+                value=t.get("reply") or "",
+                key=f"_adm_reply_{t['ticket_id']}",
+                height=100,
+                max_chars=5000,
+            )
+            cols = st.columns([3, 1])
+            with cols[0]:
+                if st.button("답변 저장", key=f"_adm_reply_save_{t['ticket_id']}", type="primary"):
+                    if not new_reply.strip():
+                        st.error("답변 내용을 입력해주세요.")
+                    else:
+                        try:
+                            reply_support_ticket(cfg, int(t["ticket_id"]), new_reply, admin_uid)
+                            st.success("답변이 저장되었습니다.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"저장 실패: {e}")
+            with cols[1]:
+                if st.button("삭제", key=f"_adm_reply_del_{t['ticket_id']}", help="부적절한 문의 삭제"):
+                    try:
+                        delete_support_ticket(cfg, int(t["ticket_id"]))
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"삭제 실패: {e}")
 
 
 # ── 알림/점검 관리 ──────────────────────────────────────────────
@@ -1487,18 +1889,18 @@ def _render_notice_and_maintenance(cfg: AppConfig):
             msg = st.text_area("알림 메시지", placeholder="사용자에게 보여줄 메시지를 입력하세요")
             col1, col2 = st.columns(2)
             with col1:
-                target = st.text_input("대상 학교 (비우면 전체)", placeholder="school_a, mokwon 등")
+                target = st.text_input("대상 학교 (비우면 전체)", placeholder="aimz, mokwon 등")
             with col2:
                 hours = st.number_input("자동 만료 (시간, 0=수동)", min_value=0, value=0, step=1)
             submitted = st.form_submit_button("알림 보내기")
             if submitted and msg.strip():
                 exp = None
                 if hours > 0:
-                    from datetime import datetime, timedelta
-                    exp = (datetime.utcnow() + timedelta(hours=hours)).isoformat() + "Z"
+                    from datetime import datetime, timedelta, timezone
+                    exp = (datetime.now(timezone.utc) + timedelta(hours=hours)).isoformat().replace("+00:00", "Z")
                 tgt = target.strip() if target.strip() else None
                 create_notice(cfg, msg.strip(), target_school=tgt, expires_at=exp)
-                st.success("알림이 전송되었습니다.")
+                st.session_state["_admin_toast"] = "알림이 전송되었습니다."
                 st.rerun()
 
         st.divider()
@@ -1524,7 +1926,7 @@ def _render_notice_and_maintenance(cfg: AppConfig):
             st.markdown(f"**메시지**: {maint.message}")
             if st.button("✅ 점검 완료 — 서비스 재개", type="primary"):
                 complete_maintenance(cfg, maint.maintenance_id)
-                st.success("서비스가 재개되었습니다. 모든 사용자가 재활성화됩니다.")
+                st.session_state["_admin_toast"] = "서비스가 재개되었습니다. 모든 사용자가 재활성화됩니다."
                 st.rerun()
         elif upcoming and upcoming["status"] == "scheduled":
             st.warning(f"⏰ 점검 예정: **{upcoming['scheduled_at'][:16]}** (KST)")
@@ -1533,7 +1935,7 @@ def _render_notice_and_maintenance(cfg: AppConfig):
                 st.info(f"경고 기간 진입 — 사용자에게 **{maint.minutes_remaining}분** 남았다는 배너가 표시 중")
             if st.button("❌ 점검 취소"):
                 cancel_maintenance(cfg, upcoming["id"])
-                st.success("점검이 취소되었습니다.")
+                st.session_state["_admin_toast"] = "점검이 취소되었습니다."
                 st.rerun()
         else:
             st.info("예정된 서버 점검이 없습니다.")
@@ -1551,9 +1953,9 @@ def _render_notice_and_maintenance(cfg: AppConfig):
             if st.form_submit_button("점검 예약"):
                 from datetime import datetime
                 dt = datetime.combine(maint_date, maint_time)
-                scheduled_at = dt.isoformat()
+                scheduled_at = dt.isoformat().replace("+00:00", "Z")
                 schedule_maintenance(cfg, scheduled_at, maint_msg)
-                st.success(f"점검이 **{scheduled_at[:16]}** (KST)에 예약되었습니다.")
+                st.session_state["_admin_toast"] = f"점검이 {scheduled_at[:16]} (KST)에 예약되었습니다."
                 st.rerun()
 
 
@@ -1742,7 +2144,7 @@ def _render_schedule_add_form(cfg: AppConfig, tenant_ids: list):
                 "label": label.strip(),
                 "color": "",
             })
-            st.success(f"수업 '{label}' 추가 완료")
+            st.session_state["_admin_toast"] = f"수업 '{label}' 추가 완료"
             st.rerun()
 
 
@@ -1780,7 +2182,7 @@ def _render_schedule_row(cfg: AppConfig, s: dict, tenant_ids: list):
     with col_del:
         if st.button("🗑️", key=f"sched_del_{sid}"):
             delete_class_schedule(cfg, sid)
-            st.success("삭제 완료")
+            st.session_state["_admin_toast"] = "삭제 완료"
             st.rerun()
 
     # 수정 폼
@@ -1822,9 +2224,95 @@ def _render_schedule_row(cfg: AppConfig, s: dict, tenant_ids: list):
                         "color": "",
                     })
                     del st.session_state[f"_sched_editing_{sid}"]
-                    st.success("수정 완료")
+                    st.session_state["_admin_toast"] = "수정 완료"
                     st.rerun()
             with bc2:
                 if st.button("취소", key=f"sched_cancel_{sid}"):
                     del st.session_state[f"_sched_editing_{sid}"]
                     st.rerun()
+
+
+# ── 학교 정보 ──────────────────────────────────────────────
+
+def _render_school_info(cfg: AppConfig):
+    """등록된 학교(tenant) 목록 및 상세 정보 표시."""
+    import json
+    import base64
+    from pathlib import Path
+
+    st.subheader("등록된 학교 목록")
+
+    tenant_dir = Path(cfg.tenant_config_dir) / "tenants"
+    if not tenant_dir.exists():
+        tenant_dir = Path("tenants")
+
+    _top = {"default": 0, "aimz": 1}
+    tenant_files = sorted(tenant_dir.glob("*.json"), key=lambda f: (_top.get(f.stem, 2), f.stem))
+    if not tenant_files:
+        st.info("등록된 학교가 없습니다.")
+        return
+
+    for tf in tenant_files:
+        try:
+            data = json.loads(tf.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+
+        tid = data.get("tenant_id", tf.stem)
+        layout = data.get("layout", tid)
+        branding = data.get("branding", {})
+        features = data.get("enabled_features", [])
+        logo_path = branding.get("logo_path", "")
+        main_path = branding.get("main_path", "")
+
+        with st.expander(f"🏫 {layout} ({tid})", expanded=False):
+            c1, c2 = st.columns([1, 2])
+
+            with c1:
+                # 로고 표시
+                if logo_path and Path(logo_path).exists():
+                    logo_b64 = base64.b64encode(Path(logo_path).read_bytes()).decode()
+                    st.markdown(
+                        f'<div style="background:#fff;border-radius:8px;padding:8px;text-align:center;margin-bottom:8px;">'
+                        f'<img src="data:image/png;base64,{logo_b64}" style="max-height:60px;object-fit:contain;"></div>',
+                        unsafe_allow_html=True,
+                    )
+                    st.caption("✅ 로고")
+                else:
+                    st.caption("❌ 로고 없음")
+
+                # 메인 배너 표시
+                if main_path and Path(main_path).exists():
+                    main_b64 = base64.b64encode(Path(main_path).read_bytes()).decode()
+                    st.markdown(
+                        f'<div style="background:#fff;border-radius:8px;padding:8px;text-align:center;">'
+                        f'<img src="data:image/png;base64,{main_b64}" style="max-height:60px;object-fit:contain;"></div>',
+                        unsafe_allow_html=True,
+                    )
+                    st.caption("✅ 메인 배너")
+                else:
+                    st.caption(f"❌ 메인 배너 없음 ({Path(main_path).name if main_path else '미설정'})")
+
+            with c2:
+                st.markdown(f"**페이지 타이틀:** {branding.get('page_title', '-')}")
+                st.markdown(f"**브라우저 탭:** {branding.get('browser_tab_title', '-')}")
+                st.markdown(f"**로고 경로:** `{logo_path or '없음'}`")
+                st.markdown(f"**메인 배너:** `{main_path or '없음'}`")
+
+                # 오픈 탭 뱃지
+                tabs = [f.replace("tab.", "") for f in features if f.startswith("tab.")]
+                if tabs:
+                    _tab_colors = {
+                        "gpt": "#2ecc71", "mj": "#e74c3c", "nanobanana": "#f39c12", "nanobanana_2": "#f39c12",
+                        "nanobanana_pro": "#f39c12", "kling": "#9b59b6", "kling_veo": "#9b59b6",
+                        "kling_grok": "#9b59b6", "elevenlabs": "#3498db", "suno": "#e67e22",
+                    }
+                    _badges = ''.join(
+                        f'<span style="display:inline-block;background:{_tab_colors.get(t, "#95a5a6")};'
+                        f'color:#fff;padding:2px 8px;border-radius:10px;font-size:0.75em;'
+                        f'font-weight:600;margin:2px 3px;">{t}</span>'
+                        for t in tabs
+                    )
+                    st.markdown(f"**오픈 탭 ({len(tabs)})**<br>{_badges}", unsafe_allow_html=True)
+                else:
+                    st.markdown("**오픈 탭:** 없음")

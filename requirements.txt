@@ -1,7 +1,6 @@
-streamlit
-requests
-google-auth
-PyJWT
-streamlit-cookies-controller
-pandas
-libsql-experimental; sys_platform != "win32"
+streamlit~=1.53
+requests~=2.32
+google-auth~=2.48
+PyJWT~=2.10
+streamlit-cookies-controller~=0.0.4
+pandas~=2.3

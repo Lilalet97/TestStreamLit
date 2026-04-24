@@ -87,8 +87,19 @@ def check_maintenance(cfg: AppConfig) -> MaintenanceStatus:
 
 def _execute_maintenance(cfg: AppConfig, mid: int):
     """점검 실행: lease 정리 + 사용자 비활성화."""
-    # 1) 상태를 active로
-    update_maintenance_status(cfg, mid, "active")
+    # 1) 상태를 active로 (atomic: scheduled → active만 허용)
+    from core.db import get_db as _get_db
+    _conn = _get_db(cfg)
+    try:
+        _cur = _conn.execute(
+            "UPDATE maintenance_schedule SET status='active' WHERE id=? AND status='scheduled'",
+            (mid,),
+        )
+        _conn.commit()
+        if _cur.rowcount == 0:
+            return  # 이미 다른 프로세스가 실행함
+    finally:
+        _conn.close()
 
     # 2) 모든 활성 lease를 error로 해제
     from core.db import get_db

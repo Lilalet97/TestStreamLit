@@ -2,7 +2,11 @@
 import json
 import re
 
-_SENSITIVE_KEY_RE = re.compile(r"(api[-_ ]?key|secret|token|authorization|bearer|password|x-api-key)", re.IGNORECASE)
+_SENSITIVE_KEY_RE = re.compile(
+    r"(api[-_ ]?key|secret|token|authorization|bearer|password|x-api-key"
+    r"|access[-_ ]?key|credential|private[-_ ]?key|client[-_ ]?secret)",
+    re.IGNORECASE,
+)
 
 
 def _redact_value(v):

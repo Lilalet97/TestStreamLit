@@ -38,8 +38,9 @@ def generate_images(
     # [VERTEX AI] url = get_vertex_url(project_id, location, model, "predict")
     # [VERTEX AI] headers = get_auth_headers(sa_json)
 
+    num_images = max(1, min(num_images, 4))
     params = {
-        "sampleCount": min(num_images, 4),
+        "sampleCount": num_images,
         "aspectRatio": aspect_ratio,
     }
     if negative_prompt:
@@ -52,11 +53,15 @@ def generate_images(
 
     resp = requests.post(url, headers=headers, json=payload, timeout=120)
     if resp.status_code != 200:
+        _safe = resp.text[:300].replace(api_key, "***")
         raise RuntimeError(
-            f"Google Imagen API {resp.status_code}: {resp.text[:300]}"
+            f"Google Imagen API {resp.status_code}: {_safe}"
         )
 
-    data = resp.json()
+    try:
+        data = resp.json()
+    except (ValueError, Exception):
+        raise RuntimeError(f"Google Imagen API: 응답 JSON 파싱 실패 (status={resp.status_code})")
     predictions = data.get("predictions", [])
     urls = []
     for pred in predictions:
@@ -119,15 +124,20 @@ def gemini_generate(
         },
     }
 
+    num_images = max(1, min(num_images, 8))
     all_urls: list[str] = []
     for _ in range(num_images):
         resp = requests.post(url, headers=headers, json=payload, timeout=120)
         if resp.status_code != 200:
+            _safe = resp.text[:300].replace(api_key, "***")
             raise RuntimeError(
-                f"Gemini API {resp.status_code}: {resp.text[:300]}"
+                f"Gemini API {resp.status_code}: {_safe}"
             )
 
-        data = resp.json()
+        try:
+            data = resp.json()
+        except (ValueError, Exception):
+            raise RuntimeError(f"Gemini API: 응답 JSON 파싱 실패 (status={resp.status_code})")
         candidates = data.get("candidates", [])
         for candidate in candidates:
             # 안전 필터 체크
@@ -176,11 +186,15 @@ def edit_image(
 
     resp = requests.post(url, headers=headers, json=payload, timeout=120)
     if resp.status_code != 200:
+        _safe = resp.text[:300].replace(api_key, "***")
         raise RuntimeError(
-            f"Gemini Image Edit API {resp.status_code}: {resp.text[:300]}"
+            f"Gemini Image Edit API {resp.status_code}: {_safe}"
         )
 
-    data = resp.json()
+    try:
+        data = resp.json()
+    except (ValueError, requests.exceptions.JSONDecodeError):
+        raise RuntimeError("Gemini Image Edit API: 응답 JSON 파싱 실패")
     candidates = data.get("candidates", [])
     urls = []
     for candidate in candidates:

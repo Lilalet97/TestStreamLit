@@ -104,7 +104,10 @@ def _call_openai_chat(api_key: str, model: str, messages: list) -> str:
     )
     if resp.status_code != 200:
         raise RuntimeError(f"OpenAI API {resp.status_code}: {resp.text[:300]}")
-    return resp.json()["choices"][0]["message"]["content"]
+    try:
+        return resp.json()["choices"][0]["message"]["content"]
+    except (ValueError, KeyError, IndexError):
+        raise RuntimeError(f"OpenAI API: 응답 파싱 실패 (status={resp.status_code})")
 
 
 def render_gpt_tab(cfg: AppConfig, sidebar: SidebarState):
@@ -123,6 +126,8 @@ def render_gpt_tab(cfg: AppConfig, sidebar: SidebarState):
             if conv["id"] == conv_id:
                 try:
                     api_msgs = [{"role": m["role"], "content": m["content"]} for m in conv["messages"]]
+                    if len(api_msgs) > 51:  # system + 50 messages
+                        api_msgs = [api_msgs[0]] + api_msgs[-50:]
                     reply = call_with_lease(
                         cfg,
                         test_mode=pending["test_mode"],
@@ -167,6 +172,8 @@ def render_gpt_tab(cfg: AppConfig, sidebar: SidebarState):
     _err = st.session_state.pop("_gpt_error_msg", None)
     if _err:
         st.toast(_err, icon="⚠️")
+        from core.db import insert_error_log
+        insert_error_log(cfg, st.session_state.get("user_id", ""), st.session_state.get("school_id", "default"), "gpt", _err)
 
     _cred = st.session_state.pop("_gpt_credit_toast", None)
     if _cred is not None:
@@ -212,11 +219,13 @@ def render_gpt_tab(cfg: AppConfig, sidebar: SidebarState):
     if dedup_key in _processed:
         return
     _processed.add(dedup_key)
-    if len(_processed) > 100:
+    if len(_processed) > 500:
         st.session_state["_gpt_processed_actions"] = {dedup_key}
 
     # ── send_message: Python에서 OpenAI API 호출 ──
     if action == "send_message":
+        if not _is_authenticated():
+            return
         # 이미 대기 중인 요청이 있으면 무시 (중복 방지)
         if st.session_state.get("_gpt_pending_send"):
             return
@@ -232,6 +241,8 @@ def render_gpt_tab(cfg: AppConfig, sidebar: SidebarState):
 
         conv_id = result.get("conv_id")
         user_message = result.get("user_message", "")
+        if len(user_message) > 10000:
+            user_message = user_message[:10000]
         model = result.get("model", cfg.openai_model)
 
         # 유저 메시지를 대화에 먼저 추가
@@ -341,7 +352,7 @@ def render_gpt_tab(cfg: AppConfig, sidebar: SidebarState):
 
 TAB = {
     "tab_id": "gpt",
-    "title": "💬 GPT Chat",
+    "title": "GPT Chat",
     "required_features": {"tab.gpt"},
     "render": render_gpt_tab,
 }

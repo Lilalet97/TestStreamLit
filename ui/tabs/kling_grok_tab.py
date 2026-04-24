@@ -135,7 +135,7 @@ def render_kling_grok_tab(cfg: AppConfig, sidebar: SidebarState):
         if video_urls:
             from core.credits import deduct_after_success, get_feature_cost
             try:
-                _pdur = int(pending.get("settings", {}).get("duration", "8"))
+                _pdur = max(1, min(int(pending.get("settings", {}).get("duration", "8")), 10))
                 _cost = get_feature_cost(cfg, "grok") * _pdur
                 new_bal = deduct_after_success(cfg, _cost, tab_id="grok")
                 if new_bal >= 0:
@@ -160,6 +160,8 @@ def render_kling_grok_tab(cfg: AppConfig, sidebar: SidebarState):
     _err = st.session_state.pop("_grok_error_msg", None)
     if _err:
         st.toast(_err, icon="⚠️")
+        from core.db import insert_error_log
+        insert_error_log(cfg, st.session_state.get("user_id", ""), st.session_state.get("school_id", "default"), "kling_grok", _err)
 
     _cred = st.session_state.pop("_grok_credit_toast", None)
     if _cred is not None:
@@ -203,7 +205,7 @@ def render_kling_grok_tab(cfg: AppConfig, sidebar: SidebarState):
         except Exception:
             pass
         try:
-            nb_sessions = load_nanobanana_sessions(cfg, st.session_state["user_id"], limit=20)
+            nb_sessions = load_nanobanana_sessions(cfg, st.session_state["user_id"], limit=20, tab_id=None)
             for sess in nb_sessions:
                 for turn in (sess.get("turns") or []):
                     prompt = (turn.get("prompt") or "")[:60]
@@ -236,7 +238,7 @@ def render_kling_grok_tab(cfg: AppConfig, sidebar: SidebarState):
     if dedup_key in _processed:
         return
     _processed.add(dedup_key)
-    if len(_processed) > 100:
+    if len(_processed) > 500:
         st.session_state["_grok_processed_actions"] = {dedup_key}
 
     if action == "open_gallery":
@@ -246,14 +248,18 @@ def render_kling_grok_tab(cfg: AppConfig, sidebar: SidebarState):
         st.session_state["_grok_gallery_open"] = False
         st.rerun()
     elif action == "generate":
+        if not _is_authenticated():
+            return
         if st.session_state.get("_grok_pending_generate"):
             return
 
         prompt_text = result.get("prompt", "")
+        if len(prompt_text) > 10000:
+            prompt_text = prompt_text[:10000]
         settings = result.get("settings", {})
 
         # ── 크레딧 확인 (Phase 1) ──
-        _dur = int(settings.get("duration", "8"))
+        _dur = max(1, min(int(settings.get("duration", "8")), 10))
         from core.credits import check_credits, get_feature_cost
         _cost = get_feature_cost(cfg, "grok") * _dur
         ok, msg = check_credits(cfg, _cost)
@@ -299,6 +305,9 @@ def render_kling_grok_tab(cfg: AppConfig, sidebar: SidebarState):
                 "settings": settings,
                 "start_frame_data": result.get("start_frame") or "",
             }
+        else:
+            new_item["loading"] = False
+            new_item["video_urls"] = []
 
         st.rerun()
 
@@ -320,7 +329,7 @@ def render_kling_grok_tab(cfg: AppConfig, sidebar: SidebarState):
 
 TAB = {
     "tab_id": "kling_grok",
-    "title": "🎬 Kling",
+    "title": "Video Create(ex. Kling)",
     "required_features": {"tab.kling_grok"},
     "render": render_kling_grok_tab,
 }

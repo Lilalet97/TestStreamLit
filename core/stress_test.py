@@ -12,32 +12,44 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, asdict, field
-from datetime import datetime
-from typing import Any, Dict, List, Optional
+from datetime import datetime, timezone
+from typing import List
 
 from core.config import AppConfig
 from core.database import get_db
-from core.key_pool import acquire_lease, release_lease, Lease
+from core.key_pool import acquire_lease, release_lease
 
-logger = logging.getLogger(__name__)
+_log = logging.getLogger(__name__)
 
 
 def _now_iso() -> str:
-    return datetime.utcnow().isoformat() + "Z"
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+# Provider 정렬 순서: text→text, text→image, text→video, text→sound
+PROVIDER_ORDER = ["openai", "midjourney", "google_imagen", "kling", "google_veo", "grok", "elevenlabs", "suno"]
 
 
 # ── Plan config ──────────────────────────────────────────
 
 @dataclass
 class StressPlanConfig:
-    """부하 테스트 플랜 설정."""
+    """부하 테스트 플랜 설정.
+
+    test_mode:
+      - "mock": 알고리즘 검증 (DB 접근 없이 capacity 시뮬레이션)
+      - "burst": 키 부하 테스트 (FIFO 우회, 동시 burst API 호출)
+      - "realistic": 실제 부하 테스트 (FIFO 통해 burst_window_sec 내 랜덤 순차 요청)
+    """
     providers: List[str] = field(default_factory=lambda: ["openai"])
-    user_counts: List[int] = field(default_factory=lambda: [5, 10, 15])
-    mock_mode: bool = True
+    user_counts: List[int] = field(default_factory=lambda: [5, 10, 15])  # max 200
+    test_mode: str = "mock"  # "mock" | "burst" | "realistic"
+    mock_mode: bool = True   # backward compat: mock_mode=True ↔ test_mode="mock"
     mock_latency_min_ms: int = 100
     mock_latency_max_ms: int = 500
     lease_wait_sec: int = 30
     lease_ttl_sec: int = 60
+    burst_window_sec: int = 60
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=False)
@@ -49,21 +61,21 @@ class StressPlanConfig:
 
 # ── 키 풀 concurrency 임시 변경 ──────────────────────────
 
-def _boost_concurrency(cfg: AppConfig, provider: str, new_limit: int) -> list[tuple]:
-    """해당 provider의 키 concurrency_limit를 일시적으로 올린다.
-    Returns: [(api_key_id, original_limit), ...]
+def _boost_limits(cfg: AppConfig, provider: str, new_concurrency: int) -> list[tuple]:
+    """해당 provider의 키 concurrency_limit와 rpm_limit를 일시적으로 올린다.
+    Returns: [(api_key_id, original_concurrency, original_rpm), ...]
     """
     conn = get_db(cfg)
     try:
         cur = conn.cursor()
         cur.execute(
-            "SELECT api_key_id, concurrency_limit FROM api_keys WHERE provider=?",
+            "SELECT api_key_id, concurrency_limit, rpm_limit FROM api_keys WHERE provider=?",
             (provider,),
         )
-        originals = [(row["api_key_id"], row["concurrency_limit"]) for row in cur.fetchall()]
+        originals = [(row["api_key_id"], row["concurrency_limit"], row["rpm_limit"]) for row in cur.fetchall()]
         cur.execute(
-            "UPDATE api_keys SET concurrency_limit=? WHERE provider=?",
-            (new_limit, provider),
+            "UPDATE api_keys SET concurrency_limit=?, rpm_limit=? WHERE provider=?",
+            (new_concurrency, max(new_concurrency * 10, 9999), provider),
         )
         conn.commit()
         return originals
@@ -71,15 +83,19 @@ def _boost_concurrency(cfg: AppConfig, provider: str, new_limit: int) -> list[tu
         conn.close()
 
 
-def _restore_concurrency(cfg: AppConfig, originals: list[tuple]):
-    """원래 concurrency_limit로 복원."""
+def _restore_limits(cfg: AppConfig, originals: list[tuple]):
+    """원래 concurrency_limit, rpm_limit로 복원 + 테스트로 쌓인 RPM 카운터 정리."""
     conn = get_db(cfg)
     try:
         cur = conn.cursor()
-        for key_id, limit in originals:
+        for key_id, conc, rpm in originals:
             cur.execute(
-                "UPDATE api_keys SET concurrency_limit=? WHERE api_key_id=?",
-                (limit, key_id),
+                "UPDATE api_keys SET concurrency_limit=?, rpm_limit=? WHERE api_key_id=?",
+                (conc, rpm, key_id),
+            )
+            cur.execute(
+                "DELETE FROM api_key_usage_minute WHERE api_key_id=?",
+                (key_id,),
             )
         conn.commit()
     finally:
@@ -88,25 +104,55 @@ def _restore_concurrency(cfg: AppConfig, originals: list[tuple]):
 
 # ── Burst worker ─────────────────────────────────────────
 
-def _burst_worker(
+def _get_active_keys(cfg: AppConfig, provider: str) -> list[dict]:
+    """해당 provider의 활성 키 목록 조회 (Mock용 — payload 없음)."""
+    conn = get_db(cfg)
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT api_key_id, key_name, concurrency_limit, rpm_limit "
+            "FROM api_keys WHERE provider=? AND is_active=1 ORDER BY priority DESC",
+            (provider,),
+        )
+        return [dict(r) for r in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def _get_active_keys_full(cfg: AppConfig, provider: str) -> list[dict]:
+    """해당 provider의 활성 키 목록 조회 (Real용 — payload 포함)."""
+    conn = get_db(cfg)
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT api_key_id, key_name, key_payload, concurrency_limit, rpm_limit "
+            "FROM api_keys WHERE provider=? AND is_active=1 ORDER BY priority DESC",
+            (provider,),
+        )
+        rows = []
+        for r in cur.fetchall():
+            d = dict(r)
+            try:
+                d["key_payload"] = json.loads(d["key_payload"]) if isinstance(d["key_payload"], str) else d["key_payload"]
+            except Exception:
+                d["key_payload"] = {}
+            rows.append(d)
+        return rows
+    finally:
+        conn.close()
+
+
+def _real_burst_worker(
     cfg: AppConfig,
     test_id: str,
     worker_id: int,
     provider: str,
-    school_id: str,
-    mock_mode: bool,
-    mock_latency: tuple[int, int],
-    lease_wait_sec: int,
-    lease_ttl_sec: int,
+    key_name: str,
+    key_payload: dict,
     barrier: threading.Barrier,
     results_queue: queue.Queue,
 ):
-    """Barrier 동기화 후 1회 요청: acquire → call → release."""
-    user_id = f"__stress_{test_id[:8]}_{worker_id}"
-    session_id = f"stress_sess_{worker_id}"
-    run_id = str(uuid.uuid4())
-
-    # 모든 워커가 준비될 때까지 대기
+    """Real 모드: FIFO 우회, 직접 키를 할당받아 실제 API 호출."""
     try:
         barrier.wait(timeout=30)
     except threading.BrokenBarrierError:
@@ -116,36 +162,71 @@ def _burst_worker(
             "started_at": t_err, "finished_at": t_err,
             "duration_ms": 0, "phase": "total",
             "status": "error", "error_text": "barrier broken",
-            "provider": provider, "key_name": None,
+            "provider": provider, "key_name": key_name,
         })
         return
 
     started_at = _now_iso()
     t0 = time.time()
-    lease: Optional[Lease] = None
+    status = "success"
+    error_text = None
+
+    try:
+        _call_real_api(cfg, provider, key_payload)
+    except Exception as e:
+        status = "error"
+        error_text = f"{type(e).__name__}: {e}"
+
+    duration_ms = int((time.time() - t0) * 1000)
+    results_queue.put({
+        "test_id": test_id, "worker_id": worker_id, "request_seq": 1,
+        "started_at": started_at, "finished_at": _now_iso(),
+        "duration_ms": duration_ms, "phase": "total",
+        "status": status, "error_text": error_text,
+        "provider": provider, "key_name": key_name,
+    })
+
+
+def _mock_realistic_worker(
+    cfg: AppConfig,
+    test_id: str,
+    worker_id: int,
+    provider: str,
+    school_id: str,
+    delay_sec: float,
+    lease_wait_sec: int,
+    lease_ttl_sec: int,
+    mock_latency: tuple[int, int],
+    results_queue: queue.Queue,
+):
+    """Mock + FIFO 워커: acquire_lease → mock sleep (API 대신) → release.
+
+    알고리즘 검증용: FIFO 대기열·키 배정 로직을 실제로 실행하되,
+    API 호출 없이 mock latency로 대체.
+    """
+    time.sleep(delay_sec)
+
+    user_id = f"__stress_{test_id[:8]}_{worker_id}"
+    session_id = f"stress_sess_{worker_id}"
+    run_id = str(uuid.uuid4())
+
+    started_at = _now_iso()
+    t0 = time.time()
+    lease = None
     status = "success"
     error_text = None
     key_name = None
 
     try:
-        # 1) acquire lease
         lease = acquire_lease(
             cfg, provider=provider, run_id=run_id,
             user_id=user_id, session_id=session_id, school_id=school_id,
             wait=True, max_wait_sec=lease_wait_sec, lease_ttl_sec=lease_ttl_sec,
         )
         key_name = lease.key_name
-
-        # 2) API call (mock or real)
-        if mock_mode:
-            time.sleep(random.uniform(mock_latency[0] / 1000, mock_latency[1] / 1000))
-        else:
-            # Real mode: 실제 provider API 호출
-            _call_real_api(cfg, provider, lease.key_payload)
-
-        # 3) release
+        # API 호출 대신 mock sleep
+        time.sleep(random.uniform(mock_latency[0] / 1000, mock_latency[1] / 1000))
         release_lease(cfg, lease.lease_id, state="released")
-
     except TimeoutError:
         status = "timeout"
         error_text = "lease acquire timeout"
@@ -159,25 +240,180 @@ def _burst_worker(
                 pass
 
     duration_ms = int((time.time() - t0) * 1000)
-    finished_at = _now_iso()
     results_queue.put({
         "test_id": test_id, "worker_id": worker_id, "request_seq": 1,
-        "started_at": started_at, "finished_at": finished_at,
+        "started_at": started_at, "finished_at": _now_iso(),
         "duration_ms": duration_ms, "phase": "total",
         "status": status, "error_text": error_text,
         "provider": provider, "key_name": key_name,
     })
 
 
+def _realistic_worker(
+    cfg: AppConfig,
+    test_id: str,
+    worker_id: int,
+    provider: str,
+    school_id: str,
+    delay_sec: float,
+    lease_wait_sec: int,
+    lease_ttl_sec: int,
+    results_queue: queue.Queue,
+):
+    """Realistic 모드: 지정된 delay 후 FIFO acquire → 실제 API 호출 → release.
+
+    실제 운영 환경처럼 학생들이 산발적으로 요청하는 패턴을 시뮬레이션.
+    """
+    # 랜덤 딜레이 (60초 내 분산)
+    time.sleep(delay_sec)
+
+    user_id = f"__stress_{test_id[:8]}_{worker_id}"
+    session_id = f"stress_sess_{worker_id}"
+    run_id = str(uuid.uuid4())
+
+    started_at = _now_iso()
+    t0 = time.time()
+    lease = None
+    status = "success"
+    error_text = None
+    key_name = None
+
+    try:
+        lease = acquire_lease(
+            cfg, provider=provider, run_id=run_id,
+            user_id=user_id, session_id=session_id, school_id=school_id,
+            wait=True, max_wait_sec=lease_wait_sec, lease_ttl_sec=lease_ttl_sec,
+        )
+        key_name = lease.key_name
+        _call_real_api(cfg, provider, lease.key_payload)
+        release_lease(cfg, lease.lease_id, state="released")
+    except TimeoutError:
+        status = "timeout"
+        error_text = "lease acquire timeout"
+    except Exception as e:
+        status = "error"
+        error_text = f"{type(e).__name__}: {e}"
+        if lease:
+            try:
+                release_lease(cfg, lease.lease_id, state="error")
+            except Exception:
+                pass
+
+    duration_ms = int((time.time() - t0) * 1000)
+    results_queue.put({
+        "test_id": test_id, "worker_id": worker_id, "request_seq": 1,
+        "started_at": started_at, "finished_at": _now_iso(),
+        "duration_ms": duration_ms, "phase": "total",
+        "status": status, "error_text": error_text,
+        "provider": provider, "key_name": key_name,
+    })
+
+
+def _run_mock_workers(
+    cfg: AppConfig,
+    test_id: str,
+    provider: str,
+    num_users: int,
+    plan_config: StressPlanConfig,
+    results_q: queue.Queue,
+) -> list[threading.Thread]:
+    """Mock 워커: FIFO acquire → mock sleep → release (burst_window 내 분산).
+
+    실제 운영과 동일한 FIFO 대기열·키 배정 로직을 검증하되,
+    API 호출 없이 mock latency로 대체.
+    """
+    school_id = "stress_test"
+    window = plan_config.burst_window_sec
+    threads = []
+    for i in range(num_users):
+        delay = random.uniform(0, window)
+        t = threading.Thread(
+            target=_mock_realistic_worker,
+            args=(
+                cfg, test_id, i, provider, school_id, delay,
+                plan_config.lease_wait_sec, plan_config.lease_ttl_sec,
+                (plan_config.mock_latency_min_ms, plan_config.mock_latency_max_ms),
+                results_q,
+            ),
+            daemon=True,
+        )
+        t.start()
+        threads.append(t)
+    return threads
+
+
+def _run_burst_workers(
+    cfg: AppConfig,
+    test_id: str,
+    provider: str,
+    num_users: int,
+    plan_config: StressPlanConfig,
+    results_q: queue.Queue,
+) -> list[threading.Thread]:
+    """Burst 워커: FIFO 우회, 직접 키 배분 후 동시 API 호출."""
+    keys = _get_active_keys_full(cfg, provider)
+    if not keys:
+        raise RuntimeError(f"provider '{provider}'에 활성 키가 없습니다")
+
+    # capacity 한도 일시 상향
+    originals = _boost_limits(cfg, provider, num_users)
+
+    barrier = threading.Barrier(num_users, timeout=30)
+    threads = []
+    for i in range(num_users):
+        assigned = keys[i % len(keys)]
+        t = threading.Thread(
+            target=_real_burst_worker,
+            args=(
+                cfg, test_id, i, provider,
+                assigned["key_name"], assigned["key_payload"],
+                barrier, results_q,
+            ),
+            daemon=True,
+        )
+        t.start()
+        threads.append(t)
+
+    return threads, originals
+
+
+def _run_realistic_workers(
+    cfg: AppConfig,
+    test_id: str,
+    provider: str,
+    num_users: int,
+    plan_config: StressPlanConfig,
+    results_q: queue.Queue,
+) -> list[threading.Thread]:
+    """Realistic 워커: burst_window 내 랜덤 분산 요청 (FIFO 사용)."""
+    school_id = "stress_test"
+    window = plan_config.burst_window_sec
+    threads = []
+    for i in range(num_users):
+        delay = random.uniform(0, window)
+        t = threading.Thread(
+            target=_realistic_worker,
+            args=(
+                cfg, test_id, i, provider, school_id, delay,
+                plan_config.lease_wait_sec, plan_config.lease_ttl_sec,
+                results_q,
+            ),
+            daemon=True,
+        )
+        t.start()
+        threads.append(t)
+    return threads
+
+
 def _call_real_api(cfg: AppConfig, provider: str, key_payload: dict):
     """Provider별 경량 테스트 요청."""
-    if not key_payload or "api_key" not in key_payload:
-        raise ValueError(f"key_payload에 api_key가 없습니다: {key_payload}")
+    if not key_payload:
+        raise ValueError("key_payload가 비어있습니다")
     if provider == "google_imagen":
-        from providers.google_imagen import generate_images
-        generate_images(
+        from providers.google_imagen import gemini_generate
+        gemini_generate(
             api_key=key_payload["api_key"],
-            prompt="A simple red circle on white background",
+            parts=[{"text": "A simple red circle on white background"}],
             model=cfg.google_imagen_model,
             num_images=1,
         )
@@ -201,8 +437,34 @@ def _call_real_api(cfg: AppConfig, provider: str, key_payload: dict):
             text="Hello stress test",
             model_id=cfg.elevenlabs_model,
         )
+    elif provider == "kling":
+        from providers.kling import submit_image
+        ak = key_payload.get("access_key", "")
+        sk = key_payload.get("secret_key", "")
+        if not ak or not sk:
+            raise ValueError("kling key_payload에 access_key/secret_key가 없습니다")
+        submit_image(
+            access_key=ak,
+            secret_key=sk,
+            endpoint="https://api.klingai.com/v1/images/generations",
+            payload={"model_name": cfg.kling_model, "prompt": "A simple red circle",
+                     "image_num": 1, "aspect_ratio": "1:1"},
+        )
+    elif provider == "midjourney":
+        # useapi.net Midjourney: 키풀에서 api_key(토큰)과 channel을 받아 경량 테스트
+        _token = key_payload.get("api_key", "")
+        _channel = key_payload.get("channel", "")
+        if not _token:
+            raise ValueError("midjourney key_payload에 api_key가 없습니다")
+        from providers.useapi_mj import imagine
+        imagine(
+            api_token=_token,
+            prompt="A simple red circle on white background --fast",
+            channel=_channel,
+            timeout=120,
+        )
     else:
-        # 알 수 없는 provider: mock 처리
+        # 미지원 provider (google_veo, grok 등 동영상): mock 처리
         time.sleep(random.uniform(0.1, 0.5))
 
 
@@ -293,6 +555,32 @@ def _compute_summary(cfg: AppConfig, test_id: str) -> dict:
         )
         key_dist = {row["key_name"]: row["c"] for row in cur.fetchall()}
 
+        # 키별 상세 메트릭
+        cur.execute("""
+            SELECT key_name,
+                   COUNT(*) AS total,
+                   SUM(CASE WHEN status='success' THEN 1 ELSE 0 END) AS ok,
+                   SUM(CASE WHEN status='timeout' THEN 1 ELSE 0 END) AS tm,
+                   SUM(CASE WHEN status='error' THEN 1 ELSE 0 END) AS er,
+                   AVG(CASE WHEN status='success' THEN duration_ms END) AS avg_ms
+            FROM stress_test_samples
+            WHERE test_id=? AND key_name IS NOT NULL
+            GROUP BY key_name
+        """, (test_id,))
+        key_details = {}
+        for row in cur.fetchall():
+            kn = row["key_name"]
+            kt = int(row["total"])
+            ko = int(row["ok"])
+            key_details[kn] = {
+                "requests": kt,
+                "successes": ko,
+                "timeouts": int(row["tm"]),
+                "errors": int(row["er"]),
+                "success_rate": round(ko / kt * 100, 1) if kt else 0,
+                "avg_latency_ms": int(row["avg_ms"] or 0),
+            }
+
         return {
             "total_requests": total, "successes": successes,
             "timeouts": timeouts, "errors": errors,
@@ -301,6 +589,7 @@ def _compute_summary(cfg: AppConfig, test_id: str) -> dict:
             "avg_latency_ms": avg_ms, "p50_ms": p50, "p95_ms": p95, "p99_ms": p99,
             "max_latency_ms": durations[-1] if durations else 0,
             "key_distribution": key_dist,
+            "key_details": key_details,
         }
     finally:
         conn.close()
@@ -319,7 +608,9 @@ def _run_single_round(
     progress: dict,
     stop_event: threading.Event,
 ) -> dict:
-    """N명 동시 burst 1라운드 실행. Returns summary dict."""
+    """N명 라운드 실행 (mock/burst/realistic). Returns summary dict."""
+    num_users = max(1, min(num_users, 200))
+    mode = plan_config.test_mode
     round_label = f"{provider}_{num_users}"
 
     # DB에 라운드 기록
@@ -328,7 +619,8 @@ def _run_single_round(
         t = _now_iso()
         config_snapshot = {
             "num_users": num_users, "provider": provider,
-            "mock_mode": plan_config.mock_mode,
+            "test_mode": mode,
+            "mock_mode": mode == "mock",  # backward compat for viewer report
             "mock_latency_min_ms": plan_config.mock_latency_min_ms,
             "mock_latency_max_ms": plan_config.mock_latency_max_ms,
         }
@@ -343,36 +635,34 @@ def _run_single_round(
     finally:
         conn.close()
 
-    # concurrency 제한 해제
-    originals = _boost_concurrency(cfg, provider, max(num_users + 10, 100))
+    results_q: queue.Queue = queue.Queue()
+    threads = []
 
-    try:
-        results_q: queue.Queue = queue.Queue()
-        barrier = threading.Barrier(num_users, timeout=30)
-        threads = []
+    join_timeout = plan_config.burst_window_sec + plan_config.lease_wait_sec + 30
 
-        for wid in range(num_users):
-            t = threading.Thread(
-                target=_burst_worker,
-                args=(cfg, test_id, wid, provider,
-                      "default", plan_config.mock_mode,
-                      (plan_config.mock_latency_min_ms, plan_config.mock_latency_max_ms),
-                      plan_config.lease_wait_sec, plan_config.lease_ttl_sec,
-                      barrier, results_q),
-                daemon=True,
-            )
-            threads.append(t)
-            t.start()
-
-        # 완료 대기
+    if mode == "mock":
+        # Mock: FIFO 경유 + mock sleep (알고리즘 검증)
+        threads = _run_mock_workers(cfg, test_id, provider, num_users, plan_config, results_q)
         for th in threads:
-            th.join(timeout=plan_config.lease_wait_sec + 10)
-
+            th.join(timeout=join_timeout)
         _flush_samples(cfg, results_q)
         _cleanup_stress_artifacts(cfg, test_id)
-    finally:
-        # concurrency 복원
-        _restore_concurrency(cfg, originals)
+
+    elif mode == "burst":
+        # Burst: FIFO 우회, capacity 기반 배분 후 동시 API 호출
+        threads, boost_originals = _run_burst_workers(cfg, test_id, provider, num_users, plan_config, results_q)
+        for th in threads:
+            th.join(timeout=plan_config.lease_wait_sec + 30)
+        _flush_samples(cfg, results_q)
+        _restore_limits(cfg, boost_originals)
+
+    elif mode == "realistic":
+        # Realistic: FIFO 통해 burst_window 내 랜덤 순차 요청
+        threads = _run_realistic_workers(cfg, test_id, provider, num_users, plan_config, results_q)
+        for th in threads:
+            th.join(timeout=join_timeout)
+        _flush_samples(cfg, results_q)
+        _cleanup_stress_artifacts(cfg, test_id)
 
     summary = _compute_summary(cfg, test_id)
 
@@ -431,7 +721,7 @@ def run_stress_plan(
 
         test_id = str(uuid.uuid4())
 
-        logger.info("Plan %s: round %d/%d — %s", plan_id, i + 1, len(rounds), round_label)
+        _log.info("Plan %s: round %d/%d — %s", plan_id, i + 1, len(rounds), round_label)
 
         summary = _run_single_round(
             cfg, test_id, plan_id, provider, num_users,
@@ -447,12 +737,17 @@ def run_stress_plan(
         })
         progress["completed_rounds"] = i + 1
 
-        # 라운드 간 1초 휴식 (DB 안정화)
+        # 라운드 간 휴식: burst=60초 (RPM 리셋), mock/realistic=5초 (cleanup 여유)
         if not stop_event.is_set() and i < len(rounds) - 1:
-            time.sleep(1)
+            wait_sec = 5 if plan_config.test_mode == "mock" else 60
+            progress["current_round"] = f"다음 라운드 대기 ({wait_sec}s)..."
+            for _ in range(wait_sec):
+                if stop_event.is_set():
+                    break
+                time.sleep(1)
 
     progress["status"] = "cancelled" if stop_event.is_set() else "completed"
-    logger.info("Plan %s finished: %s", plan_id, progress["status"])
+    _log.info("Plan %s finished: %s", plan_id, progress["status"])
 
 
 # ── DB query helpers ─────────────────────────────────────
@@ -480,22 +775,55 @@ def list_stress_test_runs(cfg: AppConfig, limit: int = 50, plan_id: str | None =
         conn.close()
 
 
-def list_plan_ids(cfg: AppConfig, limit: int = 20) -> list[dict]:
-    """plan_id별 최신 기록 조회."""
+def list_plan_ids(cfg: AppConfig, limit: int = 20, mock_mode: bool | None = None,
+                   test_mode: str | None = None) -> list[dict]:
+    """plan_id별 최신 기록 조회.
+
+    test_mode: "mock" | "burst" | "realistic" 필터 (우선).
+    mock_mode: True=Mock만, False=Real만 (하위호환).
+    """
     conn = get_db(cfg)
     try:
         cur = conn.cursor()
         cur.execute("""
             SELECT plan_id, MIN(created_at) AS started_at,
                    COUNT(*) AS round_count,
-                   GROUP_CONCAT(DISTINCT round_label) AS rounds
+                   GROUP_CONCAT(DISTINCT round_label) AS rounds,
+                   MIN(config_json) AS first_config_json
             FROM stress_test_runs
             WHERE plan_id IS NOT NULL
             GROUP BY plan_id
             ORDER BY started_at DESC
             LIMIT ?
-        """, (limit,))
-        return _to_dicts(cur.fetchall())
+        """, (limit * 5,))  # 필터링 전 여유분 조회
+        rows = _to_dicts(cur.fetchall())
+
+        result = []
+        for r in rows:
+            cj = {}
+            try:
+                cj = json.loads(r.get("first_config_json", "{}") or "{}")
+            except Exception:
+                pass
+            r_test_mode = cj.get("test_mode", "mock" if cj.get("mock_mode", True) else "burst")
+            r["test_mode"] = r_test_mode
+            r["mock_mode"] = cj.get("mock_mode", True)
+            r.pop("first_config_json", None)
+
+            # test_mode 필터 (우선)
+            if test_mode is not None:
+                if r_test_mode != test_mode:
+                    continue
+            elif mock_mode is not None:
+                is_mock = r["mock_mode"]
+                if is_mock != mock_mode:
+                    continue
+
+            result.append(r)
+            if len(result) >= limit:
+                break
+
+        return result
     finally:
         conn.close()
 
@@ -553,7 +881,7 @@ def delete_stress_test_run(cfg: AppConfig, test_id: str):
 def list_stress_rounds_by_provider(cfg: AppConfig, provider: str) -> list[dict]:
     """특정 provider의 모든 완료된 라운드를 조회 (최신순).
 
-    json_extract 대신 Python 측 필터링 (libSQL 호환성).
+    json_extract 대신 Python 측 필터링.
     """
     conn = get_db(cfg)
     try:
@@ -580,7 +908,7 @@ def list_stress_rounds_by_provider(cfg: AppConfig, provider: str) -> list[dict]:
 def list_tested_providers(cfg: AppConfig) -> list[str]:
     """테스트 데이터가 있는 provider 목록.
 
-    json_extract 대신 Python 측 파싱 (libSQL 호환성).
+    json_extract 대신 Python 측 파싱.
     """
     conn = get_db(cfg)
     try:
@@ -598,7 +926,10 @@ def list_tested_providers(cfg: AppConfig) -> list[str]:
             p = cfg_json.get("provider")
             if p:
                 providers.add(p)
-        return sorted(providers)
+        # registry 탭 순서 기준 정렬
+        ordered = [p for p in PROVIDER_ORDER if p in providers]
+        ordered += sorted(providers - set(ordered))
+        return ordered
     finally:
         conn.close()
 

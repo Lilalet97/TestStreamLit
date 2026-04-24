@@ -8,10 +8,13 @@ class TabSpec:
     title: str
     required_features: Set[str]
     render: Callable[[Any, Any], None]  # (cfg, sidebar) 받는 render 함수로 변경
+    locked: bool = False
 
 def get_all_tabs() -> List[TabSpec]:
     # 여기에서만 탭을 등록한다 (추가 시 이 파일만 수정)
     from ui.tabs.mj_tab import TAB as MJ_TAB
+    from ui.tabs.mj_free_tab import TAB as MJ_FREE_TAB
+    from ui.tabs.mj_paid_tab import TAB as MJ_PAID_TAB
     from ui.tabs.gpt_tab import TAB as GPT_TAB
     from ui.tabs.suno_tab import TAB as SUNO_TAB
     from ui.tabs.kling_tab import TAB as KLING_TAB
@@ -21,7 +24,9 @@ def get_all_tabs() -> List[TabSpec]:
     from ui.tabs.nanobanana_pro_tab import TAB as NANOBANANA_PRO_TAB
     from ui.tabs.nanobanana_2_tab import TAB as NANOBANANA_2_TAB
     from ui.tabs.kling_grok_tab import TAB as KLING_GROK_TAB
+    from ui.tabs.kling_ltx_tab import TAB as KLING_LTX_TAB
     from ui.tabs.gallery_tab import TAB as GALLERY_TAB
+    from ui.tabs.locked_tabs import LOCKED_TABS
 
     def _to_spec(d: Dict) -> TabSpec:
         return TabSpec(
@@ -29,9 +34,14 @@ def get_all_tabs() -> List[TabSpec]:
             title=d["title"],
             required_features=set(d.get("required_features") or set()),
             render=d["render"],
+            locked=d.get("locked", False),
         )
 
-    return [_to_spec(GPT_TAB), _to_spec(MJ_TAB), _to_spec(NANOBANANA_TAB), _to_spec(NANOBANANA_2_TAB), _to_spec(NANOBANANA_PRO_TAB), _to_spec(KLING_TAB), _to_spec(KLING_VEO_TAB), _to_spec(KLING_GROK_TAB), _to_spec(ELEVENLABS_TAB), _to_spec(SUNO_TAB), _to_spec(GALLERY_TAB)]
+    active_tabs = [_to_spec(GPT_TAB), _to_spec(MJ_TAB), _to_spec(MJ_FREE_TAB), _to_spec(MJ_PAID_TAB), _to_spec(NANOBANANA_TAB), _to_spec(NANOBANANA_2_TAB), _to_spec(NANOBANANA_PRO_TAB), _to_spec(KLING_TAB), _to_spec(KLING_VEO_TAB), _to_spec(KLING_GROK_TAB), _to_spec(KLING_LTX_TAB), _to_spec(ELEVENLABS_TAB), _to_spec(SUNO_TAB), _to_spec(GALLERY_TAB)]
+    locked = [_to_spec(t) for t in LOCKED_TABS]
+    # 잠금 탭은 Gallery 앞에 삽입
+    gallery = active_tabs.pop()
+    return active_tabs + locked + [gallery]
 
 
 def filter_tabs(all_tabs: List[TabSpec], enabled_features: Set[str]) -> List[TabSpec]:

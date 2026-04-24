@@ -95,11 +95,15 @@ def generate_video(
 
     resp = requests.post(url, headers=headers, json=payload, timeout=60)
     if resp.status_code != 200:
+        _safe = resp.text[:300].replace(api_key, "***")
         raise RuntimeError(
-            f"Veo submit 오류 ({resp.status_code}): {resp.text[:300]}"
+            f"Veo submit 오류 ({resp.status_code}): {_safe}"
         )
 
-    data = resp.json()
+    try:
+        data = resp.json()
+    except (ValueError, Exception):
+        raise RuntimeError(f"Veo submit: 응답 JSON 파싱 실패 (status={resp.status_code})")
     operation_name = data.get("name")
     if not operation_name:
         raise RuntimeError("Veo submit 응답에 operation name이 없습니다.")
@@ -108,20 +112,36 @@ def generate_video(
     # [VERTEX AI] poll_url = get_vertex_url(project_id, location, model, "fetchPredictOperation")
     # [VERTEX AI] poll은 POST + {"operationName": operation_name} 방식
     poll_base = "https://generativelanguage.googleapis.com/v1beta"
-    poll_url = f"{poll_base}/{operation_name}?key={api_key}"
+    poll_url = f"{poll_base}/{operation_name}"
+
+    _MAX_VIDEO_BYTES = 200 * 1024 * 1024  # 200MB 제한
 
     deadline = time.time() + max_poll_sec
+    consecutive_errors = 0
     while time.time() < deadline:
         time.sleep(poll_interval)
 
-        poll_resp = requests.get(poll_url, timeout=30)
+        poll_resp = requests.get(poll_url, params={"key": api_key}, timeout=30)
         # [VERTEX AI] poll_headers = get_auth_headers(sa_json)
         # [VERTEX AI] poll_resp = requests.post(poll_url, headers=poll_headers,
         # [VERTEX AI]     json={"operationName": operation_name}, timeout=30)
         if poll_resp.status_code != 200:
+            consecutive_errors += 1
+            if consecutive_errors >= 5 and poll_resp.status_code in (401, 403):
+                raise RuntimeError(f"Veo 폴링 인증 오류 ({poll_resp.status_code})")
+            if poll_resp.status_code == 429:
+                time.sleep(poll_interval)  # 레이트리밋 시 추가 대기
+            elif poll_resp.status_code >= 500:
+                pass  # 서버 에러 → 재시도
+            elif poll_resp.status_code in (400, 404):
+                raise RuntimeError(f"Veo 폴링 오류 ({poll_resp.status_code}): {poll_resp.text[:200]}")
             continue
+        consecutive_errors = 0
 
-        poll_data = poll_resp.json()
+        try:
+            poll_data = poll_resp.json()
+        except (ValueError, requests.exceptions.JSONDecodeError):
+            continue
 
         # 에러 체크
         error = poll_data.get("error")
@@ -143,12 +163,29 @@ def generate_video(
             uri = sample.get("video", {}).get("uri", "")
             if uri:
                 # AI Studio URI는 API 키 인증 필요
-                sep = "&" if "?" in uri else "?"
-                dl = requests.get(f"{uri}{sep}key={api_key}", timeout=120)
+                dl = requests.get(
+                    uri, params={"key": api_key}, timeout=120, stream=True,
+                )
                 if dl.status_code == 200:
+                    try:
+                        content_len = int(dl.headers.get("Content-Length", 0))
+                    except (ValueError, TypeError):
+                        content_len = 0
+                    if content_len > _MAX_VIDEO_BYTES:
+                        dl.close()
+                        raise RuntimeError(f"비디오 크기 초과: {content_len // (1024*1024)}MB")
+                    chunks = []
+                    downloaded = 0
+                    for chunk in dl.iter_content(chunk_size=1024 * 1024):
+                        downloaded += len(chunk)
+                        if downloaded > _MAX_VIDEO_BYTES:
+                            dl.close()
+                            raise RuntimeError(f"비디오 크기 초과: {downloaded // (1024*1024)}MB")
+                        chunks.append(chunk)
+                    content = b"".join(chunks)
                     import base64
                     ct = dl.headers.get("Content-Type", "video/mp4")
-                    b64 = base64.b64encode(dl.content).decode()
+                    b64 = base64.b64encode(content).decode()
                     urls.append(f"data:{ct};base64,{b64}")
 
         # 시도 2: Vertex AI videos 형식 (fallback)

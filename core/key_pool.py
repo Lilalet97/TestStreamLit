@@ -3,28 +3,28 @@ import os
 import time
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple, Callable
 
 from core.config import AppConfig
-from core.database import get_db, throttled_sync, force_sync
+from core.database import get_db, get_db_isolated
 
 
 # ---------- time helpers ----------
 def now_iso() -> str:
-    return datetime.utcnow().isoformat() + "Z"
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 def minute_bucket_iso(dt: Optional[datetime] = None) -> str:
-    dt = dt or datetime.utcnow()
+    dt = dt or datetime.now(timezone.utc)
     dt = dt.replace(second=0, microsecond=0)
-    return dt.isoformat() + "Z"
+    return dt.isoformat().replace("+00:00", "Z")
 
 def day_bucket_iso(dt: Optional[datetime] = None) -> str:
-    dt = dt or datetime.utcnow()
+    dt = dt or datetime.now(timezone.utc)
     return dt.strftime("%Y-%m-%d")
 
 def _seconds_to_next_minute(dt: Optional[datetime] = None) -> int:
-    dt = dt or datetime.utcnow()
+    dt = dt or datetime.now(timezone.utc)
     next_min = dt.replace(second=0, microsecond=0) + timedelta(minutes=1)
     return max(1, int((next_min - dt).total_seconds()))
 
@@ -37,7 +37,7 @@ class Txn:
     def __exit__(self, exc_type, exc, tb):
         if exc_type is None:
             self.conn.execute("COMMIT;")
-            throttled_sync()  # 트랜잭션 커밋 후 Turso 동기화
+            pass
         else:
             self.conn.execute("ROLLBACK;")
         return False
@@ -53,6 +53,9 @@ class Lease:
     key_payload: Dict[str, Any]
     acquired_at: str
     ttl_sec: int
+
+    def __repr__(self):
+        return f"Lease(lease_id={self.lease_id!r}, api_key_id={self.api_key_id}, provider={self.provider!r}, key_name={self.key_name!r}, key_payload=<REDACTED>)"
 
 
 # ---------- config/seeding ----------
@@ -209,11 +212,17 @@ def seed_keys(cfg: AppConfig) -> None:
 
                 # provider별 payload 구성
                 if provider in ("openai", "elevenlabs",
-                                "google_imagen", "google_veo", "grok"):
+                                "google_imagen", "google_veo", "grok",
+                                "ltx_video"):
                     api_key = (item.get("api_key") or "").strip()
                     if not api_key:
                         continue
                     payload = {"api_key": api_key}
+                elif provider == "midjourney":
+                    api_key = (item.get("api_key") or "").strip()
+                    if not api_key:
+                        continue
+                    payload = {"api_key": api_key, "channel": (item.get("channel") or "").strip()}
                     # [VERTEX AI] sa_json 기반 payload — 결제 등록 후 복원
                     # if provider in ("google_imagen", "google_veo"):
                     #     sa_json = (item.get("sa_json") or "").strip()
@@ -241,7 +250,6 @@ def seed_keys(cfg: AppConfig) -> None:
                       rpd_limits=excluded.rpd_limits,
                       priority=excluded.priority,
                       tenant_scope=excluded.tenant_scope,
-                      is_active=excluded.is_active,
                       expires_at=excluded.expires_at,
                       updated_at=excluded.updated_at
                 """, (
@@ -281,7 +289,7 @@ def cleanup_orphan_leases(cfg: AppConfig, lease_ttl_sec: Optional[int] = None) -
     서버 다운/예외로 release 못한 lease를 TTL로 만료 처리.
     """
     ttl = int(lease_ttl_sec or cfg.active_job_ttl_sec or 120)
-    cutoff = (datetime.utcnow() - timedelta(seconds=ttl)).isoformat() + "Z"
+    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=ttl)).isoformat().replace("+00:00", "Z")
 
     conn = get_db(cfg)
     try:
@@ -295,14 +303,14 @@ def cleanup_orphan_leases(cfg: AppConfig, lease_ttl_sec: Optional[int] = None) -
             """, (now_iso(), cutoff))
 
             # 오래된 minute bucket 정리 (30분 이상)
-            old_cut = (datetime.utcnow() - timedelta(minutes=30)).replace(second=0, microsecond=0).isoformat() + "Z"
+            old_cut = (datetime.now(timezone.utc) - timedelta(minutes=30)).replace(second=0, microsecond=0).isoformat().replace("+00:00", "Z")
             cur.execute("""
                 DELETE FROM api_key_usage_minute
                 WHERE minute_bucket < ?
             """, (old_cut,))
 
             # 오래된 waiters 정리 (6시간 이상 waiting이면 expired)
-            w_cut = (datetime.utcnow() - timedelta(hours=6)).isoformat() + "Z"
+            w_cut = (datetime.now(timezone.utc) - timedelta(hours=6)).isoformat().replace("+00:00", "Z")
             cur.execute("""
                 UPDATE api_key_waiters
                 SET state='expired', updated_at=?
@@ -310,7 +318,7 @@ def cleanup_orphan_leases(cfg: AppConfig, lease_ttl_sec: Optional[int] = None) -
             """, (now_iso(), w_cut))
 
             # 오래된 daily bucket 정리 (7일 이상)
-            old_day = (datetime.utcnow() - timedelta(days=7)).strftime("%Y-%m-%d")
+            old_day = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
             cur.execute("""
                 DELETE FROM api_key_usage_daily
                 WHERE day_bucket < ?
@@ -368,55 +376,72 @@ def _waiter_head_and_pos(cur, provider: str, run_id: str) -> Tuple[Optional[str]
 def _select_best_key(cur, provider: str, school_id: str,
                      lease_cutoff_iso: str, bucket: str, request_units: int,
                      excluded_key_ids: Optional[set] = None):
-    # active leases count
-    # usage count in current minute bucket
+    import logging as _lg
+
+    # Phase 1: 단순 쿼리로 후보 키 목록 가져오기
     excl = excluded_key_ids or set()
-    # SQLite placeholder: 제외할 키 목록 (없으면 0으로 절대 매칭 안 됨)
     excl_list = list(excl) if excl else [0]
     excl_ph = ",".join("?" for _ in excl_list)
+
     cur.execute(f"""
-        WITH active AS (
-          SELECT api_key_id, COUNT(*) AS active_count
-          FROM api_key_leases
-          WHERE provider=? AND state='active' AND last_heartbeat_at >= ?
-          GROUP BY api_key_id
-        ),
-        usage AS (
-          SELECT api_key_id, count AS rpm_count
-          FROM api_key_usage_minute
-          WHERE minute_bucket=?
-        )
-        SELECT
-          k.api_key_id, k.provider, k.key_name, k.key_payload,
-          k.concurrency_limit, k.rpm_limit, k.priority, k.tenant_scope,
-          k.rpd_limits,
-          COALESCE(a.active_count, 0) AS active_count,
-          COALESCE(u.rpm_count, 0) AS rpm_count
-        FROM api_keys k
-        LEFT JOIN active a ON a.api_key_id = k.api_key_id
-        LEFT JOIN usage  u ON u.api_key_id = k.api_key_id
-        WHERE k.provider=?
-          AND k.is_active=1
-          AND k.api_key_id NOT IN ({excl_ph})
-          AND (k.expires_at IS NULL OR k.expires_at='' OR k.expires_at > ?)
-          AND COALESCE(a.active_count, 0) < k.concurrency_limit
-          AND (
-              k.rpm_limit IS NULL OR k.rpm_limit <= 0
-              OR (COALESCE(u.rpm_count, 0) + ?) <= k.rpm_limit
-          )
-          AND (
-              k.tenant_scope IS NULL OR k.tenant_scope='' OR k.tenant_scope='*'
-              OR instr(',' || k.tenant_scope || ',', ',' || ? || ',') > 0
-          )
-        ORDER BY
-          (1.0 * COALESCE(a.active_count,0) / k.concurrency_limit) ASC,
-          (CASE WHEN k.rpm_limit IS NULL OR k.rpm_limit <= 0 THEN 0
-                ELSE 1.0 * COALESCE(u.rpm_count,0) / k.rpm_limit END) ASC,
-          k.priority DESC,
-          k.api_key_id ASC
-        LIMIT 1
-    """, (provider, lease_cutoff_iso, bucket, *excl_list, provider, now_iso(), request_units, school_id))
-    return cur.fetchone()
+        SELECT api_key_id, provider, key_name, key_payload,
+               concurrency_limit, rpm_limit, priority, tenant_scope, rpd_limits
+        FROM api_keys
+        WHERE provider=? AND is_active=1
+          AND api_key_id NOT IN ({excl_ph})
+          AND (expires_at IS NULL OR expires_at='' OR expires_at > ?)
+          AND (tenant_scope IS NULL OR tenant_scope='' OR tenant_scope='*'
+               OR instr(',' || tenant_scope || ',', ',' || ? || ',') > 0)
+        ORDER BY priority DESC, api_key_id ASC
+    """, (provider, *excl_list, now_iso(), school_id))
+    candidates = cur.fetchall()
+
+    if not candidates:
+        return None
+
+    # Phase 2: 각 후보에 대해 concurrency + RPM 체크
+    for row in candidates:
+        kid = row["api_key_id"] if isinstance(row, dict) else row[0]
+        climit = row["concurrency_limit"] if isinstance(row, dict) else row[4]
+        rlimit = row["rpm_limit"] if isinstance(row, dict) else row[5]
+
+        # active lease 수
+        cur.execute(
+            "SELECT COUNT(*) FROM api_key_leases WHERE api_key_id=? AND state='active' AND last_heartbeat_at >= ?",
+            (kid, lease_cutoff_iso))
+        ac_row = cur.fetchone()
+        ac = ac_row[0] if isinstance(ac_row, (tuple, list)) else (ac_row.get("COUNT(*)", 0) if isinstance(ac_row, dict) else 0)
+
+        if ac >= climit:
+            continue
+
+        # RPM 체크
+        if rlimit and int(rlimit) > 0:
+            cur.execute(
+                "SELECT count FROM api_key_usage_minute WHERE api_key_id=? AND minute_bucket=?",
+                (kid, bucket))
+            rpm_row = cur.fetchone()
+            rpm = 0
+            if rpm_row:
+                rpm = rpm_row[0] if isinstance(rpm_row, (tuple, list)) else (rpm_row.get("count", 0) if isinstance(rpm_row, dict) else 0)
+            if (rpm + int(request_units)) > int(rlimit):
+                continue
+
+        # 통과 → active_count, rpm_count 추가
+        if isinstance(row, dict):
+            row["active_count"] = ac
+            row["rpm_count"] = rpm if (rlimit and int(rlimit) > 0) else 0
+        else:
+            # tuple인 경우 dict로 변환
+            cols = ["api_key_id", "provider", "key_name", "key_payload",
+                    "concurrency_limit", "rpm_limit", "priority", "tenant_scope", "rpd_limits"]
+            row = dict(zip(cols, row))
+            row["active_count"] = ac
+            row["rpm_count"] = 0
+
+        return row
+
+    return None
 
 def _diagnose_block_reason(
     cur,
@@ -430,66 +455,60 @@ def _diagnose_block_reason(
     day: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    _select_best_key()가 None일 때, 막힌 원인이
-    - rpm 때문인지
-    - rpd 때문인지
-    - concurrency 때문인지
-    - scope/만료/비활성 등으로 '키 자체가 없는지'
-    를 최소 비용으로 판별.
+    _select_best_key()가 None일 때, 막힌 원인 판별.
+    CTE 대신 단순 쿼리 + Python 루프.
     """
     cur.execute("""
-        WITH active AS (
-          SELECT api_key_id, COUNT(*) AS active_count
-          FROM api_key_leases
-          WHERE provider=? AND state='active' AND last_heartbeat_at >= ?
-          GROUP BY api_key_id
-        ),
-        usage AS (
-          SELECT api_key_id, count AS rpm_count
-          FROM api_key_usage_minute
-          WHERE minute_bucket=?
-        )
-        SELECT
-          k.api_key_id,
-          k.rpd_limits,
-          COALESCE(a.active_count, 0) < k.concurrency_limit AS conc_ok,
-          (k.rpm_limit IS NULL OR k.rpm_limit <= 0
-           OR (COALESCE(u.rpm_count, 0) + ?) <= k.rpm_limit) AS rpm_ok
-        FROM api_keys k
-        LEFT JOIN active a ON a.api_key_id = k.api_key_id
-        LEFT JOIN usage  u ON u.api_key_id = k.api_key_id
-        WHERE k.provider=?
-          AND k.is_active=1
-          AND (k.expires_at IS NULL OR k.expires_at='' OR k.expires_at > ?)
-          AND (
-              k.tenant_scope IS NULL OR k.tenant_scope='' OR k.tenant_scope='*'
-              OR instr(',' || k.tenant_scope || ',', ',' || ? || ',') > 0
-          )
-    """, (
-        provider, lease_cutoff_iso, bucket,
-        int(request_units),
-        provider, now_iso(), school_id
-    ))
-    rows = cur.fetchall()
-    if not rows:
+        SELECT api_key_id, concurrency_limit, rpm_limit, rpd_limits
+        FROM api_keys
+        WHERE provider=? AND is_active=1
+          AND (expires_at IS NULL OR expires_at='' OR expires_at > ?)
+          AND (tenant_scope IS NULL OR tenant_scope='' OR tenant_scope='*'
+               OR instr(',' || tenant_scope || ',', ',' || ? || ',') > 0)
+    """, (provider, now_iso(), school_id))
+    keys = cur.fetchall()
+    if not keys:
         return {"blocked_by": "no_keys", "total_keys": 0, "conc_ok": 0, "rpm_ok": 0, "rpd_ok": 0, "both_ok": 0}
 
-    total_keys = len(rows)
+    total_keys = len(keys)
     conc_ok = 0
     rpm_ok = 0
     rpd_ok = 0
     all_ok = 0
 
     _day = day or day_bucket_iso()
-    for r in rows:
-        c_ok = bool(r["conc_ok"])
-        r_ok = bool(r["rpm_ok"])
+    for k in keys:
+        kid = k["api_key_id"] if isinstance(k, dict) else k[0]
+        climit = k["concurrency_limit"] if isinstance(k, dict) else k[1]
+        rlimit = k["rpm_limit"] if isinstance(k, dict) else k[2]
+        rpd_lim_raw = k["rpd_limits"] if isinstance(k, dict) else k[3]
+
+        # concurrency 체크
+        cur.execute(
+            "SELECT COUNT(*) FROM api_key_leases WHERE api_key_id=? AND state='active' AND last_heartbeat_at >= ?",
+            (kid, lease_cutoff_iso))
+        ac_row = cur.fetchone()
+        ac = ac_row[0] if isinstance(ac_row, (tuple, list)) else (ac_row.get("COUNT(*)", 0) if isinstance(ac_row, dict) else 0)
+        c_ok = ac < climit
+
+        # RPM 체크
+        r_ok = True
+        if rlimit and int(rlimit) > 0:
+            cur.execute(
+                "SELECT count FROM api_key_usage_minute WHERE api_key_id=? AND minute_bucket=?",
+                (kid, bucket))
+            rpm_row = cur.fetchone()
+            rpm = 0
+            if rpm_row:
+                rpm = rpm_row[0] if isinstance(rpm_row, (tuple, list)) else (rpm_row.get("count", 0) if isinstance(rpm_row, dict) else 0)
+            r_ok = (rpm + int(request_units)) <= int(rlimit)
+
         # RPD 체크
         d_ok = True
         if model:
-            rpd_limit = _get_rpd_limit(r["rpd_limits"], model)
+            rpd_limit = _get_rpd_limit(rpd_lim_raw, model)
             if rpd_limit is not None:
-                rpd_count = _get_rpd_count(cur, int(r["api_key_id"]), model, _day)
+                rpd_count = _get_rpd_count(cur, int(kid), model, _day)
                 if rpd_count + int(request_units) > rpd_limit:
                     d_ok = False
 
@@ -596,11 +615,11 @@ def acquire_lease(
     ttl = int(lease_ttl_sec or cfg.active_job_ttl_sec or 120)
     deadline = time.time() + float(max_wait_sec)
 
-    conn = get_db(cfg)
+    conn = get_db_isolated(cfg)
     try:
         while True:
-            now = datetime.utcnow()
-            lease_cutoff = (now - timedelta(seconds=ttl)).isoformat() + "Z"
+            now = datetime.now(timezone.utc)
+            lease_cutoff = (now - timedelta(seconds=ttl)).isoformat().replace("+00:00", "Z")
             bucket = minute_bucket_iso(now)
             day = day_bucket_iso(now)
 
@@ -617,9 +636,9 @@ def acquire_lease(
                       AND (last_heartbeat_at IS NULL OR last_heartbeat_at='' OR last_heartbeat_at < ?)
                 """, (now_iso(), lease_cutoff))
 
-                # stale waiter 정리: max_wait_sec(60s) 초과 + 여유 → 2분 이상 된 waiting 삭제
+                # stale waiter 정리: max_wait_sec(60s) 초과 + 여유 → 90초 이상 된 waiting 삭제
                 # Streamlit Cloud에서 이전 세션이 비정상 종료되어 남은 고아 waiter 방지
-                _waiter_cutoff = (now - timedelta(minutes=2)).isoformat() + "Z"
+                _waiter_cutoff = (now - timedelta(seconds=90)).isoformat().replace("+00:00", "Z")
                 cur.execute("""
                     DELETE FROM api_key_waiters
                     WHERE state='waiting'
@@ -686,7 +705,10 @@ def acquire_lease(
 
                             cur.execute("DELETE FROM api_key_waiters WHERE provider=? AND run_id=?", (provider, run_id))
 
-                            payload = json.loads(row["key_payload"])
+                            try:
+                                payload = json.loads(row["key_payload"])
+                            except (ValueError, Exception):
+                                payload = {}
                             return Lease(
                                 lease_id=lease_id,
                                 api_key_id=int(row["api_key_id"]),
@@ -762,7 +784,10 @@ def acquire_lease(
                         _inc_rpm(cur, int(row["api_key_id"]), bucket, int(request_units))
                         if model:
                             _inc_rpd(cur, int(row["api_key_id"]), model, day, int(request_units))
-                        payload = json.loads(row["key_payload"])
+                        try:
+                            payload = json.loads(row["key_payload"])
+                        except (ValueError, Exception):
+                            payload = {}
                         return Lease(
                             lease_id=lease_id,
                             api_key_id=int(row["api_key_id"]),
@@ -813,7 +838,7 @@ def acquire_lease(
         conn.close()
 
 def heartbeat(cfg: AppConfig, lease_id: str) -> None:
-    conn = get_db(cfg)
+    conn = get_db_isolated(cfg)
     try:
         with Txn(conn):
             conn.execute("""
@@ -825,7 +850,7 @@ def heartbeat(cfg: AppConfig, lease_id: str) -> None:
         conn.close()
 
 def release_lease(cfg: AppConfig, lease_id: str, state: str = "released") -> None:
-    conn = get_db(cfg)
+    conn = get_db_isolated(cfg)
     try:
         with Txn(conn):
             conn.execute("""
@@ -839,13 +864,13 @@ def release_lease(cfg: AppConfig, lease_id: str, state: str = "released") -> Non
 def consume_rpm(cfg: AppConfig, api_key_id: int, units: int = 1, wait: bool = True,
                 max_wait_sec: int = 30, poll_interval_sec: float = 1.0,
                 on_wait: Optional[Callable[[Dict[str, Any]], None]] = None) -> None:
-    
+
     deadline = time.time() + float(max_wait_sec)
-    conn = get_db(cfg)
+    conn = get_db_isolated(cfg)
     try:
         while True:
             b = minute_bucket_iso()
-            now_dt = datetime.utcnow()
+            now_dt = datetime.now(timezone.utc)
             wait_info = None
 
             with Txn(conn):
@@ -946,5 +971,4 @@ def bootstrap(cfg: AppConfig) -> None:
     ensure_tables(cfg)
     seed_keys(cfg)
     cleanup_orphan_leases(cfg)
-    force_sync()  # 키 풀 초기화 결과를 Turso에 즉시 반영
     _BOOTSTRAPPED = True

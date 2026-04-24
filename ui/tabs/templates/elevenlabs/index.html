@@ -33,9 +33,7 @@
   --progress-bg:#3f3f46;
   --progress-fill:#e4e4e7;
   --history-hover:#27272a;
-  --chip-bg:transparent;
-  --chip-border:#27272a;
-  --chip-hover-bg:#1f1f23;
+
   --dropdown-shadow:rgba(0,0,0,0.5);
   --sg-overlay:rgba(0,0,0,0.85);
   --sg-card-bg:#18181b;
@@ -74,9 +72,7 @@
     --progress-bg:#d1d5db;
     --progress-fill:#374151;
     --history-hover:#f0f0f0;
-    --chip-bg:transparent;
-    --chip-border:#e5e7eb;
-    --chip-hover-bg:#f0f0f0;
+
     --dropdown-shadow:rgba(0,0,0,0.1);
     --sg-overlay:rgba(0,0,0,0.5);
     --sg-card-bg:#ffffff;
@@ -111,21 +107,25 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
   border-bottom:1px solid var(--border);
   background:var(--bg-panel);
 }
-.top-bar-left{display:flex;align-items:center;gap:12px;}
-.logo{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;color:var(--text-primary);}
+.top-bar-left{display:flex;align-items:center;gap:4px;}
 .logo-icon{
   width:24px;height:24px;border-radius:4px;
   background:var(--bg-surface);display:flex;align-items:center;justify-content:center;
-  font-size:11px;color:var(--text-secondary);
+  font-size:11px;color:var(--text-secondary);flex-shrink:0;margin-right:8px;
 }
+.mode-tabs{display:flex;align-items:center;gap:2px;}
+.mode-tab{
+  padding:6px 14px;border-radius:6px;font-size:13px;font-weight:500;
+  color:var(--text-muted);background:transparent;transition:all .15s;
+  white-space:nowrap;
+}
+.mode-tab:hover{color:var(--text-secondary);background:var(--bg-surface);}
+.mode-tab.active{color:var(--text-primary);background:var(--bg-surface);font-weight:600;}
+.mode-tab.locked{opacity:0.35;cursor:default;pointer-events:none;}
+.mode-tab.locked:hover{color:var(--text-muted);background:transparent;}
+.mode-sep{width:1px;height:16px;background:var(--border);margin:0 4px;flex-shrink:0;}
 .top-bar-right{display:flex;align-items:center;gap:6px;}
-.top-btn{
-  padding:6px 12px;border-radius:6px;font-size:12px;font-weight:500;
-  color:var(--text-secondary);border:1px solid var(--border);background:transparent;
-  transition:all .15s;
-}
-.top-btn:hover{color:var(--text-primary);border-color:var(--border-mid);}
-.char-count{font-size:12px;color:var(--text-dim);margin-left:8px;}
+#galleryBtn{color:var(--text-primary);}
 
 /* Body */
 .body-wrap{flex:1;display:flex;overflow:hidden;min-height:0;}
@@ -145,18 +145,59 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
 }
 .text-wrap textarea::placeholder{color:var(--text-placeholder);}
 
-/* Suggestion Chips Area */
-.chips-area{margin-top:auto;padding-top:24px;}
-.chips-label{font-size:13px;color:var(--text-dim);margin-bottom:10px;font-weight:400;}
-.chips{display:flex;flex-wrap:wrap;gap:8px;}
-.chip{
-  padding:8px 14px;border-radius:20px;
-  background:var(--chip-bg);border:1px solid var(--chip-border);
-  color:var(--text-secondary);font-size:13px;transition:all .15s;
-  display:flex;align-items:center;gap:6px;
+
+/* Clone Name Settings (in Settings panel) */
+.clone-name-settings input:focus{border-color:var(--border-focus);}
+
+/* Clone Result Banner */
+.clone-result{
+  padding:14px 18px;border-radius:10px;margin-bottom:12px;
+  font-size:13px;line-height:1.5;display:none;
 }
-.chip:hover{background:var(--chip-hover-bg);color:var(--text-primary);border-color:var(--border-mid);}
-.chip svg{width:14px;height:14px;flex-shrink:0;opacity:0.6;}
+.clone-result.success{background:rgba(34,197,94,0.1);border:1px solid rgba(34,197,94,0.25);color:#22c55e;}
+.clone-result.error{background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.25);color:#ef4444;}
+.clone-result strong{font-weight:600;}
+.clone-use-btn{
+  margin-top:8px;padding:6px 14px;border-radius:6px;font-size:12px;font-weight:500;
+  background:rgba(34,197,94,0.15);color:#22c55e;transition:all .15s;
+}
+.clone-use-btn:hover{background:rgba(34,197,94,0.25);}
+
+/* SFX Language Warning */
+.sfx-lang-warn{
+  display:flex;align-items:center;gap:8px;
+  padding:8px 12px;margin-top:8px;border-radius:8px;
+  background:rgba(234,179,8,0.1);border:1px solid rgba(234,179,8,0.25);
+  color:#eab308;font-size:12px;
+}
+.sfx-lang-warn svg{flex-shrink:0;}
+
+/* Audio Upload Wrapper */
+.audio-upload-wrap{flex:1;display:flex;flex-direction:column;min-height:200px;}
+/* Audio Upload Area */
+.audio-upload-area{
+  flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  border:2px dashed var(--border);border-radius:12px;
+  padding:40px 24px;text-align:center;transition:all .2s;
+  cursor:pointer;
+}
+.audio-upload-area:hover{border-color:var(--text-muted);background:var(--bg-surface);}
+.audio-upload-area.dragover{border-color:var(--btn-bg);background:var(--bg-surface);}
+.audio-upload-icon{width:48px;height:48px;color:var(--text-dim);margin-bottom:12px;}
+.audio-upload-title{font-size:15px;font-weight:500;color:var(--text-secondary);margin-bottom:6px;}
+.audio-upload-desc{font-size:13px;color:var(--text-dim);}
+.audio-upload-area input[type="file"]{display:none;}
+.audio-preview{
+  width:100%;display:flex;align-items:center;gap:12px;
+  padding:12px 16px;background:var(--bg-surface);border-radius:8px;
+  border:1px solid var(--border);
+}
+.audio-preview-name{flex:1;font-size:13px;color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.audio-preview-remove{
+  width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  color:var(--text-muted);transition:all .15s;flex-shrink:0;
+}
+.audio-preview-remove:hover{color:var(--text-primary);background:var(--border);}
 
 /* Generate Button */
 .btn-generate{
@@ -194,8 +235,9 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
 .settings-body{flex:1;overflow-y:auto;padding:20px;}
 
 /* Selector (Voice / Model) */
-.setting-group{margin-bottom:20px;}
+.setting-group{margin-bottom:24px;}
 .setting-label{font-size:14px;color:var(--text-primary);margin-bottom:8px;font-weight:600;}
+.setting-desc{font-size:11px;color:var(--text-dim);margin:-4px 0 8px;line-height:1.4;}
 .selector{
   background:var(--bg-input);border:1px solid var(--border-mid);border-radius:10px;
   padding:10px 14px;cursor:pointer;position:relative;
@@ -241,7 +283,7 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
 .dropdown-item.active .di-check{display:block;}
 
 /* Slider */
-.slider-group{margin-bottom:20px;}
+.slider-group{margin-bottom:24px;}
 .slider-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;}
 .slider-name{font-size:14px;color:var(--text-primary);font-weight:600;}
 .slider-labels{display:flex;justify-content:space-between;font-size:11px;color:var(--text-dim);margin-top:6px;}
@@ -253,6 +295,7 @@ input[type="range"]::-webkit-slider-thumb{
   -webkit-appearance:none;width:16px;height:16px;border-radius:50%;
   background:var(--slider-thumb);cursor:pointer;
   box-shadow:0 1px 4px rgba(0,0,0,0.3);
+  margin-top:-6px;
 }
 input[type="range"]::-moz-range-thumb{
   width:16px;height:16px;border-radius:50%;border:none;
@@ -261,7 +304,7 @@ input[type="range"]::-moz-range-thumb{
 input[type="range"]::-webkit-slider-runnable-track{height:4px;border-radius:2px;}
 
 /* Toggle */
-.toggle-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;}
+.toggle-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;}
 .toggle-row .toggle-label{font-size:14px;color:var(--text-primary);font-weight:600;}
 .toggle{
   width:42px;height:24px;border-radius:12px;
@@ -278,7 +321,7 @@ input[type="range"]::-webkit-slider-runnable-track{height:4px;border-radius:2px;
 .toggle:not(.on) .knob{background:var(--knob-off);}
 
 /* Reset + Speaker Boost row */
-.bottom-row{display:flex;align-items:center;justify-content:space-between;margin-top:4px;}
+.bottom-row{display:flex;align-items:center;justify-content:space-between;margin-top:8px;}
 .boost-row{display:flex;align-items:center;gap:8px;}
 .boost-row .toggle{width:36px;height:20px;border-radius:10px;}
 .boost-row .toggle .knob{width:14px;height:14px;top:3px;left:3px;}
@@ -291,6 +334,78 @@ input[type="range"]::-webkit-slider-runnable-track{height:4px;border-radius:2px;
 }
 .btn-reset:hover{color:var(--text-secondary);}
 .btn-reset svg{width:14px;height:14px;}
+
+/* ── SFX Settings ── */
+.sfx-settings{display:none;}
+.sfx-settings .setting-label{font-size:13px;color:var(--text-secondary);font-weight:600;margin-bottom:10px;}
+.sfx-duration-row{display:flex;align-items:center;gap:10px;margin-bottom:20px;}
+.sfx-duration-row input[type="number"]{
+  width:80px;padding:6px 10px;border-radius:8px;
+  background:var(--bg-input);border:1px solid var(--border-mid);
+  color:var(--text-primary);font-size:13px;outline:none;
+  -moz-appearance:textfield;
+}
+.sfx-duration-row input[type="number"]::-webkit-inner-spin-button,
+.sfx-duration-row input[type="number"]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0;}
+.sfx-duration-row input[type="number"]:focus{border-color:var(--border-focus);}
+.sfx-duration-row .sfx-unit{font-size:12px;color:var(--text-muted);}
+.sfx-duration-row .sfx-auto{
+  font-size:12px;color:var(--text-dim);cursor:pointer;
+  margin-left:auto;transition:color .15s;
+}
+.sfx-duration-row .sfx-auto:hover{color:var(--text-secondary);}
+.sfx-influence-wrap{margin-bottom:4px;}
+.sfx-influence-wrap .slider-row{margin-bottom:0;}
+
+/* ── Cloned Voices Management ── */
+.cloned-voices-mgmt{margin-top:24px;padding-top:16px;border-top:1px solid var(--border);}
+.cloned-voices-mgmt .setting-label{font-size:13px;color:var(--text-secondary);font-weight:600;margin-bottom:10px;}
+.cloned-voices-empty{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  padding:24px 16px;border-radius:10px;
+  background:var(--bg-surface);border:1px dashed var(--border-mid);
+  text-align:center;gap:8px;
+}
+.cloned-voices-empty svg{opacity:0.35;}
+.cloned-voices-empty-title{font-size:13px;color:var(--text-muted);font-weight:500;}
+.cloned-voices-empty-desc{font-size:11px;color:var(--text-dim);line-height:1.5;}
+
+/* ── Clone Steps ── */
+.clone-steps{display:none;}
+.clone-steps .setting-label{font-size:13px;color:var(--text-secondary);font-weight:600;margin-bottom:14px;}
+.clone-step{
+  display:flex;align-items:flex-start;gap:12px;
+  margin-bottom:16px;position:relative;
+}
+.clone-step:not(:last-child)::after{
+  content:'';position:absolute;left:13px;top:28px;bottom:-8px;
+  width:1px;background:var(--border-mid);
+}
+.clone-step-num{
+  width:26px;height:26px;border-radius:50%;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;
+  font-size:12px;font-weight:600;
+  background:var(--bg-surface);color:var(--text-muted);
+  border:1px solid var(--border-mid);
+  transition:all .25s;
+}
+.clone-step.active .clone-step-num{
+  background:var(--btn-bg);color:var(--btn-color);border-color:var(--btn-bg);
+}
+.clone-step.done .clone-step-num{
+  background:rgba(34,197,94,0.15);color:#22c55e;border-color:rgba(34,197,94,0.3);
+}
+.clone-step-body{flex:1;min-width:0;}
+.clone-step-title{font-size:13px;font-weight:500;color:var(--text-muted);transition:color .2s;}
+.clone-step.active .clone-step-title,
+.clone-step.done .clone-step-title{color:var(--text-primary);}
+.clone-step-desc{font-size:12px;color:var(--text-dim);margin-top:3px;line-height:1.4;}
+.clone-step.active .clone-step-desc{color:var(--text-muted);}
+.clone-step-file{
+  margin-top:6px;font-size:12px;color:var(--text-secondary);
+  background:var(--bg-surface);padding:4px 8px;border-radius:6px;
+  display:inline-block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
 
 /* ── Bottom Player Bar ── */
 .player-bar{
@@ -474,6 +589,11 @@ input[type="range"]::-webkit-slider-runnable-track{height:4px;border-radius:2px;
 .sg-empty{
   text-align:center;padding:60px 20px;color:var(--sg-dim);font-size:14px;
 }
+.sg-audio-badge{
+  display:inline-block;font-size:10px;font-weight:600;padding:2px 7px;
+  border-radius:4px;background:rgba(255,255,255,0.12);color:#e4e4e7;
+  margin-right:8px;vertical-align:middle;letter-spacing:0.3px;
+}
 </style>
 </head>
 <body>
@@ -482,37 +602,61 @@ input[type="range"]::-webkit-slider-runnable-track{height:4px;border-radius:2px;
   <!-- Top Bar -->
   <div class="top-bar">
     <div class="top-bar-left">
-      <div class="logo">
-        <div class="logo-icon">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="2" width="4" height="20" rx="1"/><rect x="16" y="2" width="4" height="20" rx="1"/></svg>
-        </div>
-        Text to Speech
+      <div class="logo-icon">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="2" width="4" height="20" rx="1"/><rect x="16" y="2" width="4" height="20" rx="1"/></svg>
+      </div>
+      <div class="mode-tabs" id="modeTabs">
+        <button class="mode-tab active" data-mode="tts">Text to Speech</button>
+        <button class="mode-tab" data-mode="vtv" data-feature="elevenlabs.vtv">Voice Changer</button>
+        <button class="mode-tab" data-mode="sfx" data-feature="elevenlabs.sfx">Sound Effects</button>
+        <div class="mode-sep"></div>
+        <button class="mode-tab" data-mode="clone" data-feature="elevenlabs.clone">Voice Clone</button>
       </div>
     </div>
     <div class="top-bar-right">
-      <button class="top-btn" data-feature="elevenlabs.gallery" id="galleryBtn">🎵 갤러리</button>
-      <button class="top-btn" data-feature="elevenlabs.feedback">Feedback</button>
-      <button class="top-btn" data-feature="elevenlabs.docs">Docs</button>
-      <span class="char-count" id="charCount">0</span>
+      <button class="mode-tab" data-mode="gallery" data-feature="elevenlabs.gallery" id="galleryBtn">Gallery</button>
     </div>
   </div>
 
   <div class="body-wrap">
     <!-- Main Panel -->
     <div class="main-panel">
-      <div class="text-wrap">
+      <div class="text-wrap" id="textWrap">
         <textarea id="textInput" placeholder="Start typing here or paste any text you want to turn into lifelike speech..."></textarea>
+        <div class="sfx-lang-warn" id="sfxLangWarn" style="display:none;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          <span>Sound effects only support English descriptions.</span>
+        </div>
       </div>
 
-      <!-- Suggestion Chips (always visible) -->
-      <div class="chips-area" id="chipsArea">
-        <div class="chips-label">Get started with</div>
-        <div class="chips" id="chipArea"></div>
+      <!-- Clone Result Banner -->
+      <div class="clone-result" id="cloneResult"></div>
+
+      <!-- Clone Voice Name Input (moved to Settings panel) -->
+
+      <!-- Audio Upload (VTV / Clone) -->
+      <div class="audio-upload-wrap" id="audioUploadWrap" style="display:none;">
+        <div class="audio-upload-area" id="audioUploadArea">
+          <input type="file" id="audioFileInput" accept="audio/*">
+          <svg class="audio-upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M12 18.5V3m0 0l-5 5m5-5l5 5"/>
+            <path d="M2 17l.621 2.485A2 2 0 004.561 21h14.878a2 2 0 001.94-1.515L22 17"/>
+          </svg>
+          <div class="audio-upload-title">Click to upload or drag & drop</div>
+          <div class="audio-upload-desc">MP3, WAV, M4A, OGG — max 10 MB</div>
+        </div>
+        <div class="audio-preview" id="audioPreview" style="display:none;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+          <span class="audio-preview-name" id="audioFileName"></span>
+          <button class="audio-preview-remove" id="audioRemoveBtn" title="Remove">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
       </div>
 
       <button class="btn-generate" id="btnGenerate">
         <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
-        Generate speech
+        <span id="btnGenerateLabel">Generate speech</span>
       </button>
     </div>
 
@@ -525,12 +669,13 @@ input[type="range"]::-webkit-slider-runnable-track{height:4px;border-radius:2px;
 
       <div class="settings-body" id="settingsBody">
         <!-- Voice -->
-        <div class="setting-group">
+        <div class="setting-group" id="settingVoice">
           <div class="setting-label">Voice</div>
+          <div class="setting-desc">Select a voice for speech generation</div>
           <div class="selector" id="voiceSelector">
             <div class="selector-left">
               <div class="voice-avatar" id="voiceAvatar" style="background:#e8956a;">&#x1f399;</div>
-              <div class="selector-text" id="voiceSelText">Rachel</div>
+              <div class="selector-text" id="voiceSelText">Yohan Koo</div>
             </div>
             <span class="selector-arrow">&#x203a;</span>
             <div class="dropdown" id="voiceDropdown"></div>
@@ -538,7 +683,7 @@ input[type="range"]::-webkit-slider-runnable-track{height:4px;border-radius:2px;
         </div>
 
         <!-- Model (fixed) -->
-        <div class="setting-group">
+        <div class="setting-group" id="settingModel">
           <div class="setting-label">Model</div>
           <div class="selector" id="modelSelector" style="cursor:default;pointer-events:none;">
             <div class="selector-left">
@@ -552,23 +697,105 @@ input[type="range"]::-webkit-slider-runnable-track{height:4px;border-radius:2px;
         <div id="slidersWrap"></div>
 
         <!-- Language Override Toggle -->
-        <div class="toggle-row">
-          <span class="toggle-label">Language Override</span>
+        <div class="toggle-row" id="settingLangOverride">
+          <div>
+            <span class="toggle-label">Language Override</span>
+            <div class="setting-desc" style="margin:4px 0 0;">Force output language instead of auto-detect</div>
+          </div>
           <div class="toggle" id="toggleLang"><div class="knob"></div></div>
         </div>
 
         <!-- Speaker Boost + Reset Row -->
-        <div class="bottom-row">
+        <div class="bottom-row" id="settingBoostReset">
           <div class="boost-row">
             <div class="toggle on" id="toggleBoost" style="width:36px;height:20px;border-radius:10px;"><div class="knob" style="width:14px;height:14px;top:3px;"></div></div>
-            <span class="boost-label">Speaker boost</span>
+            <div><span class="boost-label">Speaker boost</span><div class="setting-desc" style="margin:2px 0 0;">Enhance voice clarity and presence</div></div>
           </div>
           <button class="btn-reset" id="btnReset">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>
-            Reset values
           </button>
         </div>
-      </div>
+
+        <!-- SFX Settings -->
+        <div class="sfx-settings" id="sfxSettings">
+          <div class="setting-label">Sound Settings</div>
+          <div class="sfx-duration-row">
+            <div>
+              <span style="font-size:13px;color:var(--text-primary);">Duration</span>
+              <div class="setting-desc" style="margin:2px 0 0;">Length of the generated sound</div>
+            </div>
+            <input type="number" id="sfxDuration" min="0.5" max="22" step="0.5" placeholder="Auto">
+            <span class="sfx-unit">sec</span>
+            <span class="sfx-auto" id="sfxDurationAuto">Auto</span>
+          </div>
+          <div class="sfx-influence-wrap">
+            <div class="slider-row" id="sfxInfluenceRow">
+              <div class="slider-header">
+                <span class="slider-label">Prompt Influence</span>
+                <span class="slider-value" id="sfxInfluenceVal">30%</span>
+              </div>
+              <div class="setting-desc" style="margin:0 0 6px;">How closely the sound follows your description</div>
+              <input type="range" class="slider" id="sfxInfluence" min="0" max="100" value="30">
+            </div>
+          </div>
+        </div>
+
+        <!-- Clone Steps Guide -->
+        <div class="clone-steps" id="cloneSteps">
+          <div class="setting-label">Voice Clone</div>
+
+          <!-- Voice Name Input (in Settings) -->
+          <div class="clone-name-settings" id="cloneNameSettings">
+            <label style="font-size:12px;color:var(--text-dim);display:block;margin-bottom:6px;">Voice Name</label>
+            <input type="text" id="cloneNameInput" placeholder="Enter a name for your cloned voice..." maxlength="50"
+              style="width:100%;padding:8px 12px;border-radius:8px;font-size:13px;background:var(--bg-input);border:1px solid var(--border-mid);color:var(--text-primary);outline:none;margin-bottom:16px;">
+          </div>
+
+          <div class="clone-step active" id="cloneStep1">
+            <div class="clone-step-num">1</div>
+            <div class="clone-step-body">
+              <div class="clone-step-title">Upload voice sample</div>
+              <div class="clone-step-desc">Upload a clear audio file of the voice you want to clone</div>
+              <div class="clone-step-file" id="cloneStepFile" style="display:none;"></div>
+            </div>
+          </div>
+          <div class="clone-step" id="cloneStep2">
+            <div class="clone-step-num">2</div>
+            <div class="clone-step-body">
+              <div class="clone-step-title">Name your voice</div>
+              <div class="clone-step-desc">Enter a name above to identify your cloned voice</div>
+            </div>
+          </div>
+          <div class="clone-step" id="cloneStep3">
+            <div class="clone-step-num">3</div>
+            <div class="clone-step-body">
+              <div class="clone-step-title">Clone voice</div>
+              <div class="clone-step-desc">Click "Clone voice" to register your voice</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Cloned Voices Management (clone steps 바로 아래) -->
+        <div class="setting-group cloned-voices-mgmt" id="clonedVoicesMgmt" style="display:none;">
+          <div class="setting-label">Manage Cloned Voices</div>
+          <div id="clonedVoicesEmpty" class="cloned-voices-empty">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-muted);">
+              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3Z"/>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+              <line x1="12" y1="19" x2="12" y2="23"/>
+              <line x1="8" y1="23" x2="16" y2="23"/>
+            </svg>
+            <div class="cloned-voices-empty-title">No cloned voices yet</div>
+            <div class="cloned-voices-empty-desc">Clone a voice above to manage it here</div>
+          </div>
+          <select id="clonedVoicesSelect" style="width:100%;padding:8px 12px;border-radius:8px;font-size:13px;background:var(--bg-input);border:1px solid var(--border-mid);color:var(--text-primary);outline:none;margin-bottom:8px;display:none;">
+          </select>
+          <button id="btnDeleteVoice" style="display:none;width:100%;padding:8px 12px;border-radius:8px;font-size:12px;font-weight:500;background:rgba(239,68,68,0.12);color:#ef4444;border:1px solid rgba(239,68,68,0.25);transition:all .15s;">
+            Delete selected voice
+          </button>
+        </div>
+
+        </div>
 
       <!-- History Content -->
       <div class="history-content" id="historyContent">
@@ -663,15 +890,12 @@ function setComponentValue(v){sendMsg("streamlit:setComponentValue",{value:v});}
    Data
    ══════════════════════════════════════ */
 var VOICES = [
-  {id:"21m00Tcm4TlvDq8ikWAM", name:"Rachel",  gender:"Female", accent:"American",  desc:"Calm, warm narrator",       color:"#e8956a"},
-  {id:"AZnzlk1XvdvUeBnXmlld", name:"Domi",    gender:"Female", accent:"American",  desc:"Strong, confident",         color:"#7c8aff"},
-  {id:"EXAVITQu4vr4xnSDxMaL", name:"Bella",   gender:"Female", accent:"American",  desc:"Soft, gentle",              color:"#ff7eb3"},
-  {id:"ErXwobaYiN019PkySvjV", name:"Antoni",   gender:"Male",   accent:"American",  desc:"Well-rounded, expressive",  color:"#4ecdc4"},
-  {id:"MF3mGyEYCl7XYWbV9V6O", name:"Elli",    gender:"Female", accent:"American",  desc:"Youthful, bright",          color:"#ffe66d"},
-  {id:"TxGEqnHWrfWFTfGW9XjX", name:"Josh",    gender:"Male",   accent:"American",  desc:"Deep, engaging",            color:"#6bcb77"},
-  {id:"VR6AewLTigWG4xSOukaG", name:"Arnold",   gender:"Male",   accent:"American",  desc:"Crisp, authoritative",      color:"#ff6b6b"},
-  {id:"pNInz6obpgDQGcFmaJgB", name:"Adam",    gender:"Male",   accent:"American",  desc:"Deep, resonant",            color:"#845ef7"},
-  {id:"yoZ06aMxZJJ28mfd3POQ", name:"Sam",     gender:"Male",   accent:"American",  desc:"Raspy, dynamic",            color:"#339af0"}
+  {id:"4JJwo477JUAx3HV0T7n7", name:"Yohan Koo",  gender:"Male",   accent:"Korean",  desc:"Encouraging, clear and airy",    color:"#4ecdc4"},
+  {id:"1KNqBv4TutQtzSIACsMC", name:"Harry",       gender:"Male",   accent:"Korean",  desc:"Calm narrator",                  color:"#6bcb77"},
+  {id:"ZJCNdZEjYwkOElxugmW2", name:"Hyuk",        gender:"Male",   accent:"Korean",  desc:"Cold and clear",                 color:"#339af0"},
+  {id:"ksaI0TCD9BstzEzlxj4q", name:"Seulki",      gender:"Female", accent:"Korean",  desc:"Inviting, calm and measured",    color:"#e8956a"},
+  {id:"uyVNoMrnUku1dZyVEXwD", name:"Anna Kim",    gender:"Female", accent:"Korean",  desc:"Tender, calm and clear",         color:"#ff7eb3"},
+  {id:"ETPP7D0aZVdEj12Aa7ho", name:"Selly Han",   gender:"Female", accent:"Korean",  desc:"Warm, calm and steady",          color:"#845ef7"}
 ];
 var selectedVoiceIdx = 0;
 
@@ -691,10 +915,10 @@ function findModel(modelId){
 }
 
 var SLIDER_DEFS = {
-  speed:              {val:1.0,  min:0.5, max:2.0, step:0.05, label:"Speed",              left:"Slower",       right:"Faster"},
-  stability:          {val:0.5,  min:0,   max:1.0, step:0.01, label:"Stability",           left:"More variable",right:"More stable"},
-  similarity:         {val:0.75, min:0,   max:1.0, step:0.01, label:"Similarity",          left:"Low",          right:"High"},
-  style_exaggeration: {val:0.0,  min:0,   max:1.0, step:0.01, label:"Style Exaggeration",  left:"None",         right:"Exaggerated"}
+  speed:              {val:1.0,  min:0.5, max:2.0, step:0.05, label:"Speed",              left:"Slower",       right:"Faster",      desc:"Playback speed of the generated audio"},
+  stability:          {val:0.5,  min:0,   max:1.0, step:0.01, label:"Stability",           left:"More variable",right:"More stable", desc:"Higher = consistent tone, Lower = expressive"},
+  similarity:         {val:0.75, min:0,   max:1.0, step:0.01, label:"Similarity",          left:"Low",          right:"High",        desc:"How closely the output matches the original voice"},
+  style_exaggeration: {val:0.0,  min:0,   max:1.0, step:0.01, label:"Style Exaggeration",  left:"None",         right:"Exaggerated", desc:"Amplifies the speaking style of the voice"}
 };
 var settings = {};
 for(var k in SLIDER_DEFS) settings[k] = SLIDER_DEFS[k].val;
@@ -702,31 +926,249 @@ for(var k in SLIDER_DEFS) settings[k] = SLIDER_DEFS[k].val;
 var langOverride = false;
 var speakerBoost = true;
 
-var CHIPS = [
-  {icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/><path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/></svg>',
-   label:'Narrate a story', text:'Once upon a time in a land far, far away, there lived a young adventurer who dreamed of exploring the unknown reaches of the world.'},
-  {icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>',
-   label:'Tell a silly joke', text:'Why did the chicken cross the road? To get to the other side! But the real question is \u2014 who was watching?'},
-  {icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-4"/></svg>',
-   label:'Record an advertisement', text:'Introducing the all-new product that will revolutionize your daily routine. Try it today and experience the difference!'},
-  {icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>',
-   label:'Speak in different languages', text:'Welcome to our international broadcast. Today we bring you news from across the globe, connecting cultures and communities.'},
-  {icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/></svg>',
-   label:'Direct a dramatic movie scene', text:'The rain poured down as she stood at the edge of the bridge, her heart pounding with a decision that would change everything forever.'},
-  {icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/></svg>',
-   label:'Hear from a video game character', text:'The final boss awaits at the top of the tower. Gather your strength, hero \u2014 this is the battle that will decide the fate of the realm.'},
-  {icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>',
-   label:'Introduce your podcast', text:'Hello and welcome to another episode of our podcast. Today we have a very special guest who will share their incredible journey with us.'},
-  {icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>',
-   label:'Guide a meditation class', text:'Close your eyes and take a deep breath. Feel the tension leaving your body as you focus on the gentle rhythm of your breathing.'}
-];
 
 /* ══════════════════════════════════════
    State
    ══════════════════════════════════════ */
+var currentMode = "tts"; // "tts" | "vtv" | "sfx" | "clone" | "gallery"
 var resultItems = [];
 var _loadingTimers = {};
 var activePlayerItem = null; // currently shown in player bar
+
+/* ══════════════════════════════════════
+   Mode Tabs
+   ══════════════════════════════════════ */
+(function(){
+  var tabs = document.querySelectorAll("#modeTabs .mode-tab");
+  tabs.forEach(function(tab){
+    tab.addEventListener("click", function(){
+      if(this.classList.contains("locked")) return;
+      var mode = this.getAttribute("data-mode");
+      if(mode === "gallery"){
+        // gallery는 오버레이로 열기
+        setComponentValue({action: "open_gallery", ts: Date.now()});
+        return;
+      }
+      currentMode = mode;
+      tabs.forEach(function(t){ t.classList.remove("active"); });
+      this.classList.add("active");
+      applyModeUI(mode);
+    });
+  });
+})();
+
+// Gallery 버튼 (top-bar-right로 분리됨)
+document.getElementById("galleryBtn").addEventListener("click", function(){
+  if(this.classList.contains("locked")) return;
+  setComponentValue({action: "open_gallery", ts: Date.now()});
+});
+
+function applyModeUI(mode){
+  var textWrap       = document.getElementById("textWrap");
+  var uploadWrap     = document.getElementById("audioUploadWrap");
+  var uploadArea     = document.getElementById("audioUploadArea");
+  var audioPreview   = document.getElementById("audioPreview");
+  var btnLabel       = document.getElementById("btnGenerateLabel");
+  var textInput      = document.getElementById("textInput");
+  var settingVoice   = document.getElementById("settingVoice");
+  var settingModel   = document.getElementById("settingModel");
+  var slidersWrap    = document.getElementById("slidersWrap");
+  var settingLang    = document.getElementById("settingLangOverride");
+  var settingBoost   = document.getElementById("settingBoostReset");
+  var cloneResult    = document.getElementById("cloneResult");
+
+  var sfxSettings      = document.getElementById("sfxSettings");
+  var cloneStepsEl     = document.getElementById("cloneSteps");
+  var cloneNameSettings = document.getElementById("cloneNameSettings");
+
+  // 모드별 설정
+  var cfg = {
+    tts:   {text:true, audio:false, btn:"Generate speech",   placeholder:"Start typing here or paste any text you want to turn into lifelike speech...", voice:true, model:false, sliders:true, lang:true, boost:true},
+    vtv:   {text:false,audio:true,  btn:"Convert voice",     placeholder:"", voice:true, model:false,sliders:true, lang:false,boost:true},
+    sfx:   {text:true, audio:false, btn:"Generate sound",    placeholder:"Describe the sound in English — e.g. \"loud explosion with debris falling\"", voice:false,model:false,sliders:false,lang:false,boost:false},
+    clone: {text:false, audio:true,  btn:"Clone voice",       placeholder:"", voice:false,model:false,sliders:false,lang:false,boost:false}
+  };
+  var c = cfg[mode] || cfg.tts;
+
+  // 모드 전환 시 상태 초기화
+  _generateLock = false;
+  if(mode !== "clone"){
+    _uploadedFile = null;
+    _uploadedBase64 = null;
+    var fi = document.getElementById("audioFileInput");
+    if(fi) fi.value = "";
+    _clonedVoiceId = null;
+    _clonedVoiceName = "";
+  }
+
+  // Clone 모드: 업로드만 표시 (텍스트 입력 없음, TTS는 다른 탭에서)
+  if(mode === "clone"){
+    textWrap.style.display     = "none";
+    uploadWrap.style.display   = "flex";
+    uploadWrap.style.minHeight = "200px";
+    uploadWrap.style.flex      = "1";
+    uploadArea.style.display   = !_uploadedFile ? "" : "none";
+    audioPreview.style.display = _uploadedFile  ? "flex" : "none";
+    cloneResult.style.display  = _clonedVoiceId ? "block" : "none";
+    btnLabel.textContent       = "Clone voice";
+    // 클론 완료 후 버튼 비활성화
+    var btn = document.getElementById("btnGenerate");
+    if(_clonedVoiceId){
+      btn.style.opacity = "0.5";
+      btn.style.pointerEvents = "none";
+    } else {
+      btn.style.opacity = "";
+      btn.style.pointerEvents = "";
+    }
+  } else {
+    uploadWrap.style.minHeight = "200px";
+    uploadWrap.style.flex      = "1";
+    // 텍스트 입력 vs 오디오 업로드
+    textWrap.style.display     = c.text  ? "" : "none";
+    uploadWrap.style.display   = c.audio ? "flex" : "none";
+    uploadArea.style.display   = c.audio && !_uploadedFile ? "" : "none";
+    audioPreview.style.display = c.audio && _uploadedFile  ? "flex" : "none";
+    cloneResult.style.display  = "none";
+    btnLabel.textContent       = c.btn;
+    // 다른 모드에서는 버튼 복원
+    var btn = document.getElementById("btnGenerate");
+    btn.style.opacity = "";
+    btn.style.pointerEvents = "";
+  }
+
+  // 설정 패널 요소 표시/숨김
+  settingVoice.style.display = c.voice   ? "" : "none";
+  settingModel.style.display = c.model   ? "" : "none";
+  slidersWrap.style.display  = c.sliders ? "" : "none";
+  settingLang.style.display  = c.lang    ? "" : "none";
+  settingBoost.style.display = c.boost   ? "" : "none";
+
+  // SFX 전용 설정
+  sfxSettings.style.display = (mode === "sfx") ? "block" : "none";
+  document.getElementById("sfxLangWarn").style.display = (mode === "sfx") ? "flex" : "none";
+
+  // Clone 단계 가이드 + 삭제 UI (clone 모드 전용)
+  cloneStepsEl.style.display = (mode === "clone") ? "block" : "none";
+  if(cloneNameSettings) cloneNameSettings.style.display = (mode === "clone") ? "" : "none";
+  document.getElementById("clonedVoicesMgmt").style.display = (mode === "clone") ? "block" : "none";
+  if(mode === "clone") updateCloneSteps();
+
+  // 모드 전환 시 텍스트 초기화
+  textInput.value = "";
+  if(c.text) textInput.placeholder = c.placeholder;
+  updateCharCount();
+}
+
+/* -- Clone State -- */
+var _clonedVoiceId = null;
+var _clonedVoiceName = "";
+
+/* -- Audio Upload -- */
+var _uploadedFile = null;
+var _uploadedBase64 = null;
+
+(function(){
+  var area    = document.getElementById("audioUploadArea");
+  var input   = document.getElementById("audioFileInput");
+  var preview = document.getElementById("audioPreview");
+  var nameEl  = document.getElementById("audioFileName");
+  var removeBtn = document.getElementById("audioRemoveBtn");
+
+  area.addEventListener("click", function(){ input.click(); });
+
+  area.addEventListener("dragover", function(e){
+    e.preventDefault(); area.classList.add("dragover");
+  });
+  area.addEventListener("dragleave", function(){
+    area.classList.remove("dragover");
+  });
+  area.addEventListener("drop", function(e){
+    e.preventDefault(); area.classList.remove("dragover");
+    if(e.dataTransfer.files.length) handleAudioFile(e.dataTransfer.files[0]);
+  });
+
+  input.addEventListener("change", function(){
+    if(input.files.length) handleAudioFile(input.files[0]);
+  });
+
+  removeBtn.addEventListener("click", function(){
+    _uploadedFile = null;
+    _uploadedBase64 = null;
+    input.value = "";
+    area.style.display = "";
+    preview.style.display = "none";
+    if(typeof updateCloneSteps === "function" && document.getElementById("cloneSteps").style.display !== "none") updateCloneSteps();
+  });
+
+  function handleAudioFile(file){
+    if(file.size > 10 * 1024 * 1024){
+      alert("File size must be under 10 MB.");
+      return;
+    }
+    _uploadedFile = file;
+    nameEl.textContent = file.name;
+    area.style.display = "none";
+    preview.style.display = "flex";
+
+    var reader = new FileReader();
+    reader.onload = function(e){
+      _uploadedBase64 = e.target.result; // data:audio/...;base64,...
+      if(typeof updateCloneSteps === "function" && document.getElementById("cloneSteps").style.display !== "none") updateCloneSteps();
+    };
+    reader.readAsDataURL(file);
+  }
+})();
+
+/* -- SFX Controls -- */
+(function(){
+  var slider = document.getElementById("sfxInfluence");
+  var valEl  = document.getElementById("sfxInfluenceVal");
+  var durInput = document.getElementById("sfxDuration");
+  var autoBtn  = document.getElementById("sfxDurationAuto");
+
+  slider.addEventListener("input", function(){
+    valEl.textContent = slider.value + "%";
+  });
+  autoBtn.addEventListener("click", function(){
+    durInput.value = "";
+    durInput.placeholder = "Auto";
+  });
+})();
+
+/* -- Clone Steps Tracker -- */
+function updateCloneSteps(){
+  var step1 = document.getElementById("cloneStep1");
+  var step2 = document.getElementById("cloneStep2");
+  var step3 = document.getElementById("cloneStep3");
+  var fileEl = document.getElementById("cloneStepFile");
+  var nameVal = (document.getElementById("cloneNameInput").value || "").trim();
+  var hasFile = !!_uploadedFile;
+  var hasName = nameVal.length > 0;
+  var cloned = !!_clonedVoiceId;
+
+  // Step 1: Upload
+  step1.className = "clone-step " + (hasFile ? "done" : "active");
+  step1.querySelector(".clone-step-num").textContent = hasFile ? "✓" : "1";
+  if(hasFile){
+    fileEl.textContent = _uploadedFile.name;
+    fileEl.style.display = "";
+  } else {
+    fileEl.style.display = "none";
+  }
+
+  // Step 2: Name
+  step2.className = "clone-step " + (hasFile && hasName ? "done" : (hasFile ? "active" : ""));
+  step2.querySelector(".clone-step-num").textContent = (hasFile && hasName) ? "✓" : "2";
+
+  // Step 3: Clone
+  step3.className = "clone-step " + (cloned ? "done" : (hasFile && hasName ? "active" : ""));
+  step3.querySelector(".clone-step-num").textContent = cloned ? "✓" : "3";
+}
+
+// Update clone steps when file or name changes
+document.getElementById("cloneNameInput").addEventListener("input", function(){
+  if(document.getElementById("cloneSteps").style.display !== "none") updateCloneSteps();
+});
 
 /* ══════════════════════════════════════
    Build UI
@@ -746,21 +1188,6 @@ document.getElementById("tabHistory").addEventListener("click", function(){
   document.getElementById("historyContent").classList.add("show");
   renderHistoryPanel();
 });
-
-/* -- Chips -- */
-(function(){
-  var wrap = document.getElementById("chipArea");
-  CHIPS.forEach(function(c){
-    var b = document.createElement("button");
-    b.className = "chip";
-    b.innerHTML = c.icon + ' ' + c.label;
-    b.addEventListener("click", function(){
-      document.getElementById("textInput").value = c.text;
-      updateCharCount();
-    });
-    wrap.appendChild(b);
-  });
-})();
 
 /* -- Voice Dropdown -- */
 function buildVoiceDropdown(){
@@ -794,6 +1221,71 @@ function updateVoiceDisplay(){
 }
 buildVoiceDropdown();
 
+/* -- Cloned Voices Management -- */
+var _lastClonedVoicesKey = null;
+
+function updateClonedVoices(clonedList){
+  // 키 비교로 변경 시만 갱신
+  var cvKey = clonedList.map(function(v){ return v.voice_id; }).join(",");
+  if(cvKey === _lastClonedVoicesKey) return;
+  _lastClonedVoicesKey = cvKey;
+
+  // VOICES에서 이전 클론 보이스 제거 (category 표시용 _cloned 마커)
+  VOICES = VOICES.filter(function(v){ return !v._cloned; });
+
+  // 새 클론 보이스 추가
+  clonedList.forEach(function(cv){
+    var exists = VOICES.some(function(v){ return v.id === cv.voice_id; });
+    if(!exists){
+      VOICES.push({
+        id: cv.voice_id,
+        name: cv.name || "Cloned Voice",
+        gender: "Custom",
+        accent: "Cloned",
+        desc: "Your cloned voice",
+        color: "#a78bfa",
+        _cloned: true
+      });
+    }
+  });
+  buildVoiceDropdown();
+
+  // 관리 UI 내부 업데이트 (표시/숨김은 applyModeUI가 제어)
+  var sel = document.getElementById("clonedVoicesSelect");
+  var btn = document.getElementById("btnDeleteVoice");
+  var empty = document.getElementById("clonedVoicesEmpty");
+
+  if(clonedList.length === 0){
+    empty.style.display = "flex";
+    sel.style.display = "none";
+    btn.style.display = "none";
+    return;
+  }
+  empty.style.display = "none";
+  sel.style.display = "block";
+  btn.style.display = "block";
+  sel.innerHTML = "";
+  clonedList.forEach(function(cv){
+    var opt = document.createElement("option");
+    opt.value = cv.voice_id;
+    opt.textContent = cv.name || cv.voice_id;
+    sel.appendChild(opt);
+  });
+}
+
+document.getElementById("btnDeleteVoice").addEventListener("click", function(){
+  var sel = document.getElementById("clonedVoicesSelect");
+  var vid = sel.value;
+  if(!vid) return;
+  var name = sel.options[sel.selectedIndex].textContent;
+  if(!confirm("'" + name + "' 보이스를 삭제하시겠습니까?")) return;
+  setComponentValue({
+    action: "delete_voice",
+    voice_id: vid,
+    ts: Date.now()
+  });
+});
+
 document.getElementById("voiceSelector").addEventListener("click", function(e){
   if(e.target.closest(".dropdown")) return;
   var dd = document.getElementById("voiceDropdown");
@@ -821,6 +1313,7 @@ document.addEventListener("click", function(e){
     grp.className = "slider-group";
     grp.innerHTML =
       '<div class="slider-header"><span class="slider-name">' + s.label + '</span></div>' +
+      (s.desc ? '<div class="setting-desc" style="margin:-2px 0 6px;">' + s.desc + '</div>' : '') +
       '<div class="slider-labels"><span>' + s.left + '</span><span>' + s.right + '</span></div>' +
       '<input type="range" id="sl_' + k + '" min="' + s.min + '" max="' + s.max + '" step="' + s.step + '" value="' + s.val + '">';
     wrap.appendChild(grp);
@@ -864,11 +1357,17 @@ document.getElementById("btnReset").addEventListener("click", function(){
 });
 
 /* -- Char Count -- */
-function updateCharCount(){
-  var len = document.getElementById("textInput").value.length;
-  document.getElementById("charCount").textContent = len + " chars";
-}
-document.getElementById("textInput").addEventListener("input", updateCharCount);
+
+/* -- SFX: 한글 입력 차단 -- */
+document.getElementById("textInput").addEventListener("input", function(){
+  if(currentMode !== "sfx") return;
+  var v = this.value;
+  var filtered = v.replace(/[\u3131-\u318E\uAC00-\uD7A3\u1100-\u11FF]/g, "");
+  if(filtered !== v){
+    this.value = filtered;
+    updateCharCount();
+  }
+});
 
 /* ══════════════════════════════════════
    History Panel
@@ -907,11 +1406,14 @@ function renderHistoryPanel(){
     var d = document.createElement("div");
     d.className = "history-item" + (activePlayerItem && activePlayerItem.id === item.id ? " active" : "");
     var color = getVoiceColor(item.voiceName);
+    var metaLabel = item.voiceName || item.modelLabel || "";
+    // SFX 아이콘 색상
+    if(!item.voiceName && item.modelLabel === "Sound Effects") color = "#f59e0b";
     d.innerHTML =
       '<div class="history-item-title">' + escHtml(item.text || "...") + '</div>' +
       '<div class="history-item-meta">' +
         '<span class="dot" style="background:' + color + ';"></span>' +
-        '<span>' + escHtml(item.voiceName) + '</span>' +
+        '<span>' + escHtml(metaLabel) + '</span>' +
       '</div>';
     d.addEventListener("click", function(){
       loadPlayerItem(item);
@@ -946,7 +1448,8 @@ function loadPlayerItem(item){
   bar.classList.add("show");
 
   document.getElementById("playerTitle").textContent = (item.text || "").substring(0, 80) + (item.text && item.text.length > 80 ? "..." : "");
-  document.getElementById("playerVoice").textContent = item.voiceName;
+  var displayName = item.voiceName || item.modelLabel || "";
+  document.getElementById("playerVoice").textContent = displayName;
   document.getElementById("playerDot").style.background = getVoiceColor(item.voiceName);
 
   var controls = document.getElementById("playerControls");
@@ -986,6 +1489,42 @@ function closePlayer(){
   if(_rafId) cancelAnimationFrame(_rafId);
   setFrameHeight(document.body.scrollHeight);
   renderHistoryPanel();
+}
+
+function showCloneResult(result){
+  var banner = document.getElementById("cloneResult");
+  if(!result || !result.voice_id){
+    banner.className = "clone-result error";
+    banner.style.display = "block";
+    banner.innerHTML = "Voice clone failed. Please try again.";
+    return;
+  }
+  // VOICES 목록에 추가 (중복 방지)
+  var exists = VOICES.some(function(v){ return v.id === result.voice_id; });
+  if(!exists){
+    VOICES.push({
+      id: result.voice_id,
+      name: result.name || "Cloned Voice",
+      gender: "Custom",
+      accent: "Cloned",
+      desc: "Your cloned voice",
+      color: "#a78bfa",
+      _cloned: true
+    });
+    buildVoiceDropdown();
+  }
+  // 클론된 voice 저장
+  _clonedVoiceId = result.voice_id;
+  _clonedVoiceName = result.name || "Cloned Voice";
+  banner.className = "clone-result success";
+  banner.style.display = "block";
+  banner.innerHTML =
+    '<strong>Voice cloned: ' + escHtml(_clonedVoiceName) + '</strong><br>' +
+    'Now use this voice in <b>Text to Speech</b> or <b>Voice to Voice</b> tabs.';
+  // UI 갱신
+  if(currentMode === "clone"){
+    updateCloneSteps();
+  }
 }
 
 function updatePlayIcon(playing){
@@ -1056,12 +1595,8 @@ audioEl.addEventListener("loadedmetadata", function(){
 // Download
 document.getElementById("playerDownload").addEventListener("click", function(){
   if(audioEl.src){
-    var a = document.createElement("a");
-    a.href = audioEl.src;
-    a.download = "elevenlabs_tts.mp3";
-    a.target = "_blank";
-    a.click();
-  }
+    (function(_url, _name){ fetch(_url).then(function(r){return r.blob();}).then(function(b){ var a=document.createElement("a"); a.href=URL.createObjectURL(b); a.download=_name; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(a.href); }).catch(function(){ window.open(_url,"_blank"); }); })(audioEl.src, "elevenlabs_tts.mp3");
+}
 });
 
 // Close
@@ -1100,6 +1635,8 @@ function setupLoadingTimers(items){
   var activeTs = {};
   items.forEach(function(item){
     if(!item.loading || !item.loadingTs) return;
+    // clone 아이템은 백엔드에서 처리 — mock 타이머 제외
+    if(item.id && item.id.indexOf("clone_") === 0) return;
     var ts = item.loadingTs;
     activeTs[ts] = true;
     if(_loadingTimers[ts]) return;
@@ -1124,33 +1661,93 @@ function setupLoadingTimers(items){
 var _generateLock = false;
 document.getElementById("btnGenerate").addEventListener("click", function(){
   if(_generateLock) return;
-  var text = document.getElementById("textInput").value.trim();
-  if(!text) return;
-  _generateLock = true;
-
-  var v = VOICES[selectedVoiceIdx];
-  var m = findModel(_defaultModelId);
-  var itemId = "tts_" + Date.now();
   var ts = Date.now();
 
-  setComponentValue({
-    action: "generate",
-    item_id: itemId,
-    text: text,
-    voice_id: v.id,
-    voice_name: v.name,
-    model_id: _defaultModelId,
-    model_label: m.label,
-    settings: {
-      speed: settings.speed,
-      stability: settings.stability,
-      similarity: settings.similarity,
-      style_exaggeration: settings.style_exaggeration
-    },
-    language_override: langOverride,
-    speaker_boost: speakerBoost,
-    ts: ts
-  });
+  if(currentMode === "tts"){
+    var text = document.getElementById("textInput").value.trim();
+    if(!text) return;
+    _generateLock = true;
+    var v = VOICES[selectedVoiceIdx];
+    var m = findModel(_defaultModelId);
+    setComponentValue({
+      action: "generate",
+      item_id: "tts_" + ts,
+      text: text,
+      voice_id: v.id,
+      voice_name: v.name,
+      model_id: _defaultModelId,
+      model_label: m.label,
+      settings: {
+        speed: settings.speed,
+        stability: settings.stability,
+        similarity: settings.similarity,
+        style_exaggeration: settings.style_exaggeration
+      },
+      language_override: langOverride,
+      speaker_boost: speakerBoost,
+      ts: ts
+    });
+  } else if(currentMode === "vtv"){
+    if(!_uploadedBase64) return;
+    _generateLock = true;
+    var v = VOICES[selectedVoiceIdx];
+    setComponentValue({
+      action: "voice_to_voice",
+      item_id: "vtv_" + ts,
+      audio_data: _uploadedBase64,
+      audio_name: _uploadedFile ? _uploadedFile.name : "audio",
+      voice_id: v.id,
+      voice_name: v.name,
+      model_id: "eleven_english_sts_v2",
+      settings: {
+        stability: settings.stability,
+        similarity: settings.similarity,
+        style_exaggeration: settings.style_exaggeration
+      },
+      speaker_boost: speakerBoost,
+      ts: ts
+    });
+  } else if(currentMode === "sfx"){
+    var text = document.getElementById("textInput").value.trim();
+    if(!text) return;
+    _generateLock = true;
+    var sfxDurVal = document.getElementById("sfxDuration").value;
+    var sfxInfVal = parseInt(document.getElementById("sfxInfluence").value, 10) / 100;
+    var sfxPayload = {
+      action: "sound_generation",
+      item_id: "sfx_" + ts,
+      text: text,
+      prompt_influence: sfxInfVal,
+      ts: ts
+    };
+    if(sfxDurVal && parseFloat(sfxDurVal) > 0) sfxPayload.duration_seconds = parseFloat(sfxDurVal);
+    setComponentValue(sfxPayload);
+  } else if(currentMode === "clone"){
+    // 이미 클론 완료된 경우 무시 (다른 탭에서 TTS 사용)
+    if(_clonedVoiceId) return;
+    // 보이스 클론 요청
+    if(!_uploadedBase64) return;
+    var cloneName = (document.getElementById("cloneNameInput").value || "").trim();
+    if(!cloneName){
+      var sTab = document.getElementById("tabSettings");
+      if(sTab && !sTab.classList.contains("active")){
+        sTab.click();
+      }
+      var inp = document.getElementById("cloneNameInput");
+      inp.focus();
+      inp.style.borderColor = "#ef4444";
+      setTimeout(function(){ inp.style.borderColor = ""; }, 2000);
+      return;
+    }
+    _generateLock = true;
+    setComponentValue({
+      action: "voice_clone",
+      item_id: "clone_" + ts,
+      audio_data: _uploadedBase64,
+      audio_name: cloneName,
+      ts: ts
+    });
+  }
 });
 
 /* ══════════════════════════════════════
@@ -1193,6 +1790,17 @@ window.addEventListener("message", function(event){
     document.getElementById('schoolGallery').classList.add('open');
   }
 
+  // Clone 결과 (history와 분리 — 별도 arg)
+  var cr = args.clone_result;
+  if(cr && cr.voice_id && !_clonedVoiceId){
+    _generateLock = false;
+    showCloneResult(cr);
+  }
+
+  // 클론 보이스 목록 → Voice 드롭다운 합치기 + 관리 UI
+  var clonedVoices = args.cloned_voices || [];
+  updateClonedVoices(clonedVoices);
+
   var hist = args.history || [];
   var key = hist.map(function(h){
     return (h.item_id || "") + "|" + (h.loading ? "1" : "0") + "|" + (h.audio_url || "");
@@ -1220,7 +1828,6 @@ window.addEventListener("message", function(event){
   // Auto-show latest item in player bar
   if(resultItems.length > 0){
     var latest = resultItems[0];
-    // If player is not showing, or the active item was updated (e.g. loading → complete)
     if(!activePlayerItem || activePlayerItem.id === latest.id){
       loadPlayerItem(latest);
     }
@@ -1233,14 +1840,7 @@ window.addEventListener("message", function(event){
 /* ══════════════════════════════════════
    School Gallery
    ══════════════════════════════════════ */
-var galleryBtn = document.getElementById('galleryBtn');
-if (galleryBtn) {
-  galleryBtn.addEventListener('click', function() {
-    if (!this.classList.contains('locked')) {
-      setComponentValue({action: 'open_gallery', ts: Date.now()});
-    }
-  });
-}
+/* Gallery button is now handled by mode tabs above */
 
 function renderSchoolGallery(items) {
   var list = document.getElementById('sgList');
@@ -1256,11 +1856,21 @@ function renderSchoolGallery(items) {
   items.forEach(function(item) {
     var card = document.createElement('div');
     card.className = 'sg-audio-card';
+    var audioHtml = '';
+    var url = item.audio_url || '';
+    if(url && (url.indexOf('data:') === 0 || url.indexOf('http') === 0)){
+      audioHtml = '<audio controls preload="metadata" src="' + url + '"></audio>';
+    }
+    var ml = (item.model_label || '').toLowerCase();
+    var badge = ml.indexOf('sound') >= 0 ? 'SFX' : ml.indexOf('voice-to') >= 0 ? 'VTV' : 'TTS';
     card.innerHTML =
-      '<div class="sg-audio-text">' + (item.text || '').replace(/</g,'&lt;') + '</div>' +
-      '<audio controls preload="metadata" src="' + (item.audio_url || '') + '"></audio>' +
+      '<div class="sg-audio-text">' +
+        '<span class="sg-audio-badge">' + badge + '</span>' +
+        (item.text || '').replace(/</g,'&lt;') +
+      '</div>' +
+      audioHtml +
       '<div class="sg-audio-meta">' +
-        '<span>' + (item.user_id || '') + '</span>' +
+        '<span>' + (item.nickname || item.user_id || '') + '</span>' +
         '<span>' + (item.voice_name || '') + ' · ' + (item.model_label || '') + '</span>' +
       '</div>';
     list.appendChild(card);
@@ -1273,6 +1883,7 @@ document.getElementById('sgClose').addEventListener('click', function() {
 });
 
 init();
+applyModeUI("tts");
 </script>
 
 </body>

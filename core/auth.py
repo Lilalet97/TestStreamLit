@@ -8,6 +8,7 @@ This is intentionally dependency-free (stdlib only).
 """
 
 import base64
+import logging
 import hashlib
 import hmac
 import os
@@ -30,6 +31,7 @@ class AuthUser:
     user_id: str
     role: str
     school_id: str
+    nickname: str = ""
 
 VALID_ROLES = ("admin", "viewer", "teacher", "student")
 
@@ -54,7 +56,7 @@ def _b64d(s: str) -> bytes:
     return base64.urlsafe_b64decode((s + pad).encode("ascii"))
 
 
-def hash_password(password: str, iterations: int = 200_000) -> str:
+def hash_password(password: str, iterations: int = 600_000) -> str:
     if not isinstance(password, str) or not password:
         raise ValueError("password is required")
     salt = os.urandom(16)
@@ -93,19 +95,68 @@ def maybe_seed_admin_from_env(cfg: AppConfig):
     admin_school = _get_secret_or_env("ADMIN_SCHOOL_ID", "default") or "default"
     if not admin_user or not admin_pass:
         return
+    existing = get_user(cfg, admin_user)
+    if existing:
+        return  # admin already exists, don't overwrite
     ph = hash_password(admin_pass)
     upsert_user(cfg, user_id=admin_user, password_hash=ph, role="admin", school_id=admin_school, is_active=1)
 
 
+# ── 로그인 시도 제한 ──
+# NOTE: in-memory only — resets on process restart
+_LOGIN_ATTEMPTS: dict[str, list[float]] = {}  # user_id -> [timestamp, ...]
+_MAX_ATTEMPTS = 5
+_LOCKOUT_SEC = 60  # 5회 실패 시 60초 잠금
+import time as _time
+
+
+def _check_login_rate(user_id: str) -> Optional[str]:
+    """로그인 시도 횟수 확인. 잠금 중이면 에러 메시지 반환, 아니면 None."""
+    now = _time.time()
+    attempts = _LOGIN_ATTEMPTS.get(user_id, [])
+    # 만료된 시도 제거
+    attempts = [t for t in attempts if now - t < _LOCKOUT_SEC]
+    _LOGIN_ATTEMPTS[user_id] = attempts
+    if len(attempts) >= _MAX_ATTEMPTS:
+        remaining = int(_LOCKOUT_SEC - (now - attempts[0]))
+        return f"로그인 시도 횟수를 초과했습니다. {remaining}초 후 다시 시도해주세요."
+    return None
+
+
+def _record_login_failure(user_id: str):
+    """실패 기록."""
+    _LOGIN_ATTEMPTS.setdefault(user_id, []).append(_time.time())
+
+
+def _clear_login_attempts(user_id: str):
+    """성공 시 기록 초기화."""
+    _LOGIN_ATTEMPTS.pop(user_id, None)
+
+
 def authenticate(cfg: AppConfig, user_id: str, password: str) -> Optional[AuthUser]:
+    # 브루트포스 방어
+    lockout_msg = _check_login_rate(user_id)
+    if lockout_msg:
+        return None  # 잠금 상태
+
     row = get_user(cfg, user_id)
     if not row:
+        # Timing equalization: burn CPU so "user not found" takes the same time as "wrong password"
+        hash_password("dummy_timing_equalization")
+        _record_login_failure(user_id)
         return None
     if int(row["is_active"]) != 1:
+        # 점검 중 비활성화인지 확인
+        from core.maintenance import check_maintenance
+        maint = check_maintenance(cfg)
+        if maint.is_maintenance_active:
+            raise RuntimeError("서버 점검 중입니다. 잠시 후 다시 시도해주세요.")
         return None
     if not verify_password(password, row["password_hash"]):
+        _record_login_failure(user_id)
         return None
-    return AuthUser(user_id=row["user_id"], role=row["role"], school_id=row["school_id"])
+    _clear_login_attempts(user_id)
+    return AuthUser(user_id=row["user_id"], role=row["role"], school_id=row["school_id"], nickname=row.get("nickname") or "")
 
 def try_restore_login(cfg: AppConfig) -> Optional[AuthUser]:
     if st.session_state.get("auth_logged_in"):
@@ -157,7 +208,7 @@ def try_restore_login(cfg: AppConfig) -> Optional[AuthUser]:
     except Exception as exc:
         _auth_dbg(cfg, f"touch session error: {type(exc).__name__}: {exc}")
 
-    user = AuthUser(user_id=urow["user_id"], role=urow["role"], school_id=urow["school_id"])
+    user = AuthUser(user_id=urow["user_id"], role=urow["role"], school_id=urow["school_id"], nickname=urow.get("nickname") or "")
     st.session_state["auth_session_token"] = token
 
     # session_state만 세팅 (쿠키는 이미 있으니 다시 set 안 함)
@@ -171,10 +222,23 @@ def is_bootstrap_needed(cfg: AppConfig) -> bool:
 
 
 def login_user(cfg: AppConfig, user: AuthUser, remember: bool = True):
+    # 게스트 → 로그인 전환 시 이전 세션 데이터 제거 (데이터 유출 방지)
+    prev_uid = st.session_state.get("auth_user_id", "")
+    if not prev_uid or prev_uid == "guest" or prev_uid != user.user_id:
+        for k in ("mj_gallery", "_mj_db_loaded", "_mj_processed_actions", "_mj_pending_submit",
+                   "gpt_conversations", "gpt_active_id", "_gpt_db_loaded", "_gpt_processed_actions",
+                   "elevenlabs_history", "_elevenlabs_db_loaded", "_el_processed_actions",
+                   "kling_web_history", "_kling_db_loaded", "_kling_processed_actions",
+                   "klingapi_history", "_klingapi_db_loaded", "_klingapi_processed_actions",
+                   "kling_grok_history", "_grok_db_loaded", "_grok_processed_actions",
+                   "nb_sessions", "nb_active_id", "_nb_db_loaded"):
+            st.session_state.pop(k, None)
+
     st.session_state["auth_logged_in"] = True
     st.session_state["auth_user_id"] = user.user_id
     st.session_state["auth_role"] = user.role
     st.session_state["auth_school_id"] = user.school_id
+    st.session_state["auth_nickname"] = user.nickname
     st.session_state.user_id = user.user_id
     st.session_state.school_id = user.school_id
 
@@ -190,12 +254,8 @@ def login_user(cfg: AppConfig, user: AuthUser, remember: bool = True):
                 ctrl = _cookies()
                 ctrl.set(COOKIE_NAME, token)
 
-                if os.getenv("DEBUG_AUTH", "0") == "1":
-                    got = str(ctrl.get(COOKIE_NAME) or "").strip()
-                    print(f"[AUTH-DBG] cookie set -> readback len={len(got)} head={got[:8]}")
-        except Exception as e:
-            if os.getenv("DEBUG_AUTH", "0") == "1":
-                print(f"[AUTH-DBG] cookie set FAILED: {type(e).__name__}: {e}")
+        except Exception:
+            pass
 
 
 def logout_user(cfg: AppConfig):
@@ -211,7 +271,7 @@ def logout_user(cfg: AppConfig):
         except Exception:
             pass
 
-    for k in ["auth_logged_in", "auth_user_id", "auth_role", "auth_school_id", "auth_session_token"]:
+    for k in ["auth_logged_in", "auth_user_id", "auth_role", "auth_school_id", "auth_nickname", "auth_session_token"]:
         st.session_state.pop(k, None)
 
     # 세션 ID 갱신 → 이전 유저의 세션 기록과 분리
@@ -235,8 +295,18 @@ def logout_user(cfg: AppConfig):
     for k in ("kling_web_history", "_kling_db_loaded", "_kling_processed_actions", "_kling_pending_generate"):
         st.session_state.pop(k, None)
 
+    # KlingAPI 세션 상태 정리
+    for k in ("klingapi_history", "_klingapi_db_loaded", "_klingapi_processed_actions"):
+        st.session_state.pop(k, None)
+
+    # Kling Grok 세션 상태 정리
+    for k in ("kling_grok_history", "_grok_db_loaded", "_grok_processed_actions"):
+        st.session_state.pop(k, None)
+
     # ElevenLabs 세션 상태 정리
-    for k in ("elevenlabs_history", "_elevenlabs_db_loaded", "_el_processed_actions", "_el_pending_generate"):
+    for k in ("elevenlabs_history", "_elevenlabs_db_loaded", "_el_processed_actions",
+              "_el_pending_generate", "_el_cloned_voices", "_el_clone_result",
+              "_el_error_msg", "_el_credit_toast", "_el_gallery_open"):
         st.session_state.pop(k, None)
 
     # 플로팅 채팅 세션 상태 정리
@@ -249,10 +319,11 @@ def current_user() -> Optional[AuthUser]:
     uid = st.session_state.get("auth_user_id") or ""
     role = st.session_state.get("auth_role") or "student"
     sid = st.session_state.get("auth_school_id") or st.session_state.get("school_id") or "default"
+    nick = st.session_state.get("auth_nickname") or ""
     if not uid:
         return None
-    return AuthUser(user_id=uid, role=role, school_id=sid)
+    return AuthUser(user_id=uid, role=role, school_id=sid, nickname=nick)
 
 def _auth_dbg(cfg, msg: str):
     if (os.getenv("DEBUG_AUTH", "0") or "").strip() == "1":
-        print(f"[AUTH-DBG] {msg}")
+        logging.getLogger(__name__).debug("[AUTH-DBG] %s", msg)

@@ -14,6 +14,7 @@ from core.db import (
     load_nanobanana_sessions,
     delete_nanobanana_session,
     load_school_nanobanana_gallery,
+    load_mj_gallery,
 )
 from providers import google_imagen
 from ui.sidebar import SidebarState
@@ -115,13 +116,14 @@ def make_nanobanana_variant(
             st.session_state[K_ACTIVE] = ""
         st.session_state[K_DB_LOADED] = True
 
-    def _component_wrapper(sessions, active_id, frame_height=900, enabled_features=None, school_gallery=None, default_model=""):
+    def _component_wrapper(sessions, active_id, frame_height=900, enabled_features=None, school_gallery=None, source_gallery=None, default_model=""):
         return _comp_func(
             sessions=sessions,
             active_id=active_id,
             frame_height=frame_height,
             enabled_features=enabled_features or [],
             school_gallery=school_gallery,
+            source_gallery=source_gallery or [],
             default_model=default_model,
             key=COMP_KEY,
             default=None,
@@ -149,7 +151,11 @@ def make_nanobanana_variant(
 
     def _get_tab_features(cfg: AppConfig, prefix: str) -> list:
         school_id = st.session_state.get("school_id", "default")
-        return [f for f in cfg.get_enabled_features(school_id) if f.startswith(prefix)]
+        features = [f for f in cfg.get_enabled_features(school_id) if f.startswith(prefix)]
+        # nanobanana_2, nanobanana_pro도 공통 nanobanana.* 피처를 상속
+        if prefix != "nanobanana." and prefix.startswith("nanobanana"):
+            features += [f for f in cfg.get_enabled_features(school_id) if f.startswith("nanobanana.")]
+        return list(set(features))
 
     def render(cfg: AppConfig, sidebar: SidebarState):
         _init_state(cfg)
@@ -172,12 +178,26 @@ def make_nanobanana_variant(
                         model=model_id,
                     )
                 else:
+                    gen_parts = []
+                    ref_img = pending.get("reference_image", "")
+                    neg = pending.get("negative_prompt", "")
+                    style = pending.get("style_preset", "")
+                    prompt_text = pending["prompt"]
+                    if style:
+                        prompt_text = f"[Style: {style}] {prompt_text}"
+                    if neg:
+                        prompt_text = f"{prompt_text}. Avoid: {neg}"
+                    if ref_img:
+                        gen_parts.append({"text": "Edit the first image. " + prompt_text})
+                        gen_parts.append(ref_img)
+                    else:
+                        gen_parts.append({"text": prompt_text})
                     image_urls = call_with_lease(
                         cfg, test_mode=False, provider="google_imagen",
                         mock_fn=lambda: _mock_image_urls(pending["ar"], pending["num"]),
                         real_fn=lambda kp: google_imagen.gemini_generate(
                             api_key=kp["api_key"],
-                            parts=[{"text": pending["prompt"]}],
+                            parts=gen_parts,
                             aspect_ratio=pending["ar"],
                             num_images=pending["num"],
                             model=model_id,
@@ -221,6 +241,8 @@ def make_nanobanana_variant(
         _err = st.session_state.pop(K_ERROR, None)
         if _err:
             st.toast(_err, icon="⚠️")
+            from core.db import insert_error_log
+            insert_error_log(cfg, st.session_state.get("user_id", ""), st.session_state.get("school_id", "default"), tab_id, _err)
         _cred = st.session_state.pop(K_CREDIT, None)
         if _cred is not None:
             st.toast(f"크레딧 차감 완료 (잔여: {_cred})", icon="💰")
@@ -247,12 +269,41 @@ def make_nanobanana_variant(
             school_id = st.session_state.get("school_id", "default")
             school_gallery = load_school_nanobanana_gallery(cfg, school_id)
 
+        # source_gallery: MJ + NB 이미지 로드 (갤러리 피커용)
+        source_gallery = []
+        if st.session_state.get("user_id"):
+            try:
+                # MJ 이미지
+                mj_items = load_mj_gallery(cfg, st.session_state["user_id"], limit=50)
+                for item in mj_items:
+                    for url in (item.get("images") or []):
+                        if url:
+                            source_gallery.append({
+                                "source": "mj",
+                                "prompt": (item.get("prompt") or "")[:60],
+                                "url": url,
+                            })
+                # NB 이미지 (자기 자신 포함)
+                nb_sessions = load_nanobanana_sessions(cfg, st.session_state["user_id"], limit=20, tab_id=None)
+                for sess in nb_sessions:
+                    for turn in (sess.get("turns") or []):
+                        for url in (turn.get("image_urls") or []):
+                            if url:
+                                source_gallery.append({
+                                    "source": "nanobanana",
+                                    "prompt": (turn.get("prompt") or "")[:60],
+                                    "url": url,
+                                })
+            except Exception:
+                pass
+
         sessions = st.session_state.get(K_SESSIONS, [])
         active_id = st.session_state.get(K_ACTIVE, "")
         result = _component_wrapper(
             sessions=sessions, active_id=active_id,
             enabled_features=_get_tab_features(cfg, f"{credit_feature}."),
             school_gallery=school_gallery,
+            source_gallery=source_gallery,
             default_model=model_id,
         )
 
@@ -267,7 +318,7 @@ def make_nanobanana_variant(
         if dedup_key in _processed:
             return
         _processed.add(dedup_key)
-        if len(_processed) > 100:
+        if len(_processed) > 500:
             st.session_state[K_PROCESSED] = {dedup_key}
 
         if action == "open_gallery":
@@ -278,6 +329,8 @@ def make_nanobanana_variant(
             st.rerun()
 
         elif action == "generate":
+            if not _is_authenticated():
+                return
             if st.session_state.get(K_PENDING):
                 return
 
@@ -292,7 +345,10 @@ def make_nanobanana_variant(
             ar = result.get("aspect_ratio", "1:1")
             num = result.get("num_images", 1)
             prompt_text = result.get("prompt", "")
+            if len(prompt_text) > 10000:
+                prompt_text = prompt_text[:10000]
             negative_prompt = result.get("negative_prompt", "")
+            reference_image = result.get("reference_image", "")
             r_model_id = result.get("model_id", model_id)
 
             session = _find_session_or_create(r_model_id)
@@ -323,7 +379,11 @@ def make_nanobanana_variant(
                     "session_id": session["id"],
                     "turn_id": new_turn["turn_id"],
                     "ar": ar, "num": num, "prompt": prompt_text,
+                    "negative_prompt": negative_prompt,
+                    "style_preset": result.get("style_preset"),
                 }
+                if reference_image:
+                    pending_data["reference_image"] = reference_image
                 if source_images:
                     pending_data["source_images"] = source_images
                 st.session_state[K_PENDING] = pending_data

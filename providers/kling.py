@@ -19,13 +19,22 @@ def get_kling_token(access_key: str, secret_key: str) -> str:
     return token
 
 
+def _validate_kling_endpoint(endpoint: str) -> str:
+    """endpoint가 KLING_BASE로 시작하는지 검증."""
+    if not endpoint.startswith(KLING_BASE):
+        raise ValueError(f"잘못된 Kling endpoint: 허용된 base={KLING_BASE}")
+    return endpoint
+
+
 def submit_image(access_key: str, secret_key: str, endpoint: str, payload: dict):
+    endpoint = _validate_kling_endpoint(endpoint)
     token = get_kling_token(access_key, secret_key)
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     return http_post_json(endpoint, headers, payload, timeout=60)
 
 
 def submit_video(access_key: str, secret_key: str, endpoint: str, payload: dict):
+    endpoint = _validate_kling_endpoint(endpoint)
     token = get_kling_token(access_key, secret_key)
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     return http_post_json(endpoint, headers, payload, timeout=60)

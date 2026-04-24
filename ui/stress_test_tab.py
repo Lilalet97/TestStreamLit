@@ -1,8 +1,9 @@
 # ui/stress_test_tab.py
-"""부하 테스트 UI — Plan 기반 burst 모드.
+"""부하 테스트 UI — 알고리즘 검증 (Mock) + 실제 부하테스트 (Real).
 
-- 실행 패널 (admin): provider × user_counts 플랜 설정 + 실행
-- 결과 패널 (admin/viewer): 플랜별 비교 차트
+- 알고리즘 검증: Mock 모드로 키 배치 알고리즘 정상 작동 확인
+- 실제 부하테스트: Real API 호출, 라운드 간 60초 대기
+- 결과 패널: 플랜별 비교 차트
 """
 import json
 import os
@@ -14,6 +15,7 @@ import streamlit as st
 
 from core.config import AppConfig
 from core.stress_test import (
+    PROVIDER_ORDER,
     StressPlanConfig,
     run_stress_plan,
     list_plan_ids,
@@ -26,14 +28,24 @@ from core.stress_test import (
 
 # ── helpers ──────────────────────────────────────────────
 
+_PROVIDER_ORDER = PROVIDER_ORDER
+
 def _available_providers() -> list[str]:
-    """KEY_POOL_JSON에서 사용 가능한 provider 목록 추출."""
-    raw = os.getenv("KEY_POOL_JSON") or st.secrets.get("KEY_POOL_JSON", "")
+    """KEY_POOL_JSON에서 사용 가능한 provider 목록 추출 (탭 순서 기준)."""
+    try:
+        raw = str(st.secrets.get("KEY_POOL_JSON", "") or "").strip()
+    except Exception:
+        raw = ""
+    if not raw:
+        raw = os.getenv("KEY_POOL_JSON", "")
     if raw:
         try:
             kp = json.loads(raw)
             if isinstance(kp, dict):
-                return sorted(kp.keys())
+                keys = set(kp.keys())
+                ordered = [p for p in _PROVIDER_ORDER if p in keys]
+                ordered += sorted(keys - set(ordered))
+                return ordered
         except Exception:
             pass
     return ["openai"]
@@ -52,7 +64,6 @@ def _plan_live_progress():
     status = progress.get("status", "")
 
     if status in ("completed", "cancelled"):
-        # fragment가 아닌 전체 앱을 리렌더링 → 부모 함수가 completed 분기로 진입
         st.rerun(scope="app")
 
     if status != "running":
@@ -71,7 +82,6 @@ def _plan_live_progress():
     c2.metric("현재 Provider", progress.get("current_provider", "-"))
     c3.metric("현재 사용자 수", progress.get("current_users", "-"))
 
-    # 이미 완료된 라운드 요약
     results = progress.get("round_results", [])
     if results:
         _show_round_summary_table(results)
@@ -94,171 +104,324 @@ def _show_round_summary_table(results: list[dict]):
     st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
 
 
-# ── execution UI (admin only) ────────────────────────────
+# ── 공통 실행 로직 ───────────────────────────────────────
 
-def render_stress_test_execution(cfg: AppConfig):
-    """플랜 기반 부하 테스트 설정 및 실행 패널."""
-    providers = _available_providers()
+def _is_running(mock_mode: bool | None = None, test_mode: str | None = None) -> bool:
+    """테스트 실행 중 여부. test_mode 또는 mock_mode 지정 시 해당 모드만 확인."""
+    progress = st.session_state.get("_stress_progress", {})
+    if progress.get("status") != "running":
+        return False
+    if test_mode is not None:
+        return st.session_state.get("_stress_test_mode") == test_mode
+    if mock_mode is not None:
+        return st.session_state.get("_stress_mock_mode") == mock_mode
+    return True
 
+
+def _show_running_state(key_prefix: str = ""):
+    """실행 중 상태 표시 + 중지 버튼."""
+    st.warning("테스트가 실행 중입니다. 완료 또는 중지 후 새 테스트를 시작할 수 있습니다.")
+    _plan_live_progress()
+
+    if st.button("테스트 중지", type="primary", width="stretch", key=f"{key_prefix}_stop_btn"):
+        stop_ev = st.session_state.get("_stress_stop_event")
+        if stop_ev:
+            stop_ev.set()
+        st.rerun()
+
+
+def _show_completed_state(key_prefix: str = "", mock_mode: bool | None = None,
+                          test_mode: str | None = None):
+    """완료/취소 상태 표시 + 초기화."""
     progress = st.session_state.get("_stress_progress", {})
     status = progress.get("status", "")
+    if status not in ("completed", "cancelled"):
+        return False
+    if test_mode is not None and st.session_state.get("_stress_test_mode") != test_mode:
+        return False
+    if mock_mode is not None and st.session_state.get("_stress_mock_mode") != mock_mode:
+        return False
 
-    # 완료/취소된 플랜 → 결과만 보여주고 상태 초기화
-    if status in ("completed", "cancelled"):
-        st.success(f"플랜 {status}")
-        results = progress.get("round_results", [])
-        if results:
-            _show_round_summary_table(results)
-        if st.button("새 테스트 준비", width="stretch"):
-            st.session_state["_stress_progress"] = {}
-            st.rerun()
-        st.divider()
+    st.success(f"테스트 {status}")
+    results = progress.get("round_results", [])
+    if results:
+        _show_round_summary_table(results)
+    st.session_state["_stress_progress"] = {}
+    st.divider()
+    return True
 
-    # 실행 중 → 중지 버튼만 표시
-    elif status == "running":
-        st.warning("플랜이 실행 중입니다. 완료 또는 중지 후 새 테스트를 시작할 수 있습니다.")
-        _plan_live_progress()
 
-        if st.button("플랜 중지", type="primary", width="stretch"):
-            stop_ev = st.session_state.get("_stress_stop_event")
-            if stop_ev:
-                stop_ev.set()
-            st.rerun()
+def _launch_plan(cfg: AppConfig, providers: list[str], user_counts: list[int],
+                 mock_mode: bool, lease_wait: int, lease_ttl: int,
+                 mock_min: int = 100, mock_max: int = 500,
+                 test_mode: str = "mock", burst_window_sec: int = 60):
+    """플랜 생성 및 백그라운드 실행."""
+    plan_id = str(uuid.uuid4())
+    plan_config = StressPlanConfig(
+        providers=providers,
+        user_counts=user_counts,
+        test_mode=test_mode,
+        mock_mode=mock_mode,
+        mock_latency_min_ms=mock_min,
+        mock_latency_max_ms=mock_max,
+        lease_wait_sec=lease_wait,
+        lease_ttl_sec=lease_ttl,
+        burst_window_sec=burst_window_sec,
+    )
+
+    progress: dict = {}
+    stop_event = threading.Event()
+
+    st.session_state["_stress_progress"] = progress
+    st.session_state["_stress_stop_event"] = stop_event
+    st.session_state["_stress_current_plan_id"] = plan_id
+    st.session_state["_stress_mock_mode"] = mock_mode
+    st.session_state["_stress_test_mode"] = test_mode
+
+    admin_user_id = st.session_state.get("user_id", "admin")
+
+    t = threading.Thread(
+        target=run_stress_plan,
+        args=(cfg, plan_id, plan_config, admin_user_id, progress, stop_event),
+        daemon=True,
+    )
+    t.start()
+    st.rerun()
+
+
+# ── 알고리즘 검증 (Mock) ────────────────────────────────
+
+def render_algorithm_test(cfg: AppConfig):
+    """Mock 모드: 키 배치 알고리즘 정상 작동 확인."""
+    st.subheader("알고리즘 검증")
+    st.caption("실제 FIFO 대기열과 키 배정 로직을 검증합니다. API 호출 없이 mock sleep으로 대체하여 대기·분배·타임아웃 동작을 확인합니다.")
+
+    if _is_running(test_mode="mock"):
+        _show_running_state(key_prefix="algo")
         return
+    _show_completed_state(key_prefix="algo", test_mode="mock")
 
-    st.subheader("플랜 설정")
+    providers = _available_providers()
+    fixed_provider = providers[0]
 
-    with st.form("stress_plan_form"):
-        # Provider 선택 (다중)
+    with st.form("algo_test_form"):
+        st.text(f"테스트 Provider: {fixed_provider}")
+
+        user_counts_str = st.text_input(
+            "사용자 수 (쉼표 구분)",
+            value="5, 10, 15, 20",
+            help="이 수만큼 60초 내 랜덤 시점에 FIFO 요청합니다.",
+        )
+
+        try:
+            counts = [int(x.strip()) for x in user_counts_str.split(",") if x.strip()]
+        except ValueError:
+            counts = [5]
+        total_rounds = len(counts)
+        wait_min = (total_rounds - 1) * 2 if total_rounds > 1 else 1
+        st.caption(
+            f"총 {total_rounds}개 라운드  |  "
+            f"라운드별 60초 분산  |  "
+            f"예상 소요: 약 {wait_min}분+"
+        )
+
+        st.info("API를 호출하지 않습니다. FIFO 대기열 → 키 배정 → mock sleep → release 순서로 동작합니다.")
+
+        submitted = st.form_submit_button("알고리즘 검증 실행", type="primary", width="stretch")
+
+    if submitted:
+        try:
+            user_counts = [int(x.strip()) for x in user_counts_str.split(",") if x.strip()]
+        except ValueError:
+            st.error("사용자 수를 올바르게 입력해주세요.")
+            return
+        if not user_counts:
+            st.error("최소 1개 사용자 수를 입력해주세요.")
+            return
+
+        _launch_plan(
+            cfg, [fixed_provider], user_counts,
+            mock_mode=True, lease_wait=30, lease_ttl=60,
+            mock_min=100, mock_max=500, test_mode="mock",
+        )
+
+
+# ── 키 부하 테스트 (Burst) ─────────────────────────────────
+
+def render_burst_test(cfg: AppConfig):
+    """Burst 모드: FIFO 우회, 동시 burst API 호출로 키 한계 측정."""
+    st.subheader("키 부하 테스트")
+    st.caption("FIFO를 우회하고 설정한 사용자 수만큼 동시에 API를 호출하여 키의 한계를 측정합니다.")
+
+    if _is_running(test_mode="burst"):
+        _show_running_state(key_prefix="burst")
+        return
+    _show_completed_state(key_prefix="burst", test_mode="burst")
+
+    providers = _available_providers()
+
+    with st.form("stress_burst_form"):
         selected_providers = st.multiselect(
             "Provider (실행 순서대로)",
             providers,
             default=providers[:1],
-            help="선택한 순서대로 테스트가 진행됩니다.",
         )
 
-        # 동시 사용자 수 단계
         user_counts_str = st.text_input(
             "동시 사용자 수 (쉼표 구분)",
-            value="5, 10, 15",
-            help="각 provider에 대해 이 순서대로 burst 테스트가 진행됩니다.",
+            value="5, 10, 15, 20",
+            help="각 provider에 대해 이 순서대로 동시 burst 요청을 보냅니다.",
         )
 
-        col1, col2 = st.columns(2)
-        with col1:
-            mock_mode = st.toggle("Mock 모드 (API 미호출)", value=True)
-            lease_wait = st.slider("Lease 대기 시간 (초)", 5, 120, 30)
-        with col2:
-            lease_ttl = st.slider("Lease TTL (초)", 10, 120, 60)
-            if mock_mode:
-                mock_min = st.slider("Mock 최소 지연 (ms)", 50, 2000, 100)
-                mock_max = st.slider("Mock 최대 지연 (ms)", 50, 5000, 500)
-            else:
-                mock_min, mock_max = 100, 500
-
-        if not mock_mode:
-            st.warning("Real 모드: 실제 API 키를 소비합니다. 동시 요청 제한이 일시적으로 해제됩니다.")
-
-        # 총 라운드 미리보기
         try:
             counts = [int(x.strip()) for x in user_counts_str.split(",") if x.strip()]
         except ValueError:
             counts = [5]
         total_rounds = len(selected_providers) * len(counts)
-        st.caption(f"총 {total_rounds}개 라운드 예정 ({len(selected_providers)} providers × {len(counts)} steps)")
-
-        submitted = st.form_submit_button(
-            "플랜 실행",
-            type="primary",
-            width="stretch",
+        wait_min = (total_rounds - 1) if total_rounds > 1 else 0
+        st.caption(
+            f"총 {total_rounds}개 라운드  |  "
+            f"라운드 간 60초 대기  |  "
+            f"예상 소요: 약 {wait_min}분+"
         )
+
+        st.warning("실제 API 키를 소비합니다. Concurrency 한도는 테스트 중 자동으로 상향됩니다.")
+
+        submitted = st.form_submit_button("키 부하 테스트 실행", type="primary", width="stretch")
 
     if submitted:
         if not selected_providers:
             st.error("최소 1개 provider를 선택해주세요.")
             return
-
         try:
             user_counts = [int(x.strip()) for x in user_counts_str.split(",") if x.strip()]
         except ValueError:
-            st.error("사용자 수를 올바르게 입력해주세요. (예: 5, 10, 15)")
+            st.error("사용자 수를 올바르게 입력해주세요.")
             return
-
         if not user_counts:
             st.error("최소 1개 사용자 수를 입력해주세요.")
             return
 
-        plan_id = str(uuid.uuid4())
-        plan_config = StressPlanConfig(
-            providers=selected_providers,
-            user_counts=user_counts,
-            mock_mode=mock_mode,
-            mock_latency_min_ms=mock_min,
-            mock_latency_max_ms=mock_max,
-            lease_wait_sec=lease_wait,
-            lease_ttl_sec=lease_ttl,
+        _launch_plan(
+            cfg, selected_providers, user_counts,
+            mock_mode=False, lease_wait=30, lease_ttl=60,
+            test_mode="burst",
         )
 
-        progress: dict = {}
-        stop_event = threading.Event()
 
-        st.session_state["_stress_progress"] = progress
-        st.session_state["_stress_stop_event"] = stop_event
-        st.session_state["_stress_current_plan_id"] = plan_id
+# ── 실제 부하테스트 (Realistic) ───────────────────────────
 
-        admin_user_id = st.session_state.get("user_id", "admin")
+def render_stress_test_execution(cfg: AppConfig):
+    """Realistic 모드: FIFO 통해 설정된 시간 내 랜덤 순차 요청으로 실제 운영 시뮬레이션."""
+    st.subheader("실제 부하테스트")
+    st.caption("설정된 시간 동안 사용자 수만큼 랜덤 시점에 요청을 보내 실제 운영 환경을 시뮬레이션합니다. FIFO 큐를 사용합니다.")
 
-        t = threading.Thread(
-            target=run_stress_plan,
-            args=(cfg, plan_id, plan_config, admin_user_id, progress, stop_event),
-            daemon=True,
+    if _is_running(test_mode="realistic"):
+        _show_running_state(key_prefix="real")
+        return
+    _show_completed_state(key_prefix="real", test_mode="realistic")
+
+    providers = _available_providers()
+
+    with st.form("stress_real_form"):
+        selected_providers = st.multiselect(
+            "Provider (실행 순서대로)",
+            providers,
+            default=providers[:1],
         )
-        t.start()
-        st.rerun()
+
+        user_counts_str = st.text_input(
+            "사용자 수 (쉼표 구분)",
+            value="5, 10, 15, 20",
+            help="각 provider에 대해 이 수만큼 설정된 시간 내 랜덤 시점에 요청합니다.",
+        )
+
+        burst_window = st.slider(
+            "요청 분산 시간 (초)",
+            5, 120, 10,
+            key="stress_burst_window",
+            help="학생들이 몰리는 시간 폭. 10초=타이트(거의 동시), 60초=느슨(1분 분산)",
+        )
+
+        st.caption(
+            "진행 방식: [분산 시간] 동안 요청 발사 → 모든 응답 대기 → 60초 RPM 회복 → 다음 라운드"
+        )
+
+        st.warning("실제 API 키를 소비합니다. FIFO 큐를 통한 실제 운영 흐름으로 테스트합니다.")
+
+        submitted = st.form_submit_button("실제 부하테스트 실행", type="primary", width="stretch")
+
+    if submitted:
+        if not selected_providers:
+            st.error("최소 1개 provider를 선택해주세요.")
+            return
+        try:
+            user_counts = [int(x.strip()) for x in user_counts_str.split(",") if x.strip()]
+        except ValueError:
+            st.error("사용자 수를 올바르게 입력해주세요.")
+            return
+        if not user_counts:
+            st.error("최소 1개 사용자 수를 입력해주세요.")
+            return
+
+        _launch_plan(
+            cfg, selected_providers, user_counts,
+            mock_mode=False, lease_wait=30, lease_ttl=60,
+            test_mode="realistic", burst_window_sec=burst_window,
+        )
 
 
-# ── results UI (admin + viewer) ──────────────────────────
+# ── 결과 조회 ────────────────────────────────────────────
 
-def render_stress_test_results(cfg: AppConfig):
-    """플랜 기반 부하 테스트 결과 조회 + 비교 차트."""
-    # 실행 중이면 라이브 프로그레스 표시
-    if st.session_state.get("_stress_progress", {}).get("status") == "running":
-        _plan_live_progress()
-        st.divider()
+def render_stress_test_results(cfg: AppConfig, mock_mode: bool | None = None,
+                                test_mode: str | None = None):
+    """플랜 기반 부하 테스트 결과 조회 + 비교 차트.
 
-    plans = list_plan_ids(cfg, limit=20)
+    test_mode: "mock"|"burst"|"realistic" 필터 (우선).
+    mock_mode: True=Mock만, False=Real만, None=전체 (하위호환).
+    """
+    plans = list_plan_ids(cfg, limit=20, mock_mode=mock_mode, test_mode=test_mode)
     if not plans:
-        st.info("부하 테스트 결과가 없습니다.")
+        st.info("테스트 결과가 없습니다.")
         return
 
     st.subheader("플랜 목록")
 
+    if test_mode:
+        mode_suffix = f"_{test_mode}"
+    else:
+        mode_suffix = "_mock" if mock_mode is True else ("_real" if mock_mode is False else "_all")
+
     plan_options = {}
     for p in plans:
-        label = (
-            f"{p['started_at'][:19]}  |  "
-            f"{p['round_count']}라운드  |  "
-            f"{p.get('rounds', '')}"
-        )
+        # 날짜: "2026-03-20 14:30" 형식
+        ts = (p.get("started_at") or "")[:16].replace("T", " ")
+        # provider 목록: round_label에서 중복 제거
+        rounds_str = p.get("rounds", "") or ""
+        providers_set = []
+        for rl in rounds_str.split(","):
+            prov = rl.rsplit("_", 1)[0].strip()
+            if prov and prov not in providers_set:
+                providers_set.append(prov)
+        prov_tag = ", ".join(providers_set) if providers_set else "?"
+        label = f"{ts}  |  {prov_tag}  |  {p['round_count']}라운드"
         plan_options[p["plan_id"]] = label
 
     selected_plan_id = st.selectbox(
         "플랜 선택",
         options=list(plan_options.keys()),
         format_func=lambda pid: plan_options[pid],
-        key="stress_plan_select",
+        key=f"stress_plan_select{mode_suffix}",
     )
 
     if not selected_plan_id:
         return
 
-    # 해당 plan의 모든 라운드 로드
     rounds = list_stress_test_runs(cfg, limit=100, plan_id=selected_plan_id)
     if not rounds:
         st.warning("라운드 데이터를 찾을 수 없습니다.")
         return
 
-    # 라운드별 summary 수집
     round_data = []
     for r in rounds:
         summary = {}
@@ -287,50 +450,46 @@ def render_stress_test_results(cfg: AppConfig):
     # ── 플랜 요약 테이블 ──
     st.subheader("라운드별 요약")
     summary_cols = [
-        "round_label", "provider", "num_users", "status",
+        "round_label", "provider", "num_users", "status", "mock_mode",
         "total_requests", "success_rate", "avg_latency_ms",
         "p95_ms", "p99_ms", "successes", "timeouts", "errors",
     ]
     existing = [c for c in summary_cols if c in df.columns]
-    st.dataframe(df[existing], hide_index=True, width="stretch")
+    display_df = df[existing].copy()
+    if "mock_mode" in display_df.columns:
+        display_df["mock_mode"] = display_df["mock_mode"].map({True: "Mock", False: "Real"})
+        display_df = display_df.rename(columns={"mock_mode": "모드"})
+    st.dataframe(display_df, hide_index=True, width="stretch")
 
-    # ── 비교 차트: Provider별 평균 지연시간 vs 사용자 수 ──
+    # ── 비교 차트 ──
     if "num_users" in df.columns and "avg_latency_ms" in df.columns:
         st.subheader("평균 지연시간 비교 (사용자 수별)")
         try:
             pivot_latency = df.pivot_table(
-                index="num_users",
-                columns="provider",
-                values="avg_latency_ms",
-                aggfunc="first",
+                index="num_users", columns="provider",
+                values="avg_latency_ms", aggfunc="first",
             )
             st.line_chart(pivot_latency)
         except Exception:
             st.caption("지연시간 비교 차트를 생성할 수 없습니다.")
 
-    # ── 비교 차트: Provider별 성공률 vs 사용자 수 ──
     if "num_users" in df.columns and "success_rate" in df.columns:
         st.subheader("성공률 비교 (사용자 수별)")
         try:
             pivot_success = df.pivot_table(
-                index="num_users",
-                columns="provider",
-                values="success_rate",
-                aggfunc="first",
+                index="num_users", columns="provider",
+                values="success_rate", aggfunc="first",
             )
             st.line_chart(pivot_success)
         except Exception:
             st.caption("성공률 비교 차트를 생성할 수 없습니다.")
 
-    # ── 비교 차트: Provider별 P95 vs 사용자 수 ──
     if "num_users" in df.columns and "p95_ms" in df.columns:
         st.subheader("P95 지연시간 비교 (사용자 수별)")
         try:
             pivot_p95 = df.pivot_table(
-                index="num_users",
-                columns="provider",
-                values="p95_ms",
-                aggfunc="first",
+                index="num_users", columns="provider",
+                values="p95_ms", aggfunc="first",
             )
             st.line_chart(pivot_p95)
         except Exception:
@@ -345,15 +504,14 @@ def render_stress_test_results(cfg: AppConfig):
         "라운드 선택",
         options=list(round_labels.keys()),
         format_func=lambda tid: round_labels[tid],
-        key="stress_round_select",
+        key=f"stress_round_select{mode_suffix}",
     )
 
     if selected_round:
         _render_round_detail(cfg, selected_round, round_data)
 
-    # 삭제 버튼
     st.divider()
-    if st.button("이 플랜 결과 전체 삭제", key=f"del_plan_{selected_plan_id}"):
+    if st.button("이 플랜 결과 전체 삭제", key=f"del_plan{mode_suffix}_{selected_plan_id}"):
         delete_stress_plan(cfg, selected_plan_id)
         st.rerun()
 
@@ -364,10 +522,11 @@ def _render_round_detail(cfg: AppConfig, test_id: str, round_data: list[dict]):
     if not rd:
         return
 
+    mode_label = "Mock" if rd.get("mock_mode", True) else "Real"
     st.markdown(
         f"**{rd.get('round_label', '')}**  |  "
         f"**상태:** `{rd.get('status', '')}`  |  "
-        f"**Mock:** {'ON' if rd.get('mock_mode', True) else 'OFF'}"
+        f"**모드:** `{mode_label}`"
     )
 
     if rd.get("total_requests"):
@@ -385,29 +544,39 @@ def _render_round_detail(cfg: AppConfig, test_id: str, round_data: list[dict]):
 
     sdf = pd.DataFrame(samples)
 
-    # 워커별 지연시간
     if "worker_id" in sdf.columns and "duration_ms" in sdf.columns:
         st.markdown("**워커별 지연시간 (ms)**")
         worker_chart = sdf[["worker_id", "duration_ms"]].copy()
         worker_chart["worker_id"] = worker_chart["worker_id"].astype(str)
         st.bar_chart(worker_chart, x="worker_id", y="duration_ms")
 
-    # 상태 분포
     if "status" in sdf.columns:
         st.markdown("**요청 상태 분포**")
         st.bar_chart(sdf["status"].value_counts())
 
-    # 키 분배
-    key_dist = rd.get("key_distribution")
-    if key_dist:
+    key_details = rd.get("key_details")
+    if key_details:
+        st.markdown("**API 키별 상태**")
+        kd_rows = []
+        for kn, kd in key_details.items():
+            kd_rows.append({
+                "키": kn,
+                "요청": kd["requests"],
+                "성공": kd["successes"],
+                "타임아웃": kd["timeouts"],
+                "에러": kd["errors"],
+                "성공률(%)": kd["success_rate"],
+                "평균지연(ms)": kd["avg_latency_ms"],
+            })
+        st.dataframe(pd.DataFrame(kd_rows), hide_index=True, width="stretch")
+    elif rd.get("key_distribution"):
         st.markdown("**API 키별 요청 분배**")
         key_df = pd.DataFrame(
-            list(key_dist.items()),
+            list(rd["key_distribution"].items()),
             columns=["key_name", "count"],
         )
         st.bar_chart(key_df, x="key_name", y="count")
 
-    # 전체 샘플
     with st.expander("전체 샘플 데이터"):
         display_cols = [
             "worker_id", "request_seq", "duration_ms", "status",

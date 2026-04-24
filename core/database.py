@@ -1,22 +1,17 @@
 # core/database.py
 """공유 DB 연결 모듈 — db.py, key_pool.py 양쪽에서 import.
 
-- DictCursor / DictConn: libsql 결과를 dict로 반환하는 래퍼
-- get_db(): 커넥션 캐싱 + 헬스체크 + 주기적 sync
-- throttled_sync() / force_sync(): Turso 동기화 제어
+- DictCursor / DictConn: sqlite3 결과를 dict로 반환하는 래퍼
+- get_db(): 커넥션 캐싱 + 헬스체크
 """
+import logging
 import sqlite3
-import time
 from core.config import AppConfig
 
-try:
-    import libsql_experimental as libsql
-    _HAS_LIBSQL = True
-except ImportError:
-    _HAS_LIBSQL = False
+_log = logging.getLogger(__name__)
 
 
-# ── libsql 호환 dict-row wrapper ──────────────────────────
+# ── dict-row wrapper ──────────────────────────────────────
 
 class DictCursor:
     """DB-API cursor를 감싸서 fetchone/fetchall이 dict를 반환."""
@@ -52,9 +47,13 @@ class DictCursor:
     def lastrowid(self):
         return self._cur.lastrowid
 
+    @property
+    def rowcount(self):
+        return self._cur.rowcount
+
 
 class DictConn:
-    """libsql connection을 감싸서 cursor가 dict row를 반환하도록 함."""
+    """sqlite3 connection을 감싸서 cursor가 dict row를 반환하도록 함."""
     __slots__ = ("_conn",)
 
     def __init__(self, conn):
@@ -70,118 +69,82 @@ class DictConn:
 
     def commit(self):
         self._conn.commit()
-        throttled_sync()
 
-    def sync(self):
-        """Force immediate sync to Turso."""
-        force_sync()
+    def rollback(self):
+        self._conn.rollback()
 
     def close(self):
         pass  # cached → 닫지 않음
+
+    @property
+    def raw(self):
+        return self._conn
 
 
 # ── 싱글 커넥션 캐시 ──────────────────────────────────────
 
 _cached_conn = None
-_is_turso: bool = False
-_last_sync_ts: float = 0.0
-_last_write_sync_ts: float = 0.0
-_SYNC_INTERVAL = 30           # 주기적 sync: 30초 (Streamlit Cloud 안정성)
-_WRITE_SYNC_INTERVAL = 5      # 쓰기 후 sync 쓰로틀: 5초
 
 
-def throttled_sync():
-    """쓰기 후 Turso 동기화 (쓰로틀: _WRITE_SYNC_INTERVAL 초마다 최대 1회)."""
-    global _last_write_sync_ts, _last_sync_ts
-    if not _is_turso or _cached_conn is None:
-        return
-    now = time.time()
-    if (now - _last_write_sync_ts) < _WRITE_SYNC_INTERVAL:
-        return
+def _reset_cached_conn():
+    """캐시된 연결 강제 초기화 (복구용)."""
+    global _cached_conn
     try:
-        _cached_conn.sync()
-        _last_write_sync_ts = now
-        _last_sync_ts = now
+        if _cached_conn is not None:
+            _cached_conn.close()
     except Exception:
         pass
-
-
-def force_sync():
-    """즉시 Turso 동기화 (쓰로틀 무시). init_db 등 중요 시점에 호출."""
-    global _last_write_sync_ts, _last_sync_ts
-    if not _is_turso or _cached_conn is None:
-        return
-    try:
-        _cached_conn.sync()
-        now = time.time()
-        _last_write_sync_ts = now
-        _last_sync_ts = now
-    except Exception:
-        pass
+    _cached_conn = None
 
 
 def get_db(cfg: AppConfig):
-    """캐시된 libsql/sqlite3 커넥션 반환.
+    """캐시된 sqlite3 커넥션 반환.
 
     - 헬스체크(SELECT 1): 연결 끊김 시 자동 재생성
-    - 주기적 sync: Turso 원격 DB인 경우 _SYNC_INTERVAL마다
     """
-    global _cached_conn, _last_sync_ts, _is_turso
+    global _cached_conn
 
-    now = time.time()
-
-    # 1) 캐시 히트 → 헬스체크 + 주기적 sync
-    if _HAS_LIBSQL and _cached_conn is not None:
+    # 캐시 히트 → 헬스체크
+    if _cached_conn is not None:
         try:
             _cached_conn.execute("SELECT 1")
         except Exception:
-            _cached_conn = None  # 재연결 유도
+            try:
+                _cached_conn.close()
+            except Exception:
+                pass
+            _cached_conn = None
 
         if _cached_conn is not None:
-            if cfg.turso_database_url and (now - _last_sync_ts) > _SYNC_INTERVAL:
-                try:
-                    _cached_conn.sync()
-                    _last_sync_ts = now
-                except Exception:
-                    pass
             return DictConn(_cached_conn)
 
-    # 2) 신규 연결
-    url = cfg.turso_database_url
-    token = cfg.turso_auth_token
-
-    if url and _HAS_LIBSQL:
-        raw = libsql.connect(cfg.runs_db_path, sync_url=url, auth_token=token)
-        try:
-            raw.sync()
-            _last_sync_ts = now
-            _last_write_sync_ts = now
-        except Exception:
-            pass
-        _cached_conn = raw
-        _is_turso = True
-        conn = DictConn(raw)
-    elif _HAS_LIBSQL:
-        raw = libsql.connect(cfg.runs_db_path)
-        _cached_conn = raw
-        _is_turso = False
-        conn = DictConn(raw)
-    else:
-        # libsql 미설치 시 (Windows 개발환경 등) 기존 sqlite3 fallback
-        conn = sqlite3.connect(cfg.runs_db_path, check_same_thread=False)
-        conn.row_factory = sqlite3.Row
-        try:
-            conn.execute("PRAGMA journal_mode=WAL;")
-            conn.execute("PRAGMA synchronous=NORMAL;")
-            conn.execute("PRAGMA busy_timeout=5000;")
-        except Exception:
-            pass
-        return conn
-
+    # 신규 연결
+    conn = sqlite3.connect(cfg.runs_db_path, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
     try:
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA synchronous=NORMAL;")
         conn.execute("PRAGMA busy_timeout=5000;")
-    except Exception:
-        pass
-    return conn
+    except Exception as exc:
+        _log.warning("PRAGMA 설정 실패: %s", exc)
+
+    _cached_conn = conn
+    return DictConn(conn)
+
+
+def get_db_isolated(cfg: AppConfig):
+    """스레드 안전한 개별 연결 반환. 사용 후 반드시 .close() 호출."""
+    conn = sqlite3.connect(cfg.runs_db_path, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA synchronous=NORMAL;")
+        conn.execute("PRAGMA busy_timeout=10000;")
+    except Exception as exc:
+        _log.warning("PRAGMA 설정 실패: %s", exc)
+
+    class _IsolatedConn(DictConn):
+        def close(self):
+            self._conn.close()
+
+    return _IsolatedConn(conn)

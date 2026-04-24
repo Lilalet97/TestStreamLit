@@ -217,6 +217,41 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
 .image-grid.g3{grid-template-columns:1fr 1fr;max-width:600px;}
 .image-grid.g4{grid-template-columns:1fr 1fr;max-width:600px;}
 
+.gallery-picker-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity .2s;}
+.gallery-picker-overlay.open{opacity:1;}
+.gallery-picker{background:#1a1a2e;border-radius:16px;width:92%;max-width:640px;max-height:75vh;display:flex;flex-direction:column;box-shadow:0 8px 32px rgba(0,0,0,.5);overflow:hidden;}
+.gallery-picker-header{display:flex;justify-content:space-between;align-items:center;padding:16px 20px 8px;}
+.gallery-picker-title{font-size:16px;font-weight:700;color:#e4e4e7;}
+.gallery-picker-close{font-size:22px;color:#71717a;cursor:pointer;padding:4px 8px;border-radius:6px;background:none;border:none;}
+.gallery-picker-close:hover{color:var(--text-primary);}
+.gallery-picker-tabs{display:flex;gap:8px;padding:8px 20px 12px;}
+.gp-tab{padding:6px 14px;border-radius:20px;border:1px solid #3f3f46;background:none;color:#a1a1aa;font-size:13px;cursor:pointer;transition:all .15s;}
+.gp-tab.active{background:#7c3aed;color:#fff;border-color:#7c3aed;}
+.gallery-picker-scroll{flex:1;min-height:0;overflow-y:auto;padding:4px 20px 12px;}
+.gallery-picker-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;}
+.gp-item{cursor:pointer;border-radius:8px;overflow:hidden;position:relative;aspect-ratio:1;background:#111113;}
+.gp-item img{width:100%;height:100%;object-fit:cover;transition:transform .15s;}
+.gp-item:hover img{transform:scale(1.05);}
+.gp-item-badge{position:absolute;top:4px;left:4px;background:rgba(0,0,0,.6);color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;}
+.gp-item-prompt{position:absolute;bottom:0;left:0;right:0;background:linear-gradient(transparent,rgba(0,0,0,.7));color:#fff;font-size:10px;padding:12px 6px 4px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}
+.gallery-picker-empty{grid-column:1/-1;text-align:center;padding:40px 20px;color:#71717a;font-size:13px;}
+.gallery-picker-footer{padding:12px 20px;border-top:1px solid #3f3f46;text-align:center;}
+/* Gallery Lightbox */
+.gp-lb-overlay{display:none;position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.92);flex-direction:column;align-items:center;justify-content:center;}
+.gp-lb-overlay.active{display:flex;}
+.gp-lb-topbar{position:absolute;top:16px;right:16px;display:flex;gap:8px;z-index:100000;}
+.gp-lb-topbar a,.gp-lb-topbar button{width:40px;height:40px;border-radius:10px;background:rgba(255,255,255,.1);display:flex;align-items:center;justify-content:center;color:#fff;border:none;cursor:pointer;transition:background .15s;text-decoration:none;}
+.gp-lb-topbar a:hover,.gp-lb-topbar button:hover{background:rgba(255,255,255,.2);}
+.gp-lb-body{display:flex;gap:24px;padding:0 40px;max-width:1200px;width:100%;align-items:center;justify-content:center;}
+.gp-lb-img{max-width:100%;max-height:80vh;object-fit:contain;border-radius:8px;}
+.gp-lb-side{min-width:240px;max-width:320px;display:flex;flex-direction:column;gap:12px;}
+.gp-lb-meta{display:flex;gap:6px;flex-wrap:wrap;font-size:12px;color:#999;}
+.gp-lb-meta span{background:rgba(255,255,255,.08);border-radius:6px;padding:4px 10px;}
+.gp-lb-prompt-label{font-size:11px;color:#777;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;}
+.gp-lb-prompt{background:rgba(255,255,255,.08);border-radius:8px;padding:12px 16px;font-size:13px;color:#ccc;line-height:1.5;max-height:200px;overflow-y:auto;word-break:break-word;}
+.gp-lb-select{margin-top:12px;padding:10px 20px;border-radius:8px;background:#7c3aed;color:#fff;border:none;cursor:pointer;font-size:14px;font-weight:600;transition:opacity .15s;}
+.gp-lb-select:hover{filter:brightness(1.1);}
+@media(max-width:768px){.gp-lb-body{flex-direction:column;padding:0 16px;}.gp-lb-side{max-width:100%;}}
 .image-wrap{position:relative;overflow:hidden;border-radius:12px;background:var(--bg-card);min-height:120px;}
 .image-wrap img{width:100%;display:block;border-radius:12px;transition:transform .2s;}
 .image-wrap:hover img{transform:scale(1.02);}
@@ -460,10 +495,18 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
             <div class="chip-dropdown" id="styleDropdown"></div>
           </div>
         </div>
+        <div id="refPreview" style="display:none;padding:4px 12px;position:relative;">
+          <img id="refThumb" style="max-height:60px;border-radius:6px;border:1px solid var(--border-mid);">
+          <button id="refRemove" style="position:absolute;top:0;right:8px;background:rgba(0,0,0,.6);color:#fff;border:none;border-radius:50%;width:20px;height:20px;font-size:12px;cursor:pointer;line-height:20px;text-align:center;">✕</button>
+        </div>
         <div class="input-row">
           <button class="settings-toggle" id="settingsToggle" title="Settings">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
           </button>
+          <button id="refBtn" title="참고 이미지 첨부" style="background:none;border:none;color:var(--text-muted);cursor:pointer;padding:6px;display:flex;align-items:center;">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+          </button>
+          <input type="file" id="refFileInput" accept="image/*" style="display:none;">
           <div class="prompt-wrap">
             <textarea id="promptInput" placeholder="Describe the image you want to create..." rows="1"></textarea>
           </div>
@@ -472,6 +515,43 @@ button{cursor:pointer;border:none;background:none;font-family:inherit;color:inhe
           </button>
         </div>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- Gallery Picker Overlay -->
+<div class="gallery-picker-overlay" id="galleryPickerOverlay" style="display:none">
+  <div class="gallery-picker">
+    <div class="gallery-picker-header">
+      <span class="gallery-picker-title">이미지 선택</span>
+      <button class="gallery-picker-close">&times;</button>
+    </div>
+    <div class="gallery-picker-tabs">
+      <button class="gp-tab active" data-filter="all">전체</button>
+      <button class="gp-tab" data-filter="mj">MJ</button>
+      <button class="gp-tab" data-filter="nanobanana">NB</button>
+    </div>
+    <div class="gallery-picker-scroll">
+      <div class="gallery-picker-grid" id="galleryPickerGrid"></div>
+    </div>
+    <div class="gallery-picker-footer">
+      <button id="gpUploadBtn" style="background:none;border:1px solid var(--border-mid);color:var(--text-secondary);padding:8px 16px;border-radius:8px;cursor:pointer;font-size:13px;">PC에서 업로드</button>
+    </div>
+  </div>
+</div>
+
+<!-- Gallery Picker Lightbox -->
+<div class="gp-lb-overlay" id="gpLbOverlay" onclick="if(event.target===this)_closeGpLb()">
+  <div class="gp-lb-topbar">
+    <a id="gpLbDl" href="" download title="Download"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></a>
+    <button onclick="_closeGpLb()" title="Close"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+  </div>
+  <div class="gp-lb-body">
+    <img class="gp-lb-img" id="gpLbImg" src="">
+    <div class="gp-lb-side">
+      <div class="gp-lb-meta" id="gpLbMeta"></div>
+      <div><div class="gp-lb-prompt-label">PROMPT</div><div class="gp-lb-prompt" id="gpLbPrompt"></div></div>
+      <button class="gp-lb-select" id="gpLbSelect">이 이미지 선택</button>
     </div>
   </div>
 </div>
@@ -813,10 +893,8 @@ function renderChat(){
         dlBtn.title = "Download";
         dlBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
         (function(u){ dlBtn.addEventListener("click", function(){
-          var a = document.createElement("a"); a.href = u;
-          a.download = "nanobanana_" + Date.now() + ".png";
-          a.target = "_blank"; a.click();
-        }); })(url);
+          (function(_url, _name){ fetch(_url).then(function(r){return r.blob();}).then(function(b){ var a=document.createElement("a"); a.href=URL.createObjectURL(b); a.download=_name; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(a.href); }).catch(function(){ window.open(_url,"_blank"); }); })(u, "nanobanana_" + Date.now() + ".png");
+}); })(url);
         actions.appendChild(dlBtn);
         wrap.appendChild(actions);
         grid.appendChild(wrap);
@@ -892,7 +970,7 @@ function handleGenerate(){
   var s = STYLES[selectedStyleIdx];
 
   var _ts = Date.now();
-  setComponentValue({
+  var payload = {
     action: "generate",
     item_id: "nb_" + _ts,
     prompt: prompt,
@@ -904,12 +982,136 @@ function handleGenerate(){
     negative_prompt: "",
     settings: {},
     ts: _ts
-  });
+  };
+  if(_refDataUrl) { payload.reference_image = _refDataUrl; }
+  setComponentValue(payload);
 
   ta.value = "";
+  _refDataUrl = null;
+  document.getElementById("refPreview").style.display = "none";
   autoResizeInput(); updateSendBtn();
 }
 document.getElementById("sendBtn").addEventListener("click", handleGenerate);
+
+/* ── 참고 이미지 업로드 + 갤러리 피커 ── */
+var _refDataUrl = null;
+var _nbSourceGallery = [];
+
+function _resolveToDataUrl(url, cb) {
+  if (!url || url.startsWith("data:")) { cb(url); return; }
+  fetch(url).then(function(r){return r.blob();}).then(function(blob){
+    var reader = new FileReader();
+    reader.onload = function(){ cb(reader.result); };
+    reader.readAsDataURL(blob);
+  }).catch(function(){ cb(url); });
+}
+
+function _showNbGalleryPicker() {
+  var overlay = document.getElementById("galleryPickerOverlay");
+  overlay.style.display = "flex";
+  requestAnimationFrame(function(){ overlay.classList.add("open"); });
+  _renderNbPickerGrid("all");
+  overlay.querySelectorAll(".gp-tab").forEach(function(btn){ btn.classList.toggle("active", btn.getAttribute("data-filter")==="all"); });
+}
+function _hideNbGalleryPicker() {
+  var overlay = document.getElementById("galleryPickerOverlay");
+  overlay.classList.remove("open");
+  setTimeout(function(){ overlay.style.display = "none"; }, 200);
+}
+function _renderNbPickerGrid(filter) {
+  var grid = document.getElementById("galleryPickerGrid");
+  var items = _nbSourceGallery || [];
+  var filtered = filter === "all" ? items : items.filter(function(it){ return it.source === filter; });
+  if (filtered.length === 0) {
+    grid.innerHTML = '<div class="gallery-picker-empty">선택 가능한 이미지가 없습니다</div>';
+    return;
+  }
+  grid.innerHTML = filtered.map(function(it){
+    var badge = it.source === "mj" ? "MJ" : "NB";
+    return '<div class="gp-item"><img src="'+it.url+'" loading="lazy"><div class="gp-item-badge">'+badge+'</div>'+(it.prompt?'<div class="gp-item-prompt">'+it.prompt+'</div>':'')+'</div>';
+  }).join("");
+  grid.querySelectorAll(".gp-item").forEach(function(el, i){
+    el.addEventListener("click", function(){
+      _openGpLb(filtered[i]);
+    });
+  });
+}
+
+/* Gallery Picker Lightbox */
+var _gpLbCurrent = null;
+function _openGpLb(item) {
+  _gpLbCurrent = item;
+  var o = document.getElementById("gpLbOverlay");
+  document.getElementById("gpLbImg").src = item.url;
+  document.getElementById("gpLbDl").onclick = function(e){
+    e.preventDefault();
+    fetch(item.url).then(function(r){return r.blob();}).then(function(blob){
+      var a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = item.url.split("/").pop() || "download";
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(a.href);
+    }).catch(function(){ window.open(item.url,"_blank"); });
+  };
+  var meta = [];
+  if(item.source) meta.push('<span>'+(item.source==="mj"?"MJ":"NB")+'</span>');
+  if(item.prompt) meta.push('<span>'+item.prompt.slice(0,60)+'</span>');
+  document.getElementById("gpLbMeta").innerHTML = meta.join("");
+  var pr = document.getElementById("gpLbPrompt");
+  pr.textContent = item.prompt || "";
+  pr.style.display = item.prompt ? "block" : "none";
+  o.classList.add("active");
+}
+function _closeGpLb() { document.getElementById("gpLbOverlay").classList.remove("active"); }
+document.getElementById("gpLbSelect").addEventListener("click", function(){
+  if(!_gpLbCurrent) return;
+  _resolveToDataUrl(_gpLbCurrent.url, function(dataUrl){
+    _refDataUrl = dataUrl;
+    document.getElementById("refThumb").src = dataUrl;
+    document.getElementById("refPreview").style.display = "block";
+    _closeGpLb();
+    _hideNbGalleryPicker();
+  });
+});
+document.addEventListener("keydown", function(e){ if(e.key==="Escape" && document.getElementById("gpLbOverlay").classList.contains("active")) _closeGpLb(); });
+
+// 갤러리 피커 이벤트
+(function(){
+  var overlay = document.getElementById("galleryPickerOverlay");
+  if(!overlay) return;
+  overlay.addEventListener("click", function(e){ if(e.target===overlay) _hideNbGalleryPicker(); });
+  overlay.querySelector(".gallery-picker-close").addEventListener("click", _hideNbGalleryPicker);
+  overlay.querySelectorAll(".gp-tab").forEach(function(btn){
+    btn.addEventListener("click", function(){
+      overlay.querySelectorAll(".gp-tab").forEach(function(b){ b.classList.remove("active"); });
+      btn.classList.add("active");
+      _renderNbPickerGrid(btn.getAttribute("data-filter"));
+    });
+  });
+  document.getElementById("gpUploadBtn").addEventListener("click", function(){
+    _hideNbGalleryPicker();
+    document.getElementById("refFileInput").click();
+  });
+})();
+
+document.getElementById("refBtn").addEventListener("click", function(){
+  _showNbGalleryPicker();
+});
+document.getElementById("refFileInput").addEventListener("change", function(e){
+  var file = e.target.files[0]; if(!file) return;
+  var reader = new FileReader();
+  reader.onload = function(ev){
+    _refDataUrl = ev.target.result;
+    document.getElementById("refThumb").src = _refDataUrl;
+    document.getElementById("refPreview").style.display = "block";
+  };
+  reader.readAsDataURL(file);
+  e.target.value = "";
+});
+document.getElementById("refRemove").addEventListener("click", function(){
+  _refDataUrl = null;
+  document.getElementById("refPreview").style.display = "none";
+});
 
 /* ── 잠금 판정 ── */
 function applyFeatureLocks(enabledFeatures) {
@@ -931,6 +1133,8 @@ window.addEventListener("message", function(event){
   if(event.data.type !== "streamlit:render") return;
   var args = event.data.args || {};
   setFrameHeight(document.body.scrollHeight);
+
+  _nbSourceGallery = args.source_gallery || [];
 
   var schoolGallery = args.school_gallery;
   if (schoolGallery && Array.isArray(schoolGallery)) {
@@ -996,11 +1200,13 @@ document.addEventListener("keydown", function(e){
 });
 document.getElementById("lbDownload").addEventListener("click", function(){
   if(!_lbCurrentUrl) return;
-  var a = document.createElement("a");
-  a.href = _lbCurrentUrl;
-  a.download = "nanobanana_" + Date.now() + ".png";
-  a.target = "_blank";
-  a.click();
+  fetch(_lbCurrentUrl).then(function(r){return r.blob();}).then(function(blob){
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "nanobanana_" + Date.now() + ".png";
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(a.href);
+  }).catch(function(){ window.open(_lbCurrentUrl,"_blank"); });
 });
 
 /* ══════════════════════════════════════
@@ -1023,10 +1229,10 @@ function renderSchoolGallery(items) {
       var card = document.createElement('div');
       card.className = 'sg-card';
       card.innerHTML =
-        '<img src="' + imgUrl + '" loading="lazy" onerror="this.style.display=\'none\'">' +
+        '<img src="' + escHtml(imgUrl) + '" loading="lazy" onerror="this.style.display=\'none\'">' +
         '<div class="sg-card-info">' +
-          '<div class="sg-card-prompt">' + (item.prompt || '').replace(/</g,'&lt;') + '</div>' +
-          '<div class="sg-card-meta"><span>' + (item.user_id || '') + '</span><span>' + (item.model_label || '') + '</span></div>' +
+          '<div class="sg-card-prompt">' + escHtml(item.prompt || '') + '</div>' +
+          '<div class="sg-card-meta"><span>' + escHtml(item.nickname || item.user_id || '') + '</span><span>' + escHtml(item.model_label || '') + '</span></div>' +
         '</div>';
       grid.appendChild(card);
     });

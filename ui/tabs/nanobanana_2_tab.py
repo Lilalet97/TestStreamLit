@@ -4,7 +4,7 @@ from ui.tabs._nanobanana_factory import make_nanobanana_variant
 
 TAB = make_nanobanana_variant(
     tab_id="nanobanana_2",
-    title="\U0001f34c NanoBanana 2",
+    title="NanoBanana 2",
     feature_key="tab.nanobanana_2",
     get_model=lambda cfg: cfg.google_imagen_model_2,
     state_prefix="nb2",

@@ -10,7 +10,7 @@ import re
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
-from urllib.parse import quote as url_quote
+from urllib.parse import quote as url_quote, urlparse
 
 import requests
 
@@ -175,10 +175,17 @@ def upload_media_urls(
 
     result = []
     for du in data_urls:
-        if not du or not du.startswith("data:"):
-            result.append(du)  # 이미 URL이거나 빈 값
+        if not du:
+            result.append(du)
             continue
-        gcs_url = upload_single(sa_json, bucket, du, prefix)
+        upload_target = du
+        # HTTP(S) URL → data URL로 변환 후 업로드
+        if not du.startswith("data:") and du.startswith("http"):
+            upload_target = resolve_to_data_url(du)
+        if not upload_target.startswith("data:"):
+            result.append(du)  # 변환 실패 시 원본 유지
+            continue
+        gcs_url = upload_single(sa_json, bucket, upload_target, prefix)
         result.append(gcs_url if gcs_url else du)
     return result
 
@@ -196,7 +203,7 @@ def upload_single_media_url(
     return gcs_url if gcs_url else data_url
 
 
-def resolve_to_data_url(url: str, timeout: int = 30) -> str:
+def resolve_to_data_url(url: str, timeout: int = 30, auth_token: str = "") -> str:
     """URL → data URL 변환 (Gemini inline_data용).
 
     - data: URL → 그대로 반환
@@ -208,11 +215,71 @@ def resolve_to_data_url(url: str, timeout: int = 30) -> str:
     if url.startswith("data:"):
         return url
 
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        logger.warning("resolve_to_data_url: rejected non-http scheme: %s", parsed.scheme)
+        return url
+
+    # Midjourney CDN → useapi proxy 경유
+    if parsed.hostname == "cdn.midjourney.com" and not auth_token:
+        import os
+        try:
+            import streamlit as st
+            _useapi_token = str(st.secrets.get("USEAPI_TOKEN", "") or "").strip()
+        except Exception:
+            _useapi_token = ""
+        if not _useapi_token:
+            _useapi_token = os.getenv("USEAPI_TOKEN", "")
+        if _useapi_token:
+            from urllib.parse import quote
+            proxy_url = f"https://api.useapi.net/v1/proxy/cdn-midjourney/?cdnUrl={quote(url, safe='')}"
+            return resolve_to_data_url(proxy_url, timeout, auth_token=_useapi_token)
+
+    # Block private/internal IPs
+    import socket
     try:
-        resp = requests.get(url, timeout=timeout)
+        ip = socket.getaddrinfo(parsed.hostname, None)[0][4][0]
+        import ipaddress
+        addr = ipaddress.ip_address(ip)
+        if addr.is_private or addr.is_loopback or addr.is_link_local:
+            logger.warning("resolve_to_data_url: blocked private IP: %s -> %s", parsed.hostname, ip)
+            return url
+    except Exception:
+        pass  # DNS resolution failure — let requests handle it
+
+    _MAX_RESOLVE_BYTES = 50 * 1024 * 1024  # 50MB
+
+    try:
+        _headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        }
+        if auth_token:
+            _headers["Authorization"] = f"Bearer {auth_token}"
+        resp = requests.get(url, headers=_headers, timeout=timeout, allow_redirects=True, stream=True)
         if resp.status_code != 200:
             logger.warning("resolve_to_data_url download failed (%d): %s", resp.status_code, url[:100])
+            resp.close()
             return url
+
+        try:
+            content_len = int(resp.headers.get("Content-Length", 0))
+        except (ValueError, TypeError):
+            content_len = 0
+        if content_len > _MAX_RESOLVE_BYTES:
+            resp.close()
+            logger.warning("resolve_to_data_url too large (%d bytes): %s", content_len, url[:100])
+            return url
+
+        chunks = []
+        downloaded = 0
+        for chunk in resp.iter_content(chunk_size=1024 * 1024):
+            downloaded += len(chunk)
+            if downloaded > _MAX_RESOLVE_BYTES:
+                resp.close()
+                logger.warning("resolve_to_data_url exceeded size limit: %s", url[:100])
+                return url
+            chunks.append(chunk)
+        content = b"".join(chunks)
 
         mime = resp.headers.get("Content-Type", "").split(";")[0].strip()
         if not mime:
@@ -229,7 +296,7 @@ def resolve_to_data_url(url: str, timeout: int = 30) -> str:
             else:
                 mime = "application/octet-stream"
 
-        b64 = base64.b64encode(resp.content).decode("ascii")
+        b64 = base64.b64encode(content).decode("ascii")
         return f"data:{mime};base64,{b64}"
     except Exception as e:
         logger.warning("resolve_to_data_url exception: %s — %s", url[:100], e)

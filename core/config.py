@@ -1,11 +1,15 @@
 # core/config.py
+import logging
 import os
+import re
 import streamlit as st
 import uuid
 import json
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 from pathlib import Path
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -17,6 +21,7 @@ class AppConfig:
     openai_model: str
     kling_model: str
     elevenlabs_model: str
+    elevenlabs_vtv_model: str
     google_imagen_model: str
     google_imagen_model_pro: str
     google_imagen_model_2: str
@@ -37,16 +42,11 @@ class AppConfig:
 
     tenant_config_dir: str
 
-    # Turso (libSQL remote DB)
-    turso_database_url: str = ""
-    turso_auth_token: str = ""
-
     # Suno
     suno_accounts_json: str = "[]"
 
     # Vertex AI (google_imagen, google_veo 공용)
     vertex_sa_json: str = ""
-    vertex_project_id: str = ""
     vertex_location: str = "us-central1"
 
     # GCS (미디어 업로드 — 미설정 시 기존 base64 방식 유지)
@@ -115,7 +115,13 @@ class AppConfig:
 
 
 def _get_secret_or_env(key: str, default: str = "") -> str:
-    return (st.secrets.get(key, "") or os.getenv(key, default) or "").strip()
+    try:
+        v = str(st.secrets.get(key, "") or "").strip()
+    except Exception:
+        v = ""
+    if not v:
+        v = (os.getenv(key, default) or "").strip()
+    return v
 
 def _parse_csv_list(v: str) -> List[str]:
     return [x.strip() for x in (v or "").split(",") if x.strip()]
@@ -159,6 +165,11 @@ def _load_tenant_json(tenant_dir: str, school_id: str) -> Optional[dict]:
     """
     sid = (school_id or "default").strip() or "default"
 
+    # Path traversal 방어: school_id에 허용된 문자만 통과
+    if not re.match(r'^[a-zA-Z0-9_-]+$', sid):
+        _log.warning("Invalid school_id rejected: %s", sid[:50])
+        return {}
+
     candidates = []
 
     base = Path(tenant_dir) if tenant_dir else Path(".")
@@ -168,7 +179,11 @@ def _load_tenant_json(tenant_dir: str, school_id: str) -> Optional[dict]:
     candidates += [Path("tenants") / f"{sid}.json", Path("tenants") / "default.json"]
     candidates += [Path(f"{sid}.json"), Path("default.json")]
 
+    base_resolved = base.resolve()
     for p in candidates:
+        # resolved-path check: 파일이 base 디렉토리 바깥을 가리키지 않는지 확인
+        if not p.resolve().is_relative_to(base_resolved):
+            continue
         j = _load_json_file(p)
         if isinstance(j, dict):
             return j
@@ -202,8 +217,11 @@ def load_config() -> AppConfig:
     tenant_config_dir = _get_secret_or_env("TENANT_CONFIG_DIR", ".")
     debug_auth = os.getenv("DEBUG_AUTH", "0") == "1"
 
-    if "KEY_POOL_JSON" in st.secrets and not os.getenv("KEY_POOL_JSON"):
-        os.environ["KEY_POOL_JSON"] = str(st.secrets["KEY_POOL_JSON"])
+    try:
+        if "KEY_POOL_JSON" in st.secrets and not os.getenv("KEY_POOL_JSON"):
+            os.environ["KEY_POOL_JSON"] = str(st.secrets["KEY_POOL_JSON"])
+    except Exception:
+        pass
 
     # OPENAI_API_KEY: 개별 시크릿이 없으면 KEY_POOL_JSON의 첫 번째 openai 키에서 자동 추출
     openai_api_key = _get_secret_or_env("OPENAI_API_KEY", "")
@@ -216,9 +234,10 @@ def load_config() -> AppConfig:
         openai_model=_get_secret_or_env("OPENAI_MODEL", "gpt-4o-mini"),
         kling_model=_get_secret_or_env("KLING_MODEL", "kling-v2.6-std"),
         elevenlabs_model=_get_secret_or_env("ELEVENLABS_MODEL", "eleven_multilingual_v2"),
+        elevenlabs_vtv_model=_get_secret_or_env("ELEVENLABS_VTV_MODEL", "eleven_english_sts_v2"),
         google_imagen_model=_get_secret_or_env("GOOGLE_IMAGEN_MODEL", "gemini-2.5-flash-image"),
-        google_imagen_model_pro=_get_secret_or_env("GOOGLE_IMAGEN_MODEL_PRO", "gemini-3.0-pro-image"),
-        google_imagen_model_2=_get_secret_or_env("GOOGLE_IMAGEN_MODEL_2", "gemini-3.1-flash-image"),
+        google_imagen_model_pro=_get_secret_or_env("GOOGLE_IMAGEN_MODEL_PRO", "gemini-3-pro-image-preview"),
+        google_imagen_model_2=_get_secret_or_env("GOOGLE_IMAGEN_MODEL_2", "gemini-3.1-flash-image-preview"),
         google_veo_model=_get_secret_or_env("GOOGLE_VEO_MODEL", "veo-3.1-generate-preview"),
         grok_model=_get_secret_or_env("GROK_MODEL", "grok-imagine-video"),
 
@@ -233,13 +252,9 @@ def load_config() -> AppConfig:
 
         tenant_config_dir=tenant_config_dir,
 
-        turso_database_url=_get_secret_or_env("TURSO_DATABASE_URL", ""),
-        turso_auth_token=_get_secret_or_env("TURSO_AUTH_TOKEN", ""),
-
         suno_accounts_json=_get_secret_or_env("SUNO_ACCOUNTS_JSON", "[]"),
 
         vertex_sa_json=_get_secret_or_env("VERTEX_SA_JSON", ""),
-        vertex_project_id=_get_secret_or_env("VERTEX_PROJECT_ID", ""),
         vertex_location=_get_secret_or_env("VERTEX_LOCATION", "us-central1"),
 
         gcs_bucket_name=_get_secret_or_env("GCS_BUCKET_NAME", ""),

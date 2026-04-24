@@ -1,0 +1,8 @@
+[
+  {
+    "origin": ["https://studio.aimzedu.com", "http://localhost:8501", "http://localhost:3000"],
+    "method": ["GET"],
+    "responseHeader": ["Content-Type"],
+    "maxAgeSeconds": 3600
+  }
+]

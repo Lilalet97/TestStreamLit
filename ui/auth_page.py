@@ -11,6 +11,7 @@ from core.auth import (
     maybe_seed_admin_from_env,
     hash_password,
     try_restore_login,
+    _check_login_rate,
 )
 from core.db import upsert_user
 
@@ -36,6 +37,7 @@ def render_auth_gate(cfg: AppConfig):
             user_id=pending.get("user_id", ""),
             role=pending.get("role", "user"),
             school_id=pending.get("school_id", "default"),
+            nickname=pending.get("nickname", ""),
         )
         if user.user_id:
             login_user(cfg, user, remember=True)
@@ -92,6 +94,12 @@ def _render_bootstrap_admin(cfg: AppConfig):
             st.error("ID/PW를 입력해주세요.")
             return None
 
+        # 레이스 컨디션 방지: 제출 직전 다시 확인
+        if not is_bootstrap_needed(cfg):
+            st.warning("이미 관리자가 생성되었습니다. 로그인해주세요.")
+            st.rerun()
+            return None
+
         upsert_user(
             cfg,
             user_id=user_id,
@@ -113,8 +121,22 @@ def _render_bootstrap_admin(cfg: AppConfig):
 
 
 def _render_login(cfg: AppConfig):
-    st.title("로그인")
+    # ── 로그인 화면에서 사이드바 숨김 ──
+    st.markdown(
+        '<style>section[data-testid="stSidebar"]{display:none!important;}</style>',
+        unsafe_allow_html=True,
+    )
 
+    # ── 타이틀 ──
+    st.markdown(
+        '<div style="text-align:center;margin-bottom:24px;">'
+        '<h1 style="margin-bottom:4px;">AIMZ Studio</h1>'
+        '<p style="opacity:0.7;font-size:0.95em;">AI Creative Education Platform</p>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    # ── 로그인 폼 ──
     with st.form("login_form"):
         user_id = st.text_input("ID")
         password = st.text_input("PW", type="password")
@@ -126,7 +148,16 @@ def _render_login(cfg: AppConfig):
             st.error("ID/PW를 입력해주세요.")
             return None
 
-        u = authenticate(cfg, user_id, password)
+        lockout_msg = _check_login_rate(user_id)
+        if lockout_msg:
+            st.error(lockout_msg)
+            return None
+
+        try:
+            u = authenticate(cfg, user_id, password)
+        except RuntimeError as e:
+            st.error(str(e))
+            return None
         if not u:
             st.error("로그인 실패: ID/PW를 확인해주세요.")
             return None
@@ -136,7 +167,27 @@ def _render_login(cfg: AppConfig):
             "user_id": u.user_id,
             "role": u.role,
             "school_id": u.school_id,
+            "nickname": u.nickname,
         }
         st.rerun()
+
+    # ── 서비스 소개 + 보안 정책 + 문의처 (줄글, 하단 고정) ──
+    _footer_style = (
+        'text-align:center;font-size:0.78em;opacity:0.45;'
+        'line-height:1.9;margin-top:48px;padding-top:16px;'
+        'border-top:1px solid rgba(128,128,128,0.2);'
+    )
+    st.markdown(
+        f'<div style="{_footer_style}">'
+        'AIMZ Studio는 GPT, 이미지, 영상, 음성, 음악 등 '
+        '다양한 생성형 AI 도구를 제공하는 교육용 플랫폼입니다.<br>'
+        '승인된 사용자만 이용할 수 있으며, 모든 비밀번호는 PBKDF2-SHA256 방식으로 암호화됩니다.<br>'
+        '세션은 24시간 후 자동 만료되며, 5회 연속 로그인 실패 시 60초간 잠금됩니다.<br><br>'
+        'Tel. +82 10.2607.2592 &nbsp;|&nbsp; '
+        '<a href="mailto:jinhlee@aimz.media" style="color:inherit;">jinhlee@aimz.media</a><br>'
+        'AIMZ EDU &copy; 2026'
+        '</div>',
+        unsafe_allow_html=True,
+    )
 
     return None

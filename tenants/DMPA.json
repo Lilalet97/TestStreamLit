@@ -1,0 +1,18 @@
+{
+  "tenant_id": "DMPA",
+  "layout": "디지털미디어산업진흥협회",
+  "enabled_features": [
+    "tab.gpt",
+    "tab.mj_paid", "mj.create", "mj.imagine", "mj.explore",
+    "tab.nanobanana_pro", "nanobanana.generate", "nanobanana.gallery",
+    "tab.kling_grok", "kling.text2video", "kling.assets",
+    "tab.elevenlabs", "elevenlabs.tts", "elevenlabs.vtv", "elevenlabs.sfx", "elevenlabs.clone", "elevenlabs.gallery",
+    "tab.deepfake", "tab.ai_avatar", "tab.voice_clone", "tab.ai_presentation", "tab.video_edit", "tab.ai_translation"
+  ],
+  "branding": {
+    "page_title": "디지털 미디어 콘텐츠 기획자 양성 과정",
+    "browser_tab_title": "DMPA",
+    "logo_path": "tenants/logos/DMPA_logo.png",
+    "main_path": "tenants/logos/DMPA_main.png"
+  }
+}

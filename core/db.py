@@ -1,16 +1,29 @@
 # core/db.py
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+import logging
 import uuid
 
 import json
 
 from core.redact import json_dumps_safe
 from core.config import AppConfig
-from core.database import get_db, force_sync
+from core.database import get_db
+
+_log = logging.getLogger(__name__)
 
 
 def now_iso():
-    return datetime.utcnow().isoformat() + "Z"
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _safe_json_loads(val, default=None):
+    """json.loads with fallback — malformed JSON returns default instead of raising."""
+    if not val:
+        return default if default is not None else []
+    try:
+        return json.loads(val)
+    except (json.JSONDecodeError, ValueError, TypeError):
+        return default if default is not None else []
 
 
 _DB_INITIALIZED = False
@@ -19,8 +32,17 @@ def init_db(cfg: AppConfig):
     global _DB_INITIALIZED
     if _DB_INITIALIZED:
         return
-    conn = get_db(cfg)
-    cur = conn.cursor()
+    # 연결 실패 시 재시도 (최대 2회)
+    for _attempt in range(2):
+        try:
+            conn = get_db(cfg)
+            cur = conn.cursor()
+            break
+        except Exception:
+            from core.database import _reset_cached_conn
+            _reset_cached_conn()
+            if _attempt == 1:
+                raise
     # runs: 레거시 — LEGACY_TABLES에서 관리, init_db에서 더 이상 생성하지 않음
 
     cur.execute("""
@@ -208,11 +230,16 @@ def init_db(cfg: AppConfig):
         pass
     # video_url → video_urls_json 마이그레이션 (기존 단일값 → JSON 배열)
     try:
-        cur.execute("""
-            UPDATE kling_web_history
-            SET video_urls_json = '["' || video_url || '"]'
+        migrate_cur = conn.cursor()
+        migrate_cur.execute("""
+            SELECT id, video_url FROM kling_web_history
             WHERE video_url IS NOT NULL AND video_url != '' AND video_urls_json IS NULL
         """)
+        for row in migrate_cur.fetchall():
+            conn.execute(
+                "UPDATE kling_web_history SET video_urls_json = ? WHERE id = ?",
+                (json.dumps([row["video_url"]]), row["id"]),
+            )
     except Exception:
         pass
 
@@ -223,6 +250,15 @@ def init_db(cfg: AppConfig):
         pass
     try:
         cur.execute("ALTER TABLE kling_web_history ADD COLUMN end_frame_data TEXT")
+    except Exception:
+        pass
+    # ── kling_web_history 마이그레이션: 백그라운드 폴링용 task_id/task_type ──
+    try:
+        cur.execute("ALTER TABLE kling_web_history ADD COLUMN task_id TEXT")
+    except Exception:
+        pass
+    try:
+        cur.execute("ALTER TABLE kling_web_history ADD COLUMN task_type TEXT")
     except Exception:
         pass
 
@@ -291,6 +327,12 @@ def init_db(cfg: AppConfig):
     # ── users 테이블 마이그레이션: suno_account_id 컬럼 ──
     try:
         cur.execute("ALTER TABLE users ADD COLUMN suno_account_id INTEGER DEFAULT 0")
+    except Exception:
+        pass  # 이미 존재
+
+    # ── users 테이블 마이그레이션: nickname 컬럼 ──
+    try:
+        cur.execute("ALTER TABLE users ADD COLUMN nickname TEXT DEFAULT ''")
     except Exception:
         pass  # 이미 존재
 
@@ -445,10 +487,75 @@ def init_db(cfg: AppConfig):
         )
     """)
 
+    # ── 문의 (support tickets) ──
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS support_tickets (
+          ticket_id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id TEXT NOT NULL,
+          school_id TEXT,
+          subject TEXT NOT NULL,
+          message TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'open',
+          created_at TEXT,
+          updated_at TEXT,
+          reply TEXT,
+          reply_at TEXT,
+          reply_by TEXT,
+          user_seen_reply INTEGER NOT NULL DEFAULT 0
+        )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_support_tickets_user ON support_tickets(user_id, created_at DESC)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_support_tickets_status ON support_tickets(status, created_at DESC)")
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS admin_audit_log (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          ts TEXT NOT NULL,
+          admin_user_id TEXT NOT NULL,
+          action TEXT NOT NULL,
+          target TEXT,
+          detail TEXT
+        )
+    """)
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_admin_audit_ts
+        ON admin_audit_log(ts DESC)
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS error_log (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id TEXT NOT NULL,
+          school_id TEXT NOT NULL DEFAULT 'default',
+          tab TEXT NOT NULL,
+          error_text TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        )
+    """)
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_error_log_user
+        ON error_log(user_id, created_at DESC)
+    """)
+
     conn.commit()
     conn.close()
-    force_sync()  # 스키마 변경을 Turso에 즉시 반영
     _DB_INITIALIZED = True
+
+
+def log_admin_action(cfg: AppConfig, admin_user_id: str, action: str, target: str = "", detail: str = ""):
+    """관리자 작업 감사 로그 기록."""
+    conn = get_db(cfg)
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO admin_audit_log (ts, admin_user_id, action, target, detail) VALUES (?, ?, ?, ?, ?)",
+            (now_iso(), admin_user_id, action, target, detail),
+        )
+        conn.commit()
+    except Exception:
+        _log.warning("admin audit log failed", exc_info=True)
+    finally:
+        conn.close()
 
 
 _NOTICE_TABLES_ENSURED = False
@@ -484,6 +591,24 @@ def ensure_notice_tables(cfg: AppConfig):
               created_at TEXT
             )
         """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS support_tickets (
+              ticket_id INTEGER PRIMARY KEY AUTOINCREMENT,
+              user_id TEXT NOT NULL,
+              school_id TEXT,
+              subject TEXT NOT NULL,
+              message TEXT NOT NULL,
+              status TEXT NOT NULL DEFAULT 'open',
+              created_at TEXT,
+              updated_at TEXT,
+              reply TEXT,
+              reply_at TEXT,
+              reply_by TEXT,
+              user_seen_reply INTEGER NOT NULL DEFAULT 0
+            )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_support_tickets_user ON support_tickets(user_id, created_at DESC)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_support_tickets_status ON support_tickets(status, created_at DESC)")
         conn.commit()
     finally:
         conn.close()
@@ -497,8 +622,8 @@ def cleanup_orphan_active_jobs(cfg: AppConfig):
     """
     conn = None
     try:
-        cutoff_ts = datetime.utcnow().timestamp() - cfg.active_job_ttl_sec
-        cutoff_str = datetime.utcfromtimestamp(cutoff_ts).isoformat() + "Z"
+        cutoff_ts = datetime.now(timezone.utc).timestamp() - cfg.active_job_ttl_sec
+        cutoff_str = datetime.fromtimestamp(cutoff_ts, tz=timezone.utc).isoformat().replace("+00:00", "Z")
 
         conn = get_db(cfg)
         cur = conn.cursor()
@@ -548,39 +673,42 @@ def list_users(cfg: AppConfig, include_inactive: bool = True):
     try:
         cur = conn.cursor()
         if include_inactive:
-            cur.execute("SELECT * FROM users ORDER BY role DESC, user_id ASC")
+            cur.execute("SELECT * FROM users ORDER BY role ASC, user_id ASC")
         else:
-            cur.execute("SELECT * FROM users WHERE is_active=1 ORDER BY role DESC, user_id ASC")
+            cur.execute("SELECT * FROM users WHERE is_active=1 ORDER BY role ASC, user_id ASC")
         return cur.fetchall()
     finally:
         conn.close()
 
 
-def upsert_user(cfg: AppConfig, user_id: str, password_hash: str, role: str = 'user', school_id: str = 'default', is_active: int = 1):
+def upsert_user(cfg: AppConfig, user_id: str, password_hash: str, role: str = 'user', school_id: str = 'default', is_active: int = 1, nickname: str = ''):
     conn = get_db(cfg)
     try:
         cur = conn.cursor()
         ts = now_iso()
         cur.execute(
             """
-            INSERT INTO users (user_id, password_hash, role, school_id, is_active, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO users (user_id, password_hash, role, school_id, is_active, nickname, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(user_id) DO UPDATE SET
                 password_hash=excluded.password_hash,
                 role=excluded.role,
                 school_id=excluded.school_id,
                 is_active=excluded.is_active,
+                nickname=excluded.nickname,
                 updated_at=excluded.updated_at
             """,
-            (user_id, password_hash, role, school_id, int(is_active), ts, ts),
+            (user_id, password_hash, role, school_id, int(is_active), nickname, ts, ts),
         )
         conn.commit()
     finally:
         conn.close()
+    # 비밀번호가 변경되었을 수 있으므로 기존 세션 무효화
+    revoke_all_user_sessions(cfg, user_id)
 
 
-def update_user_fields(cfg: AppConfig, user_id: str, *, role: str | None = None, school_id: str | None = None, suno_account_id: int | None = None):
-    """role, school_id, suno_account_id 중 변경할 필드만 업데이트."""
+def update_user_fields(cfg: AppConfig, user_id: str, *, role: str | None = None, school_id: str | None = None, suno_account_id: int | None = None, nickname: str | None = None):
+    """role, school_id, suno_account_id, nickname 중 변경할 필드만 업데이트."""
     parts, params = [], []
     if role is not None:
         parts.append("role=?"); params.append(role)
@@ -588,6 +716,8 @@ def update_user_fields(cfg: AppConfig, user_id: str, *, role: str | None = None,
         parts.append("school_id=?"); params.append(school_id)
     if suno_account_id is not None:
         parts.append("suno_account_id=?"); params.append(suno_account_id)
+    if nickname is not None:
+        parts.append("nickname=?"); params.append(nickname)
     if not parts:
         return
     parts.append("updated_at=?"); params.append(now_iso())
@@ -608,6 +738,8 @@ def set_user_password(cfg: AppConfig, user_id: str, password_hash: str):
         conn.commit()
     finally:
         conn.close()
+    # 비밀번호 변경 시 모든 기존 세션 무효화
+    revoke_all_user_sessions(cfg, user_id)
 
 
 def set_user_active(cfg: AppConfig, user_id: str, is_active: bool):
@@ -625,14 +757,16 @@ def hard_delete_user(cfg: AppConfig, user_id: str):
     try:
         cur = conn.cursor()
         cur.execute("DELETE FROM users WHERE user_id=?", (user_id,))
-        cur.execute("DELETE FROM user_credits WHERE user_id=?", (user_id,))
+        cur.execute("DELETE FROM user_balance WHERE user_id=?", (user_id,))
+        cur.execute("DELETE FROM credit_usage_log WHERE user_id=?", (user_id,))
+        cur.execute("DELETE FROM user_sessions WHERE user_id=?", (user_id,))
         conn.commit()
     finally:
         conn.close()
 
 def _expires_iso(ttl_sec: int) -> str:
-    dt = datetime.utcnow() + timedelta(seconds=int(ttl_sec))
-    return dt.isoformat() + "Z"
+    dt = datetime.now(timezone.utc) + timedelta(seconds=int(ttl_sec))
+    return dt.isoformat().replace("+00:00", "Z")
 
 
 def create_user_session(cfg: AppConfig, user_id: str, role: str, school_id: str, ttl_sec: int = 86400) -> str:
@@ -678,7 +812,11 @@ def touch_user_session(cfg: AppConfig, token: str):
     conn = get_db(cfg)
     try:
         cur = conn.cursor()
-        cur.execute("UPDATE user_sessions SET last_seen=? WHERE session_token=?", (now_iso(), token))
+        cur.execute(
+            "UPDATE user_sessions SET last_seen=? "
+            "WHERE session_token=? AND revoked=0 AND expires_at > ?",
+            (now_iso(), token, now_iso()),
+        )
         conn.commit()
     finally:
         conn.close()
@@ -691,6 +829,15 @@ def revoke_user_session(cfg: AppConfig, token: str):
     try:
         cur = conn.cursor()
         cur.execute("UPDATE user_sessions SET revoked=1, last_seen=? WHERE session_token=?", (now_iso(), token))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def revoke_all_user_sessions(cfg, user_id):
+    conn = get_db(cfg)
+    try:
+        conn.execute("UPDATE user_sessions SET revoked=1 WHERE user_id=?", (user_id,))
         conn.commit()
     finally:
         conn.close()
@@ -795,12 +942,12 @@ def load_mj_gallery(cfg: AppConfig, user_id: str, limit: int = 200) -> list:
                 "id": r["id"],
                 "date": r["display_date"],
                 "prompt": r["prompt"],
-                "tags": json.loads(r["tags_json"]) if r["tags_json"] else [],
+                "tags": _safe_json_loads(r["tags_json"]),
                 "aspect_ratio": r["aspect_ratio"] or "1:1",
-                "images": json.loads(r["images_json"]) if r["images_json"] else [],
+                "images": _safe_json_loads(r["images_json"]),
             }
             if r["attached_images_json"]:
-                item["attached_images"] = json.loads(r["attached_images_json"])
+                item["attached_images"] = _safe_json_loads(r["attached_images_json"])
             items.append(item)
         return items
     finally:
@@ -821,44 +968,6 @@ def update_mj_gallery_images(cfg: AppConfig, item_id: int, images: list):
         conn.close()
 
 
-def backfill_mj_gallery_mock_images(cfg: AppConfig):
-    """images_json이 비어있는 MJ 갤러리 레코드에 picsum mock 이미지를 채워넣는다."""
-    ASPECT_SIZES = {
-        "1:1":  (1024, 1024),
-        "16:9": (1024, 576),
-        "9:16": (576, 1024),
-        "4:3":  (1024, 768),
-        "3:4":  (768, 1024),
-        "3:2":  (1024, 683),
-        "2:3":  (683, 1024),
-    }
-    conn = get_db(cfg)
-    try:
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT id, aspect_ratio FROM mj_gallery "
-            "WHERE images_json IS NULL OR images_json = '' OR images_json = '[]'"
-        )
-        rows = cur.fetchall()
-        if not rows:
-            return 0
-        counter = 0
-        for r in rows:
-            ar = r["aspect_ratio"] or "1:1"
-            w, h = ASPECT_SIZES.get(ar, (1024, 1024))
-            urls = []
-            for _ in range(4):
-                counter += 1
-                urls.append(f"https://picsum.photos/seed/mjfill{counter}/{w}/{h}")
-            cur.execute(
-                "UPDATE mj_gallery SET images_json = ? WHERE id = ?",
-                (json.dumps(urls, ensure_ascii=False), r["id"]),
-            )
-        conn.commit()
-        return len(rows)
-    finally:
-        conn.close()
-
 
 def list_mj_gallery_admin(cfg: AppConfig, limit: int = 200, user_id: str | None = None):
     """관리자용: MJ 갤러리 아이템 전체/유저별 조회. 첨부이미지는 유무만 표시."""
@@ -874,10 +983,10 @@ def list_mj_gallery_admin(cfg: AppConfig, limit: int = 200, user_id: str | None 
             FROM mj_gallery
         """
         if user_id:
-            sql += " WHERE user_id = ? ORDER BY id ASC LIMIT ?"
+            sql += " WHERE user_id = ? ORDER BY id DESC LIMIT ?"
             cur.execute(sql, (user_id, limit))
         else:
-            sql += " ORDER BY id ASC LIMIT ?"
+            sql += " ORDER BY id DESC LIMIT ?"
             cur.execute(sql, (limit,))
         return cur.fetchall()
     finally:
@@ -904,11 +1013,11 @@ def get_mj_gallery_by_id(cfg: AppConfig, row_id: int) -> dict | None:
             "created_at": r["created_at"],
             "display_date": r["display_date"],
             "prompt": r["prompt"],
-            "tags": json.loads(r["tags_json"]) if r["tags_json"] else [],
+            "tags": _safe_json_loads(r["tags_json"]),
             "aspect_ratio": r["aspect_ratio"] or "1:1",
-            "settings": json.loads(r["settings_json"]) if r["settings_json"] else {},
-            "images": json.loads(r["images_json"]) if r["images_json"] else [],
-            "attached_images": json.loads(r["attached_images_json"]) if r["attached_images_json"] else [],
+            "settings": _safe_json_loads(r["settings_json"], {}),
+            "images": _safe_json_loads(r["images_json"]),
+            "attached_images": _safe_json_loads(r["attached_images_json"]),
         }
     finally:
         conn.close()
@@ -963,7 +1072,7 @@ def load_gpt_conversations(cfg: AppConfig, user_id: str, limit: int = 100) -> li
                 "id": r["id"],
                 "title": r["title"],
                 "model": r["model"],
-                "messages": json.loads(r["messages_json"]) if r["messages_json"] else [],
+                "messages": _safe_json_loads(r["messages_json"]),
                 "created_at": r["created_at"],
                 "updated_at": r["updated_at"],
             })
@@ -1007,28 +1116,27 @@ def list_gpt_conversations_admin(
     try:
         cur = conn.cursor()
         sql = """
-            SELECT id, user_id, title, model, messages_json,
-                   created_at, updated_at
+            SELECT id, user_id, created_at, updated_at, title, model, messages_json
             FROM gpt_conversations
         """
         if user_id:
-            sql += " WHERE user_id = ? ORDER BY id ASC LIMIT ?"
+            sql += " WHERE user_id = ? ORDER BY id DESC LIMIT ?"
             cur.execute(sql, (user_id, limit))
         else:
-            sql += " ORDER BY id ASC LIMIT ?"
+            sql += " ORDER BY id DESC LIMIT ?"
             cur.execute(sql, (limit,))
         rows = cur.fetchall()
         result = []
         for r in rows:
-            msgs = json.loads(r["messages_json"]) if r["messages_json"] else []
+            msgs = _safe_json_loads(r["messages_json"])
             result.append({
                 "id": r["id"],
                 "user_id": r["user_id"],
+                "created_at": r["created_at"],
+                "updated_at": r["updated_at"],
                 "title": r["title"],
                 "model": r["model"],
                 "msg_count": len(msgs),
-                "created_at": r["created_at"],
-                "updated_at": r["updated_at"],
             })
         return result
     finally:
@@ -1053,7 +1161,7 @@ def get_gpt_conversation_by_id(cfg: AppConfig, conv_id: str) -> dict | None:
             "user_id": r["user_id"],
             "title": r["title"],
             "model": r["model"],
-            "messages": json.loads(r["messages_json"]) if r["messages_json"] else [],
+            "messages": _safe_json_loads(r["messages_json"]),
             "created_at": r["created_at"],
             "updated_at": r["updated_at"],
         }
@@ -1073,8 +1181,9 @@ def insert_kling_web_item(cfg: AppConfig, user_id: str, item: dict) -> int:
                 user_id, item_id, created_at, prompt, model_id, model_ver,
                 model_label, frame_mode, sound_enabled, settings_json,
                 has_start_frame, has_end_frame,
-                start_frame_data, end_frame_data
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                start_frame_data, end_frame_data,
+                task_id, task_type
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             user_id,
             item.get("item_id", ""),
@@ -1090,10 +1199,54 @@ def insert_kling_web_item(cfg: AppConfig, user_id: str, item: dict) -> int:
             1 if item.get("has_end_frame") else 0,
             item.get("start_frame_data"),
             item.get("end_frame_data"),
+            item.get("task_id"),
+            item.get("task_type"),
         ))
         row_id = cur.lastrowid
         conn.commit()
         return row_id
+    finally:
+        conn.close()
+
+
+def update_kling_task_id(cfg: AppConfig, item_id: str, task_id: str, task_type: str):
+    """Kling 히스토리 아이템에 task_id 저장 (API submit 직후)."""
+    conn = get_db(cfg)
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE kling_web_history SET task_id = ?, task_type = ? WHERE item_id = ?",
+            (task_id, task_type, item_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def load_kling_pending_tasks(cfg: AppConfig) -> list:
+    """task_id가 있지만 video_urls가 비어있는 미완료 task 목록 조회."""
+    conn = get_db(cfg)
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT h.item_id, h.task_id, h.task_type, h.settings_json, h.user_id,
+                   COALESCE(u.school_id, 'default') AS school_id
+            FROM kling_web_history h
+            LEFT JOIN users u ON u.user_id = h.user_id
+            WHERE h.task_id IS NOT NULL AND h.task_id != ''
+              AND (h.video_urls_json IS NULL OR h.video_urls_json = '' OR h.video_urls_json = '[]')
+            ORDER BY h.created_at DESC
+            LIMIT 20
+        """)
+        rows = cur.fetchall()
+        return [{
+            "item_id": r["item_id"],
+            "task_id": r["task_id"],
+            "task_type": r["task_type"],
+            "settings": _safe_json_loads(r["settings_json"], {}),
+            "user_id": r["user_id"],
+            "school_id": r["school_id"],
+        } for r in rows]
     finally:
         conn.close()
 
@@ -1108,7 +1261,7 @@ def load_kling_web_history(cfg: AppConfig, user_id: str, limit: int = 200) -> li
                    frame_mode, sound_enabled, settings_json,
                    has_start_frame, has_end_frame,
                    start_frame_data, end_frame_data,
-                   video_urls_json
+                   video_urls_json, task_id
             FROM kling_web_history
             WHERE user_id = ?
             ORDER BY created_at DESC
@@ -1126,12 +1279,13 @@ def load_kling_web_history(cfg: AppConfig, user_id: str, limit: int = 200) -> li
                 "model_label": r["model_label"],
                 "frame_mode": r["frame_mode"],
                 "sound_enabled": bool(r["sound_enabled"]),
-                "settings": json.loads(r["settings_json"]) if r["settings_json"] else {},
+                "settings": _safe_json_loads(r["settings_json"], {}),
                 "has_start_frame": bool(r["has_start_frame"]),
                 "has_end_frame": bool(r["has_end_frame"]),
                 "start_frame_data": r["start_frame_data"],
                 "end_frame_data": r["end_frame_data"],
-                "video_urls": json.loads(r["video_urls_json"]) if r["video_urls_json"] else [],
+                "video_urls": _safe_json_loads(r["video_urls_json"]),
+                "task_id": r["task_id"] if "task_id" in r.keys() else None,
                 "loading": False,
             })
         return items
@@ -1168,16 +1322,16 @@ def list_kling_web_admin(
             FROM kling_web_history
         """
         if user_id:
-            base += " WHERE user_id = ? ORDER BY id ASC LIMIT ?"
+            base += " WHERE user_id = ? ORDER BY id DESC LIMIT ?"
             cur.execute(base, (user_id, limit))
         else:
-            base += " ORDER BY id ASC LIMIT ?"
+            base += " ORDER BY id DESC LIMIT ?"
             cur.execute(base, (limit,))
         rows = cur.fetchall()
         items = []
         for r in rows:
-            stg = json.loads(r["settings_json"]) if r["settings_json"] else {}
-            urls = json.loads(r["video_urls_json"]) if r["video_urls_json"] else []
+            stg = _safe_json_loads(r["settings_json"], {})
+            urls = _safe_json_loads(r["video_urls_json"])
             items.append({
                 "id": r["id"],
                 "user_id": r["user_id"],
@@ -1224,10 +1378,10 @@ def get_kling_web_by_id(cfg: AppConfig, row_id: int) -> dict | None:
             "model_label": r["model_label"],
             "frame_mode": r["frame_mode"],
             "sound_enabled": bool(r["sound_enabled"]),
-            "settings": json.loads(r["settings_json"]) if r["settings_json"] else {},
+            "settings": _safe_json_loads(r["settings_json"], {}),
             "has_start_frame": bool(r["has_start_frame"]),
             "has_end_frame": bool(r["has_end_frame"]),
-            "video_urls": json.loads(r["video_urls_json"]) if r["video_urls_json"] else [],
+            "video_urls": _safe_json_loads(r["video_urls_json"]),
             "start_frame_data": r["start_frame_data"],
             "end_frame_data": r["end_frame_data"],
         }
@@ -1295,7 +1449,7 @@ def load_elevenlabs_history(cfg: AppConfig, user_id: str, limit: int = 200) -> l
                 "voice_name": r["voice_name"],
                 "model_id": r["model_id"],
                 "model_label": r["model_label"],
-                "settings": json.loads(r["settings_json"]) if r["settings_json"] else {},
+                "settings": _safe_json_loads(r["settings_json"], {}),
                 "language_override": bool(r["language_override"]),
                 "speaker_boost": bool(r["speaker_boost"]),
                 "audio_url": r["audio_url"],
@@ -1332,10 +1486,10 @@ def list_elevenlabs_admin(cfg: AppConfig, limit: int = 200, user_id: str | None 
             FROM elevenlabs_history
         """
         if user_id:
-            base += " WHERE user_id = ? ORDER BY id ASC LIMIT ?"
+            base += " WHERE user_id = ? ORDER BY id DESC LIMIT ?"
             cur.execute(base, (user_id, limit))
         else:
-            base += " ORDER BY id ASC LIMIT ?"
+            base += " ORDER BY id DESC LIMIT ?"
             cur.execute(base, (limit,))
         rows = cur.fetchall()
         items = []
@@ -1379,7 +1533,7 @@ def get_elevenlabs_by_id(cfg: AppConfig, row_id: int) -> dict | None:
             "voice_name": r["voice_name"],
             "model_id": r["model_id"],
             "model_label": r["model_label"],
-            "settings": json.loads(r["settings_json"]) if r["settings_json"] else {},
+            "settings": _safe_json_loads(r["settings_json"], {}),
             "language_override": bool(r["language_override"]),
             "speaker_boost": bool(r["speaker_boost"]),
             "audio_url": r["audio_url"],
@@ -1408,8 +1562,8 @@ def load_nanobanana_history(cfg: AppConfig, user_id: str, limit: int = 200) -> l
         rows = cur.fetchall()
         items = []
         for r in rows:
-            turns = json.loads(r["turns_json"]) if r["turns_json"] else []
-            for turn in turns:
+            turns = _safe_json_loads(r["turns_json"])
+            for turn in reversed(turns):
                 urls = turn.get("image_urls") or []
                 if not urls:
                     continue
@@ -1458,18 +1612,27 @@ def upsert_nanobanana_session(cfg: AppConfig, user_id: str, session: dict, tab_i
         conn.close()
 
 
-def load_nanobanana_sessions(cfg: AppConfig, user_id: str, limit: int = 100, tab_id: str = "nanobanana") -> list:
-    """사용자별 NanoBanana 세션 최신순 로드."""
+def load_nanobanana_sessions(cfg: AppConfig, user_id: str, limit: int = 100, tab_id: str | None = "nanobanana") -> list:
+    """사용자별 NanoBanana 세션 최신순 로드. tab_id=None이면 전체 탭."""
     conn = get_db(cfg)
     try:
         cur = conn.cursor()
-        cur.execute("""
-            SELECT id, title, model, turns_json, created_at, updated_at
-            FROM nanobanana_sessions
-            WHERE user_id = ? AND tab_id = ?
-            ORDER BY updated_at DESC
-            LIMIT ?
-        """, (user_id, tab_id, limit))
+        if tab_id is None:
+            cur.execute("""
+                SELECT id, title, model, turns_json, created_at, updated_at
+                FROM nanobanana_sessions
+                WHERE user_id = ?
+                ORDER BY updated_at DESC
+                LIMIT ?
+            """, (user_id, limit))
+        else:
+            cur.execute("""
+                SELECT id, title, model, turns_json, created_at, updated_at
+                FROM nanobanana_sessions
+                WHERE user_id = ? AND tab_id = ?
+                ORDER BY updated_at DESC
+                LIMIT ?
+            """, (user_id, tab_id, limit))
         rows = cur.fetchall()
         result = []
         for r in rows:
@@ -1477,7 +1640,7 @@ def load_nanobanana_sessions(cfg: AppConfig, user_id: str, limit: int = 100, tab
                 "id": r["id"],
                 "title": r["title"],
                 "model": r["model"],
-                "turns": json.loads(r["turns_json"]) if r["turns_json"] else [],
+                "turns": _safe_json_loads(r["turns_json"]),
                 "created_at": r["created_at"],
                 "updated_at": r["updated_at"],
             })
@@ -1508,8 +1671,7 @@ def list_nanobanana_sessions_admin(
     try:
         cur = conn.cursor()
         sql = """
-            SELECT id, user_id, title, model, turns_json,
-                   created_at, updated_at
+            SELECT id, user_id, created_at, updated_at, title, model, turns_json
             FROM nanobanana_sessions
         """
         if user_id:
@@ -1521,17 +1683,17 @@ def list_nanobanana_sessions_admin(
         rows = cur.fetchall()
         result = []
         for r in rows:
-            turns = json.loads(r["turns_json"]) if r["turns_json"] else []
+            turns = _safe_json_loads(r["turns_json"])
             total_images = sum(len(t.get("image_urls", [])) for t in turns)
             result.append({
                 "id": r["id"],
                 "user_id": r["user_id"],
+                "created_at": r["created_at"],
+                "updated_at": r["updated_at"],
                 "title": r["title"],
                 "model": r["model"],
                 "turn_count": len(turns),
                 "total_images": total_images,
-                "created_at": r["created_at"],
-                "updated_at": r["updated_at"],
             })
         return result
     finally:
@@ -1556,7 +1718,7 @@ def get_nanobanana_session_by_id(cfg: AppConfig, session_id: str) -> dict | None
             "user_id": r["user_id"],
             "title": r["title"],
             "model": r["model"],
-            "turns": json.loads(r["turns_json"]) if r["turns_json"] else [],
+            "turns": _safe_json_loads(r["turns_json"]),
             "created_at": r["created_at"],
             "updated_at": r["updated_at"],
         }
@@ -1579,15 +1741,65 @@ def insert_chat_message(cfg: AppConfig, school_id: str, sender_id: str, sender_r
     conn.close()
 
 
+# ----------------------------
+# Error Log
+# ----------------------------
+
+def insert_error_log(cfg: AppConfig, user_id: str, school_id: str, tab: str, error_text: str):
+    """사용자 에러 로그 기록."""
+    conn = get_db(cfg)
+    try:
+        conn.execute("""
+            INSERT INTO error_log (user_id, school_id, tab, error_text, created_at)
+            VALUES (?, ?, ?, ?, ?)
+        """, (user_id, school_id, tab, error_text[:500], now_iso()))
+        conn.commit()
+    except Exception:
+        pass
+    finally:
+        conn.close()
+
+
+def load_error_log(cfg: AppConfig, user_id: str, limit: int = 20) -> list[dict]:
+    """사용자 본인의 최근 에러 이력 조회."""
+    conn = get_db(cfg)
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT id, tab, error_text, created_at
+            FROM error_log
+            WHERE user_id = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+        """, (user_id, limit))
+        return [dict(r) for r in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def clear_error_log(cfg: AppConfig, user_id: str) -> int:
+    """사용자 본인의 에러 이력 전체 삭제. 삭제된 건수 반환."""
+    conn = get_db(cfg)
+    try:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM error_log WHERE user_id = ?", (user_id,))
+        conn.commit()
+        return cur.rowcount
+    finally:
+        conn.close()
+
+
 def load_chat_messages(cfg: AppConfig, school_id: str, limit: int = 100) -> list[dict]:
     conn = get_db(cfg)
     try:
         cur = conn.cursor()
         cur.execute("""
-            SELECT id, school_id, sender_id, sender_role, message, created_at
-            FROM chat_messages
-            WHERE school_id = ?
-            ORDER BY created_at DESC
+            SELECT c.id, c.school_id, c.sender_id, c.sender_role, c.message, c.created_at,
+                   COALESCE(u.nickname, '') AS sender_nickname
+            FROM chat_messages c
+            LEFT JOIN users u ON u.user_id = c.sender_id
+            WHERE c.school_id = ?
+            ORDER BY c.created_at DESC
             LIMIT ?
         """, (school_id, limit))
         rows = cur.fetchall()
@@ -1673,7 +1885,7 @@ def count_old_rows(cfg: AppConfig, table_key: str, older_than_days: int) -> int:
     tbl = next((t for t in PURGEABLE_TABLES if t["key"] == table_key), None)
     if not tbl or older_than_days <= 0:
         return 0
-    cutoff = (datetime.utcnow() - timedelta(days=older_than_days)).isoformat() + "Z"
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=older_than_days)).isoformat().replace("+00:00", "Z")
     conn = get_db(cfg)
     try:
         cur = conn.cursor()
@@ -1690,7 +1902,7 @@ def purge_old_records(cfg: AppConfig, table_key: str, older_than_days: int) -> i
     tbl = next((t for t in PURGEABLE_TABLES if t["key"] == table_key), None)
     if not tbl or older_than_days <= 0:
         return 0
-    cutoff = (datetime.utcnow() - timedelta(days=older_than_days)).isoformat() + "Z"
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=older_than_days)).isoformat().replace("+00:00", "Z")
     conn = get_db(cfg)
     try:
         cur = conn.cursor()
@@ -1786,8 +1998,7 @@ def drop_legacy_tables(cfg: AppConfig) -> list:
         return dropped
     finally:
         conn.close()
-        if dropped:
-            force_sync()
+        pass
 
 
 def reset_all_data(cfg: AppConfig) -> dict:
@@ -1821,7 +2032,6 @@ def reset_all_data(cfg: AppConfig) -> dict:
         return result
     finally:
         conn.close()
-        force_sync()
 
 
 # ── School Gallery (학교 공유 갤러리) ─────────────────────
@@ -1833,7 +2043,8 @@ def load_school_mj_gallery(cfg: AppConfig, school_id: str, limit: int = 200) -> 
         cur = conn.cursor()
         cur.execute("""
             SELECT mg.user_id, mg.display_date, mg.prompt,
-                   mg.aspect_ratio, mg.images_json, mg.created_at
+                   mg.aspect_ratio, mg.images_json, mg.created_at,
+                   COALESCE(u.nickname, '') AS nickname
             FROM mj_gallery mg
             JOIN users u ON mg.user_id = u.user_id
             WHERE u.school_id = ? AND mg.images_json IS NOT NULL
@@ -1844,11 +2055,12 @@ def load_school_mj_gallery(cfg: AppConfig, school_id: str, limit: int = 200) -> 
         rows = cur.fetchall()
         items = []
         for r in rows:
-            images = json.loads(r["images_json"]) if r["images_json"] else []
+            images = _safe_json_loads(r["images_json"])
             if not images:
                 continue
             items.append({
                 "user_id": r["user_id"],
+                "nickname": r["nickname"] or r["user_id"],
                 "prompt": r["prompt"],
                 "aspect_ratio": r["aspect_ratio"] or "1:1",
                 "images": images,
@@ -1867,7 +2079,8 @@ def load_school_kling_gallery(cfg: AppConfig, school_id: str, limit: int = 200) 
         cur = conn.cursor()
         cur.execute("""
             SELECT kh.user_id, kh.prompt, kh.model_label,
-                   kh.video_urls_json, kh.created_at
+                   kh.video_urls_json, kh.created_at,
+                   COALESCE(u.nickname, '') AS nickname
             FROM kling_web_history kh
             JOIN users u ON kh.user_id = u.user_id
             WHERE u.school_id = ? AND kh.video_urls_json IS NOT NULL
@@ -1878,11 +2091,12 @@ def load_school_kling_gallery(cfg: AppConfig, school_id: str, limit: int = 200) 
         rows = cur.fetchall()
         items = []
         for r in rows:
-            urls = json.loads(r["video_urls_json"]) if r["video_urls_json"] else []
+            urls = _safe_json_loads(r["video_urls_json"])
             if not urls:
                 continue
             items.append({
                 "user_id": r["user_id"],
+                "nickname": r["nickname"] or r["user_id"],
                 "prompt": r["prompt"],
                 "model_label": r["model_label"],
                 "video_urls": urls,
@@ -1900,7 +2114,8 @@ def load_school_elevenlabs_gallery(cfg: AppConfig, school_id: str, limit: int = 
         cur = conn.cursor()
         cur.execute("""
             SELECT eh.user_id, eh.text, eh.voice_name,
-                   eh.model_label, eh.audio_url, eh.created_at
+                   eh.model_label, eh.audio_url, eh.created_at,
+                   COALESCE(u.nickname, '') AS nickname
             FROM elevenlabs_history eh
             JOIN users u ON eh.user_id = u.user_id
             WHERE u.school_id = ? AND eh.audio_url IS NOT NULL
@@ -1915,6 +2130,7 @@ def load_school_elevenlabs_gallery(cfg: AppConfig, school_id: str, limit: int = 
                 continue
             items.append({
                 "user_id": r["user_id"],
+                "nickname": r["nickname"] or r["user_id"],
                 "text": r["text"],
                 "voice_name": r["voice_name"],
                 "model_label": r["model_label"],
@@ -1936,7 +2152,8 @@ def load_school_nanobanana_gallery(cfg: AppConfig, school_id: str, limit: int = 
     try:
         cur = conn.cursor()
         cur.execute("""
-            SELECT ns.user_id, ns.model, ns.turns_json, ns.updated_at
+            SELECT ns.user_id, ns.model, ns.turns_json, ns.updated_at,
+                   COALESCE(u.nickname, '') AS nickname
             FROM nanobanana_sessions ns
             JOIN users u ON ns.user_id = u.user_id
             WHERE u.school_id = ? AND ns.turns_json IS NOT NULL
@@ -1947,13 +2164,14 @@ def load_school_nanobanana_gallery(cfg: AppConfig, school_id: str, limit: int = 
         rows = cur.fetchall()
         items = []
         for r in rows:
-            turns = json.loads(r["turns_json"]) if r["turns_json"] else []
-            for turn in turns:
+            turns = _safe_json_loads(r["turns_json"])
+            for turn in reversed(turns):
                 urls = turn.get("image_urls") or []
                 if not urls:
                     continue
                 items.append({
                     "user_id": r["user_id"],
+                    "nickname": r["nickname"] or r["user_id"],
                     "prompt": turn.get("prompt", ""),
                     "model_label": turn.get("model_label", r["model"] or ""),
                     "aspect_ratio": turn.get("aspect_ratio", "1:1"),
@@ -2000,20 +2218,19 @@ def set_user_balance(cfg: AppConfig, user_id: str, balance: int):
 
 def deduct_user_balance(cfg: AppConfig, user_id: str, cost: int,
                         tab_id: str = "", school_id: str = "") -> bool:
-    """통합 잔액에서 cost 차감. 성공 True, 잔액 부족 False. usage_log에 tab_id 기록."""
+    """통합 잔액에서 cost 차감 (원자적). 성공 True, 잔액 부족 False. usage_log에 tab_id 기록."""
     conn = get_db(cfg)
     try:
-        cur = conn.cursor()
-        cur.execute("SELECT balance FROM user_balance WHERE user_id = ?", (user_id,))
-        row = cur.fetchone()
-        current = int(row["balance"]) if row else 0
-        if current < cost:
-            return False
         ts = now_iso()
-        conn.execute(
-            "UPDATE user_balance SET balance = ?, updated_at = ? WHERE user_id = ?",
-            (current - cost, ts, user_id),
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE user_balance SET balance = balance - ?, updated_at = ? "
+            "WHERE user_id = ? AND balance >= ?",
+            (cost, ts, user_id, cost),
         )
+        if cur.rowcount == 0:
+            conn.rollback()
+            return False
         if school_id and tab_id:
             conn.execute(
                 "INSERT INTO credit_usage_log (user_id, school_id, tab_id, amount, created_at) VALUES (?, ?, ?, ?, ?)",
@@ -2021,6 +2238,59 @@ def deduct_user_balance(cfg: AppConfig, user_id: str, cost: int,
             )
         conn.commit()
         return True
+    finally:
+        conn.close()
+
+
+def reserve_user_balance(cfg: AppConfig, user_id: str, cost: int) -> bool:
+    """API 호출 전 선차감 (예약). 성공 True, 잔액 부족 False."""
+    conn = get_db(cfg)
+    try:
+        ts = now_iso()
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE user_balance SET balance = balance - ?, updated_at = ? "
+            "WHERE user_id = ? AND balance >= ?",
+            (cost, ts, user_id, cost),
+        )
+        if cur.rowcount == 0:
+            conn.rollback()
+            return False
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+def rollback_user_balance(cfg: AppConfig, user_id: str, cost: int):
+    """API 호출 실패 시 선차감 복원."""
+    _log.info("balance rollback user=%s cost=%s", user_id, cost)
+    conn = get_db(cfg)
+    try:
+        ts = now_iso()
+        conn.execute(
+            "UPDATE user_balance SET balance = balance + ?, updated_at = ? "
+            "WHERE user_id = ?",
+            (cost, ts, user_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def confirm_reserved_balance(cfg: AppConfig, user_id: str, cost: int,
+                             tab_id: str = "", school_id: str = ""):
+    """선차감 확정 — usage_log 기록."""
+    if not (school_id and tab_id):
+        return
+    conn = get_db(cfg)
+    try:
+        ts = now_iso()
+        conn.execute(
+            "INSERT INTO credit_usage_log (user_id, school_id, tab_id, amount, created_at) VALUES (?, ?, ?, ?, ?)",
+            (user_id, school_id, tab_id, cost, ts),
+        )
+        conn.commit()
     finally:
         conn.close()
 
@@ -2093,8 +2363,6 @@ def run_auto_credit_refill(cfg: AppConfig):
       credit_refill_last   — 마지막 실행 "YYYY-MM" (같은 월 중복 방지)
       credit_refill_amount — 충전량
     """
-    from datetime import datetime, timezone
-
     day_str = get_admin_setting(cfg, "credit_refill_day", "0")
     try:
         refill_day = int(day_str)
@@ -2112,15 +2380,82 @@ def run_auto_credit_refill(cfg: AppConfig):
     if last_refill == current_ym:
         return
 
+    # Atomically claim this refill cycle: UPDATE only if value still matches
+    conn = get_db(cfg)
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE admin_settings
+               SET value = ?, updated_at = ?
+             WHERE key = 'credit_refill_last' AND value = ?
+        """, (current_ym, now_iso(), last_refill))
+        conn.commit()
+        if cur.rowcount == 0:
+            # Another process already claimed this cycle, or row missing — try INSERT for first run
+            try:
+                cur.execute("""
+                    INSERT INTO admin_settings (key, value, updated_at)
+                    VALUES ('credit_refill_last', ?, ?)
+                """, (current_ym, now_iso()))
+                conn.commit()
+            except Exception:
+                # Row exists but value differs → another process won the race
+                return
+    finally:
+        conn.close()
+
     val = get_admin_setting(cfg, "credit_refill_amount", "0")
     try:
         amount = max(0, int(val))
     except (ValueError, TypeError):
         amount = 0
 
-    affected = add_balance_bulk(cfg, "student,teacher", "all", amount)
-    if affected >= 0:
-        set_admin_setting(cfg, "credit_refill_last", current_ym)
+    add_balance_bulk(cfg, "student,teacher", "all", amount)
+
+
+def get_usage_call_counts(cfg: AppConfig, days: int = 30) -> dict[str, int]:
+    """기능별 총 호출 횟수 (credit_usage_log 기반)."""
+    conn = get_db(cfg)
+    try:
+        cur = conn.cursor()
+        since = _dt_minus_days(days)
+        cur.execute("""
+            SELECT tab_id, COUNT(*) AS cnt
+            FROM credit_usage_log
+            WHERE created_at >= ?
+            GROUP BY tab_id
+        """, (since,))
+        return {r["tab_id"]: int(r["cnt"]) for r in cur.fetchall()}
+    finally:
+        conn.close()
+
+
+def get_api_keys_summary(cfg: AppConfig) -> list[dict]:
+    """API 키 요약 (api_key_id, provider, key_name, concurrency_limit, rpm_limit, is_active)."""
+    conn = get_db(cfg)
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT api_key_id, provider, key_name, concurrency_limit, rpm_limit, is_active
+            FROM api_keys
+            ORDER BY provider, key_name
+        """)
+        return [dict(r) for r in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def set_api_key_active(cfg: AppConfig, api_key_id: int, is_active: bool):
+    """API 키 활성/비활성 전환."""
+    conn = get_db(cfg)
+    try:
+        conn.execute(
+            "UPDATE api_keys SET is_active=?, updated_at=? WHERE api_key_id=?",
+            (1 if is_active else 0, now_iso(), api_key_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def get_school_credit_report(cfg: AppConfig, days: int = 30) -> list[dict]:
@@ -2251,7 +2586,7 @@ def get_student_credit_report(
 def _dt_minus_days(days: int) -> str:
     """현재 시각에서 days일 전 ISO 문자열."""
     from datetime import datetime, timedelta, timezone
-    return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat().replace("+00:00", "Z")
 
 
 # ── class_schedules CRUD ──────────────────────────────────────
@@ -2341,9 +2676,8 @@ def delete_class_schedule(cfg: AppConfig, schedule_id: int):
 def get_active_class_now(cfg: AppConfig) -> dict | None:
     """현재 시각에 진행 중인 수업이 있으면 해당 스케줄 반환, 없으면 None.
     서버 시간대는 KST(UTC+9) 기준."""
-    import pytz
-    kst = pytz.timezone("Asia/Seoul")
-    now = datetime.now(kst)
+    _KST = timezone(timedelta(hours=9))
+    now = datetime.now(_KST)
     dow = now.weekday()  # 0=Mon
     cur_minutes = now.hour * 60 + now.minute
 
@@ -2381,7 +2715,6 @@ def create_notice(cfg: AppConfig, message: str, target_school: str = None,
         """, (message, target_school, now_iso(), expires_at))
         conn.commit()
         nid = cur.lastrowid
-        force_sync()
         return nid
     finally:
         conn.close()
@@ -2410,7 +2743,6 @@ def deactivate_notice(cfg: AppConfig, notice_id: int):
     try:
         conn.execute("UPDATE notices SET is_active=0 WHERE notice_id=?", (notice_id,))
         conn.commit()
-        force_sync()
     finally:
         conn.close()
 
@@ -2426,7 +2758,7 @@ def get_active_notices_for_user(cfg: AppConfig, school_id: str) -> list:
               AND (expires_at IS NULL OR expires_at > ?)
               AND (target_school IS NULL OR target_school = '' OR target_school = '*' OR target_school = ?)
             ORDER BY created_at DESC
-        """, (now_iso(), school_id))
+        """, (now_iso(), school_id or "default"))
         return [dict(r) for r in cur.fetchall()]
     finally:
         conn.close()
@@ -2447,7 +2779,6 @@ def schedule_maintenance(cfg: AppConfig, scheduled_at: str, message: str = None)
         """, (scheduled_at, message or "서버 점검이 예정되어 있습니다.", now_iso()))
         conn.commit()
         mid = cur.lastrowid
-        force_sync()
         return mid
     finally:
         conn.close()
@@ -2475,7 +2806,6 @@ def update_maintenance_status(cfg: AppConfig, mid: int, status: str):
     try:
         conn.execute("UPDATE maintenance_schedule SET status=? WHERE id=?", (status, mid))
         conn.commit()
-        force_sync()
     finally:
         conn.close()
 
@@ -2493,7 +2823,6 @@ def deactivate_all_non_admin_users(cfg: AppConfig):
             WHERE role != 'admin'
         """)
         conn.commit()
-        force_sync()
     finally:
         conn.close()
 
@@ -2504,8 +2833,127 @@ def reactivate_all_users(cfg: AppConfig):
     try:
         conn.execute("UPDATE users SET is_active = 1")
         conn.commit()
-        force_sync()
     finally:
         conn.close()
 
+
+# ────────────────────────────────────────────
+# 문의 (support tickets) CRUD
+# ────────────────────────────────────────────
+def create_support_ticket(cfg: AppConfig, user_id: str, school_id: str, subject: str, message: str) -> int:
+    conn = get_db(cfg)
+    try:
+        cur = conn.cursor()
+        now = now_iso()
+        cur.execute(
+            "INSERT INTO support_tickets (user_id, school_id, subject, message, status, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, 'open', ?, ?)",
+            (user_id, school_id or "", subject.strip(), message.strip(), now, now),
+        )
+        tid = cur.lastrowid
+        conn.commit()
+        return int(tid)
+    finally:
+        conn.close()
+
+
+def list_support_tickets_for_user(cfg: AppConfig, user_id: str, limit: int = 100) -> list:
+    conn = get_db(cfg)
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT * FROM support_tickets WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
+            (user_id, int(limit)),
+        )
+        return [dict(r) for r in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def list_support_tickets_admin(cfg: AppConfig, status: str = "", limit: int = 200) -> list:
+    conn = get_db(cfg)
+    try:
+        cur = conn.cursor()
+        if status:
+            cur.execute(
+                "SELECT * FROM support_tickets WHERE status = ? ORDER BY created_at DESC LIMIT ?",
+                (status, int(limit)),
+            )
+        else:
+            cur.execute(
+                "SELECT * FROM support_tickets ORDER BY created_at DESC LIMIT ?",
+                (int(limit),),
+            )
+        return [dict(r) for r in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def reply_support_ticket(cfg: AppConfig, ticket_id: int, reply: str, admin_user_id: str) -> None:
+    conn = get_db(cfg)
+    try:
+        now = now_iso()
+        conn.execute(
+            "UPDATE support_tickets SET reply = ?, reply_at = ?, reply_by = ?, status = 'answered', "
+            "updated_at = ?, user_seen_reply = 0 WHERE ticket_id = ?",
+            (reply.strip(), now, admin_user_id, now, int(ticket_id)),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def mark_all_replies_seen(cfg: AppConfig, user_id: str) -> None:
+    conn = get_db(cfg)
+    try:
+        conn.execute(
+            "UPDATE support_tickets SET user_seen_reply = 1 "
+            "WHERE user_id = ? AND reply IS NOT NULL AND user_seen_reply = 0",
+            (user_id,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def mark_ticket_seen(cfg: AppConfig, ticket_id: int, user_id: str) -> None:
+    conn = get_db(cfg)
+    try:
+        conn.execute(
+            "UPDATE support_tickets SET user_seen_reply = 1 WHERE ticket_id = ? AND user_id = ?",
+            (int(ticket_id), user_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def count_unseen_replies(cfg: AppConfig, user_id: str) -> int:
+    conn = get_db(cfg)
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT COUNT(*) AS c FROM support_tickets WHERE user_id = ? AND reply IS NOT NULL AND user_seen_reply = 0",
+            (user_id,),
+        )
+        row = cur.fetchone()
+        return int(row["c"] if row else 0)
+    finally:
+        conn.close()
+
+
+def delete_support_ticket(cfg: AppConfig, ticket_id: int, user_id: str = "") -> None:
+    """문의 삭제. user_id를 주면 소유자 검증, 빈 문자열이면 무조건 삭제(관리자용)."""
+    conn = get_db(cfg)
+    try:
+        if user_id:
+            conn.execute(
+                "DELETE FROM support_tickets WHERE ticket_id = ? AND user_id = ?",
+                (int(ticket_id), user_id),
+            )
+        else:
+            conn.execute("DELETE FROM support_tickets WHERE ticket_id = ?", (int(ticket_id),))
+        conn.commit()
+    finally:
+        conn.close()
 

@@ -14,16 +14,25 @@ RUN pip install --no-cache-dir -r requirements.txt
 # 앱 복사
 COPY . .
 
-# Cloud Run은 PORT 환경변수를 주입함
+# DB 데이터 디렉토리 (볼륨 마운트 대상)
+RUN mkdir -p /app/data
+
+# non-root 사용자 생성 (uid=1000: EC2 ec2-user와 동일 → 볼륨 마운트 권한 호환)
+RUN groupadd -g 1000 appuser && useradd -u 1000 -g appuser -d /app -s /sbin/nologin appuser \
+    && chown -R appuser:appuser /app
+USER appuser
+
+# App Runner는 PORT 환경변수를 주입함
 ENV PORT=8080
 
 EXPOSE ${PORT}
 
-# Streamlit 실행 (Cloud Run 호환 설정)
+# Streamlit 실행 (App Runner 호환 설정)
 CMD streamlit run app.py \
     --server.port=${PORT} \
     --server.address=0.0.0.0 \
     --server.headless=true \
     --server.enableCORS=false \
     --server.enableXsrfProtection=false \
+    --server.enableWebsocketCompression=false \
     --browser.gatherUsageStats=false
